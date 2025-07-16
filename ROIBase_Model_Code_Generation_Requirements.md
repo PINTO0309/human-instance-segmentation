@@ -21,7 +21,7 @@ data/annotations/instances_val2017_person_only_no_crowd.json : バリデーシ�
 data/annotations/instances_val2017_person_only_no_crowd_500.json : バリデーションデータ用アノテーションの中サイズ
 data/annotations/instances_val2017_person_only_no_crowd_100.json : バリデーションデータ用アノテーションの最小サイズ（プログラムの検証用最小セット）
 
-学習パイプラインの設計を始める前に最適なLoss選択とLossのパラメータ配分に使用するため、 data/annotations/instances_train2017_person_only_no_crowd.json を分析し、推定対象マスクピクセル, 推定対象外マスクピクセル, 背景ピクセルの構成比率の集計結果を data_analyze.json へ出力すること
+学習パイプラインの設計を始める前に最適なLoss選択とLossのパラメータ配分に使用するため、 data/annotations/instances_train2017_person_only_no_crowd.json を分析し、推定対象マスクピクセル, 推定対象外マスクピクセル, 背景ピクセルの構成比率の集計結果を data_analyze.json へ出力すること。特に複数人物が含まれる画像上でのインスタンス間の分離性能を向上したいという観点で必要となる情報があれば .json に追加せよ。
 
 
 # アノテーションデータフォーマット
