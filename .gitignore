@@ -1,0 +1,4 @@
+data/annotations/*.json
+data/images/train2017/*.jpg
+data/images/val2017/*.jpg
+*.onnx
