@@ -48,16 +48,16 @@ uv run python main.py --epochs 10
 ```bash
 # 500 images
 uv run python main.py \
-  --train-ann data/annotations/instances_train2017_person_only_no_crowd_500.json \
-  --val-ann data/annotations/instances_val2017_person_only_no_crowd_500.json \
-  --data-stats data_analyze.json \
+  --train_ann data/annotations/instances_train2017_person_only_no_crowd_500.json \
+  --val_ann data/annotations/instances_val2017_person_only_no_crowd_500.json \
+  --data_stats data_analyze.json \
   --epochs 50
 
 # Full dataset
 uv run python main.py \
-  --train-ann data/annotations/instances_train2017_person_only_no_crowd.json \
-  --val-ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --data-stats data_analyze.json \
+  --train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
+  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+  --data_stats data_analyze.json \
   --epochs 100
 ```
 
@@ -68,7 +68,7 @@ uv run python main.py --resume checkpoints/checkpoint_epoch_0010_640x640_0850.pt
 
 ### Run validation only
 ```bash
-uv run python main.py --test-only --resume checkpoints/best_model.pth
+uv run python main.py --test_only --resume checkpoints/best_model.pth
 ```
 
 ### Export model to ONNX
@@ -86,15 +86,23 @@ uv run python src/human_edge_detection/analyze_data_full.py
 
 ## Model Architecture
 
-The model uses a ROIAlign-based architecture:
+The model uses an enhanced ROIAlign-based architecture:
 1. YOLOv9 extracts features (1024x80x80) from 640x640 images
-2. ROIAlign extracts fixed-size features for each ROI
-3. Lightweight decoder produces 56x56 masks with 3 classes:
+2. DynamicRoIAlign extracts 28x28 features for each ROI
+3. Enhanced decoder with residual blocks and multi-scale fusion produces 56x56 masks:
+   - Progressive upsampling: 28x28 → 56x56 → 112x112 → 56x56
+   - Residual connections for better gradient flow
+   - Multi-scale feature fusion for detail preservation
+4. Output: 3-class segmentation masks
    - Class 0: Background
    - Class 1: Target mask (primary instance)
    - Class 2: Non-target mask (other instances in ROI)
 
-**Normalization**: The model uses LayerNorm2d instead of GroupNorm/InstanceNorm for better ONNX compatibility and stable inference results.
+**Key improvements**:
+- 2x larger initial ROI size (28x28) for better detail capture
+- Residual blocks for deeper feature extraction
+- Progressive upsampling reduces blocky artifacts
+- LayerNorm2d for ONNX compatibility and stable inference
 
 ## Training Details
 

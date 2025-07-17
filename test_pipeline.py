@@ -24,6 +24,7 @@ config = {
     'num_classes': 3,
     'in_channels': 1024,
     'mid_channels': 256,
+    'roi_size': 28,  # Enhanced model with better spatial resolution
     'mask_size': 56,
     'batch_size': 2,  # Small batch for testing
     'num_workers': 0,  # No multiprocessing for testing
@@ -100,6 +101,7 @@ try:
         num_classes=config['num_classes'],
         in_channels=config['in_channels'],
         mid_channels=config['mid_channels'],
+        roi_size=config['roi_size'],
         mask_size=config['mask_size']
     )
 

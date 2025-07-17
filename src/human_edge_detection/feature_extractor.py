@@ -3,8 +3,37 @@
 import numpy as np
 import onnxruntime as ort
 import torch
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 from pathlib import Path
+
+# TensorRT setup function
+def setup_tensorrt_providers(model_path: Path) -> List:
+    """Setup TensorRT providers with optimization parameters.
+
+    Args:
+        model_path: Path to the ONNX model file
+
+    Returns:
+        List of providers with TensorRT optimization settings
+    """
+    # Use same directory as ONNX model for TensorRT cache
+    model_dir_path = str(model_path.parent)
+
+    # TensorRT provider with optimization settings
+    trt_provider = (
+        'TensorrtExecutionProvider',
+        {
+            'trt_engine_cache_enable': True,
+            'trt_engine_cache_path': model_dir_path,
+            'trt_fp16_enable': True,
+        }
+    )
+
+    return [
+        trt_provider,
+        'CUDAExecutionProvider',
+        'CPUExecutionProvider'
+    ]
 
 
 class YOLOFeatureExtractor:
@@ -36,10 +65,11 @@ class YOLOFeatureExtractor:
         if not self.onnx_path.exists():
             raise FileNotFoundError(f"ONNX model not found: {onnx_path}")
 
-        # Set providers
+        # Set providers with TensorRT optimization
         if providers is None:
             if device == "cuda" and torch.cuda.is_available():
-                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+                # Try TensorRT first, then CUDA, then CPU
+                providers = setup_tensorrt_providers(self.onnx_path)
             else:
                 providers = ['CPUExecutionProvider']
 
@@ -102,8 +132,6 @@ class YOLOFeatureExtractor:
         # Ensure correct input shape
         if images.dim() == 3:
             images = images.unsqueeze(0)
-
-        batch_size = images.shape[0]
 
         # Convert to numpy and ensure correct format
         if images.is_cuda:

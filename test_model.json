@@ -1,0 +1,19 @@
+{
+  "checkpoint_path": "checkpoints/best_model_improved.pth",
+  "epoch": 5,
+  "miou": 0.3842,
+  "config": {
+    "num_classes": 3,
+    "in_channels": 1024,
+    "mid_channels": 256,
+    "mask_size": 56,
+    "roi_size": 28
+  },
+  "input_format": {
+    "features": "[B, 1024, 80, 80] - YOLO intermediate features",
+    "rois": "[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]"
+  },
+  "output_format": {
+    "masks": "[N, 3, 56, 56] - Segmentation logits for each ROI"
+  }
+}

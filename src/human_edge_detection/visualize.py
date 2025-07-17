@@ -303,14 +303,25 @@ class ValidationVisualizer:
                     # Get predicted class
                     mask_pred = torch.argmax(mask_logits[0], dim=0).cpu().numpy()
 
-                    # Resize mask back to ROI size
-                    roi_h = int(y2 - y1)
-                    roi_w = int(x2 - x1)
-                    mask_resized = cv2.resize(mask_pred.astype(np.uint8), (roi_w, roi_h), interpolation=cv2.INTER_NEAREST)
-
                     # Create full image mask
                     full_mask = np.zeros((640, 640), dtype=np.uint8)
-                    full_mask[int(y1):int(y2), int(x1):int(x2)] = mask_resized
+                    
+                    # Calculate exact slice dimensions to avoid mismatch
+                    y1_int, y2_int = int(y1), int(y2)
+                    x1_int, x2_int = int(x1), int(x2)
+                    slice_h = y2_int - y1_int
+                    slice_w = x2_int - x1_int
+                    
+                    # Resize mask to exact slice dimensions with better interpolation
+                    # First resize with linear interpolation for smoother results
+                    mask_prob = mask_logits[0].softmax(dim=0)[1].cpu().numpy()  # Get target class probability
+                    mask_resized = cv2.resize(mask_prob, (slice_w, slice_h), interpolation=cv2.INTER_LINEAR)
+                    
+                    # Apply threshold to get binary mask
+                    mask_resized = (mask_resized > 0.5).astype(np.uint8)
+                    
+                    # Place resized mask in full image
+                    full_mask[y1_int:y2_int, x1_int:x2_int] = mask_resized
 
                     # Only show target class (class 1)
                     target_mask = (full_mask == 1)

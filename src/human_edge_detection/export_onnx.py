@@ -131,8 +131,9 @@ class ONNXExporter:
             onnx.checker.check_model(onnx_model)
             print("ONNX model structure is valid")
 
-            # Test inference
-            ort_session = ort.InferenceSession(onnx_path)
+            # Test inference with GPU providers if available
+            providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+            ort_session = ort.InferenceSession(onnx_path, providers=providers)
 
             # Prepare inputs
             ort_inputs = {
@@ -227,7 +228,8 @@ def export_checkpoint_to_onnx(
             'num_classes': 3,
             'in_channels': 1024,
             'mid_channels': 256,
-            'mask_size': 56
+            'mask_size': 56,
+            'roi_size': 28  # Default to enhanced model
         }
 
     # Create model

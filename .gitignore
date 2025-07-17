@@ -7,3 +7,6 @@ checkpoints/
 .vscode/
 .venv/
 __pycache__/
+validation_results/
+*.engine
+*.profile

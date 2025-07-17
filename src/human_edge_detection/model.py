@@ -1,57 +1,81 @@
-"""ROI-based instance segmentation model."""
+"""ROI-based instance segmentation model with enhanced architecture.
+
+This model features:
+- Larger ROI size (28x28) for better initial resolution
+- Residual blocks for deeper feature extraction
+- Progressive upsampling with multi-scale fusion
+- Smooth mask generation with reduced artifacts
+"""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.ops import RoIAlign
+from .dynamic_roi_align import DynamicRoIAlign
 from typing import Dict, Optional, Tuple
 
 
 class LayerNorm2d(nn.Module):
     """LayerNorm for 2D inputs (B, C, H, W)."""
-    
+
     def __init__(self, num_features, eps=1e-5):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(1, num_features, 1, 1))
         self.bias = nn.Parameter(torch.zeros(1, num_features, 1, 1))
         self.eps = eps
-    
+
     def forward(self, x):
         # Calculate mean and variance across C, H, W dimensions
         mean = x.mean(dim=(1, 2, 3), keepdim=True)
         var = x.var(dim=(1, 2, 3), keepdim=True, unbiased=False)
-        
+
         # Normalize
         x = (x - mean) / torch.sqrt(var + self.eps)
-        
+
         # Apply affine transformation
         x = x * self.weight + self.bias
-        
+
         return x
 
 
-class ROISegmentationHead(nn.Module):
-    """ROI-based segmentation head for 3-class instance segmentation.
+class ResidualBlock(nn.Module):
+    """Residual block with LayerNorm."""
 
-    Takes YOLO features and ROI coordinates to produce segmentation masks.
-    """
+    def __init__(self, channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.norm1 = LayerNorm2d(channels)
+        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.norm2 = LayerNorm2d(channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        residual = x
+        out = self.relu(self.norm1(self.conv1(x)))
+        out = self.norm2(self.conv2(out))
+        out += residual
+        out = self.relu(out)
+        return out
+
+
+class ROISegmentationHead(nn.Module):
+    """ROI-based segmentation head with enhanced upsampling and FPN-style features."""
 
     def __init__(
         self,
         in_channels: int = 1024,
         mid_channels: int = 256,
         num_classes: int = 3,
-        roi_size: int = 14,
+        roi_size: int = 28,  # Enhanced spatial resolution
         mask_size: int = 56,
         feature_stride: int = 8
     ):
-        """Initialize segmentation head.
+        """Initialize improved segmentation head.
 
         Args:
             in_channels: Number of input channels from YOLO features
             mid_channels: Number of channels in intermediate layers
             num_classes: Number of output classes (3: bg, target, non-target)
-            roi_size: Size of ROI after ROIAlign
+            roi_size: Size of ROI after ROIAlign (increased to 28)
             mask_size: Output mask size
             feature_stride: Stride of feature map relative to input image
         """
@@ -64,49 +88,71 @@ class ROISegmentationHead(nn.Module):
         self.mask_size = mask_size
         self.feature_stride = feature_stride
 
-        # ROIAlign layer
-        self.roi_align = RoIAlign(
-            output_size=(roi_size, roi_size),
+        # For future extension to non-square ROIs
+        if isinstance(roi_size, int):
+            self.roi_height = roi_size
+            self.roi_width = roi_size
+        else:
+            self.roi_height, self.roi_width = roi_size
+
+        # DynamicROIAlign layer with larger output
+        self.roi_align = DynamicRoIAlign(
             spatial_scale=1.0 / feature_stride,
-            sampling_ratio=2,
+            sampling_ratio=4,  # Increased sampling for better quality
             aligned=True
         )
 
-        # Feature processing blocks
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, mid_channels, 3, padding=1),
+        # Initial feature processing with residual blocks
+        self.conv_in = nn.Sequential(
+            nn.Conv2d(in_channels, mid_channels, 1),
             LayerNorm2d(mid_channels),
             nn.ReLU(inplace=True)
         )
 
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(mid_channels, mid_channels, 3, padding=1),
-            LayerNorm2d(mid_channels),
-            nn.ReLU(inplace=True)
-        )
+        # Feature processing with residual connections
+        self.res_block1 = ResidualBlock(mid_channels)
+        self.res_block2 = ResidualBlock(mid_channels)
 
-        # Upsampling blocks
+        # Progressive upsampling with intermediate supervision
+        # 28x28 -> 56x56
         self.upsample1 = nn.Sequential(
-            nn.ConvTranspose2d(mid_channels, mid_channels, 2, stride=2),
+            nn.ConvTranspose2d(mid_channels, mid_channels, 4, stride=2, padding=1),
             LayerNorm2d(mid_channels),
             nn.ReLU(inplace=True)
         )
 
+        # Refinement at 56x56
+        self.refine1 = ResidualBlock(mid_channels)
+
+        # 56x56 -> 112x112 (oversample)
         self.upsample2 = nn.Sequential(
-            nn.ConvTranspose2d(mid_channels, mid_channels, 2, stride=2),
-            LayerNorm2d(mid_channels),
+            nn.ConvTranspose2d(mid_channels, mid_channels // 2, 4, stride=2, padding=1),
+            LayerNorm2d(mid_channels // 2),
             nn.ReLU(inplace=True)
         )
 
-        # Additional conv for refinement
-        self.conv3 = nn.Sequential(
-            nn.Conv2d(mid_channels, mid_channels, 3, padding=1),
-            LayerNorm2d(mid_channels),
+        # Refinement at 112x112
+        self.refine2 = nn.Sequential(
+            nn.Conv2d(mid_channels // 2, mid_channels // 2, 3, padding=1),
+            LayerNorm2d(mid_channels // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid_channels // 2, mid_channels // 2, 3, padding=1),
+            LayerNorm2d(mid_channels // 2),
             nn.ReLU(inplace=True)
         )
+
+        # Final projection and downsampling to 56x56
+        self.final_conv = nn.Sequential(
+            nn.Conv2d(mid_channels // 2, mid_channels // 4, 3, padding=1),
+            LayerNorm2d(mid_channels // 4),
+            nn.ReLU(inplace=True)
+        )
+
+        # Multi-scale feature fusion
+        self.fusion = nn.Conv2d(mid_channels + mid_channels // 4, mid_channels // 2, 1)
 
         # Final classifier
-        self.classifier = nn.Conv2d(mid_channels, num_classes, 1)
+        self.classifier = nn.Conv2d(mid_channels // 2, num_classes, 1)
 
         # Initialize weights
         self._init_weights()
@@ -137,31 +183,43 @@ class ROISegmentationHead(nn.Module):
         Returns:
             Mask logits of shape (N, num_classes, mask_size, mask_size)
         """
-        # Extract ROI features
-        roi_features = self.roi_align(features, rois)
+        # Extract ROI features using DynamicRoIAlign (28x28)
+        roi_features = self.roi_align(features, rois, self.roi_height, self.roi_width)
 
-        # Process features
-        x = self.conv1(roi_features)
-        x = self.conv2(x)
+        # Initial processing
+        x = self.conv_in(roi_features)
 
-        # Upsample to mask size
-        x = self.upsample1(x)  # 14x14 -> 28x28
-        x = self.upsample2(x)  # 28x28 -> 56x56
+        # Deep feature extraction with residual blocks
+        x = self.res_block1(x)
+        x = self.res_block2(x)
 
-        # Refine
-        x = self.conv3(x)
+        # Progressive upsampling
+        # 28x28 -> 56x56
+        x_56 = self.upsample1(x)
+        x_56 = self.refine1(x_56)
 
-        # Classify
-        logits = self.classifier(x)
+        # 56x56 -> 112x112
+        x_112 = self.upsample2(x_56)
+        x_112 = self.refine2(x_112)
+
+        # Project to lower channels
+        x_112_proj = self.final_conv(x_112)
+
+        # Downsample back to 56x56 for fusion
+        x_112_down = F.interpolate(x_112_proj, size=(56, 56), mode='bilinear', align_corners=False)
+
+        # Multi-scale fusion
+        x_fused = torch.cat([x_56, x_112_down], dim=1)
+        x_fused = self.fusion(x_fused)
+
+        # Final classification
+        logits = self.classifier(x_fused)
 
         return logits
 
 
 class ROISegmentationModel(nn.Module):
-    """Complete ROI-based instance segmentation model.
-
-    Combines feature extraction and segmentation head.
-    """
+    """Complete ROI-based instance segmentation model."""
 
     def __init__(
         self,
@@ -253,7 +311,8 @@ def create_model(
     num_classes: int = 3,
     in_channels: int = 1024,
     mid_channels: int = 256,
-    mask_size: int = 56
+    mask_size: int = 56,
+    roi_size: int = 28  # Increased default
 ) -> ROISegmentationModel:
     """Create ROI segmentation model.
 
@@ -262,6 +321,7 @@ def create_model(
         in_channels: Number of input channels from features
         mid_channels: Number of channels in intermediate layers
         mask_size: Output mask size
+        roi_size: ROI size after ROIAlign (default 28)
 
     Returns:
         ROISegmentationModel instance
@@ -270,7 +330,8 @@ def create_model(
         in_channels=in_channels,
         mid_channels=mid_channels,
         num_classes=num_classes,
-        mask_size=mask_size
+        mask_size=mask_size,
+        roi_size=roi_size
     )
 
     model = ROISegmentationModel(
@@ -282,7 +343,7 @@ def create_model(
 
 
 if __name__ == "__main__":
-    # Test model
+    # Test improved model
     print("Testing ROI Segmentation Model...")
 
     # Create model
@@ -302,7 +363,6 @@ if __name__ == "__main__":
     # Prepare ROIs for model
     rois = ROIBatchProcessor.prepare_rois_for_batch(roi_coords)
     print(f"ROIs shape: {rois.shape}")
-    print(f"ROIs: {rois}")
 
     # Forward pass
     with torch.no_grad():
@@ -312,8 +372,6 @@ if __name__ == "__main__":
     print(f"Masks shape: {output['masks'].shape}")
     print(f"Expected shape: (2, 3, 56, 56)")
 
-    # Test individual components
-    print("\nTesting segmentation head directly...")
-    seg_head = model.segmentation_head
-    masks = seg_head(features, rois)
-    print(f"Direct segmentation head output shape: {masks.shape}")
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"\nTotal parameters: {total_params:,}")
