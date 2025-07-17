@@ -112,6 +112,8 @@ def main():
                         help='Device to use (cuda/cpu)')
     parser.add_argument('--resume', type=str, default=None,
                         help='Resume from checkpoint')
+    parser.add_argument('--resume_epochs', type=int, default=None,
+                        help='Number of additional epochs to train when resuming (overrides --epochs)')
     parser.add_argument('--test_only', action='store_true',
                         help='Only run validation')
 
@@ -231,6 +233,7 @@ def main():
 
     # Resume from checkpoint if specified
     start_epoch = 0
+    total_epochs = args.epochs
     if args.resume:
         print(f"\nResuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=args.device)
@@ -240,7 +243,16 @@ def main():
             trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint.get('epoch', 0)
         trainer.best_miou = checkpoint.get('best_miou', 0.0)
-        print(f"  Starting from epoch {start_epoch + 1}")
+        
+        # Calculate total epochs based on resume_epochs or original epochs
+        if args.resume_epochs is not None:
+            total_epochs = start_epoch + args.resume_epochs
+            print(f"  Resuming from epoch {start_epoch + 1}")
+            print(f"  Training for {args.resume_epochs} additional epochs (until epoch {total_epochs})")
+        else:
+            print(f"  Resuming from epoch {start_epoch + 1}")
+            print(f"  Training until epoch {total_epochs}")
+        
         print(f"  Best mIoU so far: {trainer.best_miou:.4f}")
 
     # Test only mode
@@ -259,10 +271,13 @@ def main():
         return
 
     # Start training
-    print(f"\nStarting training for {args.epochs} epochs...")
+    if args.resume:
+        print(f"\nContinuing training for {total_epochs - start_epoch} epochs...")
+    else:
+        print(f"\nStarting training for {total_epochs} epochs...")
     print("="*50)
 
-    trainer.train(num_epochs=args.epochs, start_epoch=start_epoch)
+    trainer.train(num_epochs=total_epochs, start_epoch=start_epoch)
 
     print("\nTraining completed!")
     print(f"Best mIoU achieved: {trainer.best_miou:.4f}")

@@ -101,7 +101,7 @@ class Trainer:
             'dice_loss': 0.0
         }
 
-        pbar = tqdm(self.train_loader, desc=f'Epoch {self.epoch + 1} - Training')
+        pbar = tqdm(self.train_loader, desc=f'Epoch {self.epoch + 1} - Training', dynamic_ncols=True)
 
         for batch_idx, batch in enumerate(pbar):
             # Move data to device
@@ -178,7 +178,7 @@ class Trainer:
         intersection = torch.zeros(3).to(self.device)
         union = torch.zeros(3).to(self.device)
 
-        pbar = tqdm(self.val_loader, desc=f'Epoch {self.epoch + 1} - Validation')
+        pbar = tqdm(self.val_loader, desc=f'Epoch {self.epoch + 1} - Validation', dynamic_ncols=True)
 
         with torch.no_grad():
             for batch in pbar:

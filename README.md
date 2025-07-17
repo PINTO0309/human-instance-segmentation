@@ -375,6 +375,14 @@ When multiple ROIs overlap, you need to decide how to combine their masks:
 
 ## Training
 
+### Training Features
+
+- **Resume Training**: Continue training from any checkpoint
+- **Flexible Epoch Control**: Specify additional epochs when resuming with `--resume_epochs`
+- **Dynamic Progress Bars**: Automatically adjust to terminal width
+- **Checkpoint Management**: Save models at specified intervals
+- **Best Model Tracking**: Automatically save the best model based on validation mIoU
+
 ### Recommended Training Parameters
 
 Based on extensive experimentation, here are the recommended parameters for different training scenarios:
@@ -447,6 +455,7 @@ uv run python main.py \
 
 #### Fine-tuning from Checkpoint
 ```bash
+# Resume training from checkpoint until original epoch count
 uv run python main.py \
 --resume checkpoints/best_model.pth \
 --epochs 50 \
@@ -457,6 +466,16 @@ uv run python main.py \
 --dice_weight 3.0 \
 --validate_every 1 \
 --save_every 1
+
+# Train for additional epochs from checkpoint
+uv run python main.py \
+--resume checkpoints/checkpoint_epoch_0010_640x640_0850.pth \
+--resume_epochs 20 \
+--batch_size 8 \
+--lr 5e-5 \
+--scheduler cosine \
+--min_lr 1e-7 \
+--dice_weight 3.0
 ```
 
 ### Parameter Selection Guidelines
