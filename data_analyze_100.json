@@ -1,0 +1,636 @@
+{
+  "total_images": 100,
+  "total_instances": 479,
+  "images_with_multiple_instances": 66,
+  "pixel_counts": {
+    "background": 6070922,
+    "target": 4915699,
+    "non_target": 1533722
+  },
+  "pixel_ratios": {
+    "background": 0.4848846393425484,
+    "target": 0.39261695945550373,
+    "non_target": 0.1224984012019479
+  },
+  "instance_overlap_stats": {
+    "total_overlapping_pairs": 125,
+    "avg_iou_between_instances": 0.0018978464777540164,
+    "max_iou_between_instances": 0.0544197233750993
+  },
+  "roi_stats": {
+    "avg_roi_area_ratio": 0.0964490104570307,
+    "avg_instances_per_roi": 2.682672233820459
+  },
+  "per_image_stats": [
+    {
+      "image_id": 357690,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 381967,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 355638,
+      "num_instances": 5,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 149938,
+      "num_instances": 2,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 364444,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 317939,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 97539,
+      "num_instances": 6,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 230567,
+      "num_instances": 7,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 576622,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 263292,
+      "num_instances": 14,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.007818052588615456
+    },
+    {
+      "image_id": 51376,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 269174,
+      "num_instances": 2,
+      "has_overlaps": true,
+      "max_overlap_iou": 4.8715929296552406e-05
+    },
+    {
+      "image_id": 193936,
+      "num_instances": 23,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.000962463907471131
+    },
+    {
+      "image_id": 54162,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 55608,
+      "num_instances": 12,
+      "has_overlaps": true,
+      "max_overlap_iou": 8.079502302005372e-05
+    },
+    {
+      "image_id": 225508,
+      "num_instances": 12,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0003625085592152693
+    },
+    {
+      "image_id": 349695,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 389048,
+      "num_instances": 22,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0002693239966955766
+    },
+    {
+      "image_id": 231614,
+      "num_instances": 7,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0009891196829925225
+    },
+    {
+      "image_id": 574360,
+      "num_instances": 7,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0022202486668648986
+    },
+    {
+      "image_id": 178446,
+      "num_instances": 11,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0002808988763650423
+    },
+    {
+      "image_id": 402115,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 343734,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 133331,
+      "num_instances": 11,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.00019887634862035119
+    },
+    {
+      "image_id": 292120,
+      "num_instances": 9,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0019354838705515087
+    },
+    {
+      "image_id": 529391,
+      "num_instances": 2,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 243212,
+      "num_instances": 2,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 261060,
+      "num_instances": 6,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 85400,
+      "num_instances": 10,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0007185628741941267
+    },
+    {
+      "image_id": 313066,
+      "num_instances": 9,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0029952674773259195
+    },
+    {
+      "image_id": 364885,
+      "num_instances": 10,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0004721435315778867
+    },
+    {
+      "image_id": 170119,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 368072,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 438744,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 414588,
+      "num_instances": 2,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.00010966916468452441
+    },
+    {
+      "image_id": 147409,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 121526,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 179151,
+      "num_instances": 5,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 110514,
+      "num_instances": 3,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.000995769849878368
+    },
+    {
+      "image_id": 12817,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 39434,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 276931,
+      "num_instances": 7,
+      "has_overlaps": true,
+      "max_overlap_iou": 2.8401829076985946e-05
+    },
+    {
+      "image_id": 162204,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 402710,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 337275,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 422157,
+      "num_instances": 9,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0006472491905195797
+    },
+    {
+      "image_id": 256087,
+      "num_instances": 5,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0005303351717723446
+    },
+    {
+      "image_id": 206806,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 135345,
+      "num_instances": 4,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 373945,
+      "num_instances": 2,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 440226,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 487228,
+      "num_instances": 15,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.002219755826037826
+    },
+    {
+      "image_id": 60624,
+      "num_instances": 2,
+      "has_overlaps": true,
+      "max_overlap_iou": 5.733534006941396e-05
+    },
+    {
+      "image_id": 65643,
+      "num_instances": 11,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.006596306065700833
+    },
+    {
+      "image_id": 252403,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 228300,
+      "num_instances": 6,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0007988455393289995
+    },
+    {
+      "image_id": 374886,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 554488,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 237600,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 18179,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 51089,
+      "num_instances": 5,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 118162,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 234319,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 371244,
+      "num_instances": 4,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 293393,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 477097,
+      "num_instances": 6,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 106562,
+      "num_instances": 4,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0005942947700882934
+    },
+    {
+      "image_id": 376490,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 170211,
+      "num_instances": 7,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0009855858074429486
+    },
+    {
+      "image_id": 515823,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 270916,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 325014,
+      "num_instances": 2,
+      "has_overlaps": true,
+      "max_overlap_iou": 3.439357252892917e-05
+    },
+    {
+      "image_id": 94390,
+      "num_instances": 5,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.000457456541523912
+    },
+    {
+      "image_id": 52784,
+      "num_instances": 5,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 187348,
+      "num_instances": 11,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.005741402542537036
+    },
+    {
+      "image_id": 561012,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 482476,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 110616,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 352041,
+      "num_instances": 5,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 424960,
+      "num_instances": 44,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0005122950817047668
+    },
+    {
+      "image_id": 187469,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 424378,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 360811,
+      "num_instances": 3,
+      "has_overlaps": true,
+      "max_overlap_iou": 8.641921963257963e-05
+    },
+    {
+      "image_id": 523217,
+      "num_instances": 3,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0030689126049021757
+    },
+    {
+      "image_id": 61375,
+      "num_instances": 6,
+      "has_overlaps": true,
+      "max_overlap_iou": 6.226650062072645e-05
+    },
+    {
+      "image_id": 470770,
+      "num_instances": 2,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 178984,
+      "num_instances": 4,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.017870722426665125
+    },
+    {
+      "image_id": 196035,
+      "num_instances": 8,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.00013883104260185603
+    },
+    {
+      "image_id": 542260,
+      "num_instances": 11,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0544197233750993
+    },
+    {
+      "image_id": 152600,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 131969,
+      "num_instances": 6,
+      "has_overlaps": true,
+      "max_overlap_iou": 0.0007524454474219543
+    },
+    {
+      "image_id": 471880,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 553493,
+      "num_instances": 2,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 250543,
+      "num_instances": 1,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 194851,
+      "num_instances": 6,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 167525,
+      "num_instances": 2,
+      "has_overlaps": true,
+      "max_overlap_iou": 1.2065200342506122e-05
+    },
+    {
+      "image_id": 23072,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 541627,
+      "num_instances": 3,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 469467,
+      "num_instances": 2,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    },
+    {
+      "image_id": 535655,
+      "num_instances": 5,
+      "has_overlaps": false,
+      "max_overlap_iou": 0.0
+    }
+  ],
+  "recommended_class_weights": {
+    "background": 0.48632224137014635,
+    "target": 0.6003209495324232,
+    "non_target": 1.9133568090974307
+  },
+  "recommended_log_class_weights": {
+    "background": 0.5780919468020103,
+    "target": 0.746760266956844,
+    "non_target": 1.675147786241146
+  }
+}

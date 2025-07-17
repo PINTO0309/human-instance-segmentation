@@ -2,3 +2,8 @@ data/annotations/*.json
 data/images/train2017/*.jpg
 data/images/val2017/*.jpg
 *.onnx
+logs/
+checkpoints/
+.vscode/
+.venv/
+__pycache__/

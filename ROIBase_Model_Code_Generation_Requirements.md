@@ -4,7 +4,7 @@
 # 要件
 3クラスとし、0:背景、1: 推定対象マスク、2: 推定対象外マスク、の３クラスにして、教師ROI（バウンディングボックス）の内側に含まれる教師マスクには推定対象とするマスクと推定対象外のマスクを両方含めるようにすることでアテンションが効きやすい状況を作る。
 
-教師入力１：YOLO ONNX の中間層 (/model.34/Concat_output_0) から抽出した特徴マップ 1x1024x80×80
+教師入力１：YOLO ONNX の中間層 (segmentation_model_34_Concat_output_0) から抽出した特徴マップ 1x1024x80×80
 教師入力２：インスタンスセグメンテーションの推定領域を示す ROI 領域の正規化座標 X1, Y1, X2, Y2 あるいは cx, cy, w, h
 教師入力３：インスタンスセグメンテーションの推定対象マスクと推定対象外マスク含む正解マスク（推定対象マスクと推定対象外マスクのみアノテーションされており、この２つ以外の領域は全て背景とする）
 
@@ -32,7 +32,7 @@ data/annotations/instances_val2017_person_only_no_crowd_100.json : バリデー�
 # 学習
 - 学習対象のモデルはデコーダ部のみ、つまりセグメンテーションヘッドのみとする
 - 学習後の重みを使用してONNXにエクスポート可能になることを考慮する
-- ext_extractor/yolov9_e_wholebody25_0100_1x3x640x640_featext.onnx を使用して推論し /model.34/Concat_output_0 の [1,1024,80,80] の特徴マップを得る
+- ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx を使用して推論し segmentation_model_34_Concat_output_0 の [1,1024,80,80] の特徴マップを得る
 - checkpoints フォルダの配下に 1 epoch ごとに最新のチェックポイント.pthを保存する
 - チェックポイント.pth のファイル名は checkpoint_epoch_{4桁に先頭ゼロ埋めしたepoch数}_{Height}x{Width}_{mIoUの小数点以下を4桁にゼロ埋めした整数}.pth
 - モデルの最終出力形状は入力解像度と同じ解像度のマスクデータとする

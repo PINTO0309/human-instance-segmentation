@@ -1,0 +1,35 @@
+[project]
+name = "human-edge-detection"
+version = "0.1.0"
+description = "ROI-based lightweight instance segmentation model for human detection"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "numpy>=1.24.0",
+    "opencv-python>=4.8.0",
+    "onnx>=1.14.0",
+    "onnxruntime>=1.16.0",
+    "Pillow>=10.0.0",
+    "matplotlib>=3.7.0",
+    "pycocotools>=2.0.7",
+    "tqdm>=4.65.0",
+    "einops>=0.7.0",
+    "tensorboard>=2.14.0",
+    "onnxsim==0.4.30",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/human_edge_detection"]
+
+[tool.uv]
+dev-dependencies = [
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "pytest>=7.4.0",
+    "ipykernel>=6.25.0",
+]
