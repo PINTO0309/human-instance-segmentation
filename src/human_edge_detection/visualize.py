@@ -231,6 +231,9 @@ class ValidationVisualizer:
 
             # Process each annotation
             pred_masks_combined = np.zeros((640, 640), dtype=np.uint8)
+            
+            # Store bbox and instance info for later drawing
+            instance_info = []
 
             for i, ann in enumerate(anns):
                 color = self.colors[i % len(self.colors)]
@@ -244,7 +247,9 @@ class ValidationVisualizer:
 
                 # Draw bbox on GT (red color as specified)
                 self._draw_bbox(draw, bbox, color=(255, 0, 0), width=3)
-                self._draw_instance_number(draw, bbox, i + 1, color)
+                
+                # Store instance info for later
+                instance_info.append((bbox, i + 1, color))
 
                 # Get and draw GT mask
                 if isinstance(ann['segmentation'], list):
@@ -327,6 +332,11 @@ class ValidationVisualizer:
                     target_mask = (full_mask == 1)
                     pred_image = self._apply_mask(pred_image, target_mask, color)
 
+            # Draw all instance numbers on GT image at the end
+            draw = ImageDraw.Draw(gt_pil)
+            for bbox, instance_num, color in instance_info:
+                self._draw_instance_number(draw, bbox, instance_num, color)
+
             # Add images to lists
             all_gt_images.append(gt_pil)
             all_pred_images.append(Image.fromarray(pred_image))
@@ -341,10 +351,15 @@ class ValidationVisualizer:
         if n_images == 0:
             return
 
-        # Calculate dimensions
-        img_width = 640
-        img_height = 640
-        padding = 20
+        # Calculate dimensions with 45% scaling
+        scale_factor = 0.45
+        img_width = int(640 * scale_factor)
+        img_height = int(640 * scale_factor)
+        padding = int(20 * scale_factor)
+
+        # Scale all images
+        gt_images = [img.resize((img_width, img_height), Image.LANCZOS) for img in gt_images]
+        pred_images = [img.resize((img_width, img_height), Image.LANCZOS) for img in pred_images]
 
         # Total dimensions
         total_width = n_images * img_width + (n_images + 1) * padding
@@ -366,15 +381,56 @@ class ValidationVisualizer:
         # Add labels
         draw = ImageDraw.Draw(combined)
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+            # Increase font size by 1.5x
+            font_size = int(30 * scale_factor * 1.5)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
         except:
             font = ImageFont.load_default()
 
-        # Label for GT row
-        draw.text((10, 5), "Ground Truth", fill='black', font=font)
+        # Calculate text sizes for both labels
+        padding = 10
+        gt_text = "Ground Truth"
+        pred_text = "Predictions"
+        
+        # Get text bounding boxes
+        gt_bbox = draw.textbbox((0, 0), gt_text, font=font)
+        pred_bbox = draw.textbbox((0, 0), pred_text, font=font)
+        
+        gt_text_width = gt_bbox[2] - gt_bbox[0]
+        pred_text_width = pred_bbox[2] - pred_bbox[0]
+        
+        # Use the maximum width for both rectangles
+        rect_width = max(gt_text_width, pred_text_width) + 2 * padding
+        
+        # Helper function to draw text in colored rectangle with fixed width
+        def draw_text_in_rectangle(draw, pos, text, bg_color, text_color, font, rect_width, padding=10):
+            x, y = pos
+            
+            # Get text bounding box
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
+            # Draw background rectangle with fixed width
+            rect_x1 = x
+            rect_y1 = y
+            rect_x2 = x + rect_width
+            rect_y2 = y + text_height + 2 * padding
+            draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2], fill=bg_color)
+            
+            # Draw text centered horizontally in rectangle
+            text_x = rect_x1 + (rect_width - text_width) // 2
+            # Adjust y position to account for text baseline
+            text_y = rect_y1 + padding - bbox[1]
+            draw.text((text_x, text_y), text, fill=text_color, font=font)
 
-        # Label for prediction row
-        draw.text((10, img_height + padding + 5), "Predictions", fill='black', font=font)
+        # Label for GT row (white text in light red rectangle)
+        # Light red: RGB(255, 102, 102)
+        draw_text_in_rectangle(draw, (10, 5), gt_text, bg_color=(255, 102, 102), text_color='white', font=font, rect_width=rect_width)
+
+        # Label for prediction row (white text in dark green rectangle)
+        # Dark green: RGB(0, 153, 0)
+        draw_text_in_rectangle(draw, (10, img_height + padding + 5), pred_text, bg_color=(0, 153, 0), text_color='white', font=font, rect_width=rect_width)
 
         # Save image
         filename = f"validation_all_images_epoch_{epoch:04d}.png"
