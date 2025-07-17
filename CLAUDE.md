@@ -68,7 +68,20 @@ uv run python main.py --resume checkpoints/checkpoint_epoch_0010_640x640_0850.pt
 
 ### Run validation only
 ```bash
+# Using main.py
 uv run python main.py --test_only --resume checkpoints/best_model.pth
+
+# Using standalone validation script
+uv run python validate.py checkpoints/best_model.pth
+
+# Validate multiple checkpoints
+uv run python validate.py "checkpoints/*.pth" --multiple --no_visualization
+
+# Validate with custom settings
+uv run python validate.py checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
+  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+  --data_stats data_analyze_full.json \
+  --batch_size 16
 ```
 
 ### Export model to ONNX

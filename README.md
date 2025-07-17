@@ -598,6 +598,68 @@ done
 
 See `CLAUDE.md` for additional training instructions and command examples.
 
+## Validation
+
+### Standalone Validation
+
+You can run validation on trained checkpoints without running the full training pipeline using the `validate.py` script.
+
+#### Validate a Single Checkpoint
+
+```bash
+# Validate best model
+uv run python validate.py checkpoints/best_model.pth
+
+# Validate specific checkpoint with custom settings
+uv run python validate.py checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
+  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+  --data_stats data_analyze_full.json \
+  --batch_size 16 \
+  --num_workers 8
+```
+
+#### Validate Multiple Checkpoints
+
+```bash
+# Validate all checkpoints in directory
+uv run python validate.py "checkpoints/*.pth" --multiple
+
+# Validate checkpoints matching pattern
+uv run python validate.py "checkpoints/checkpoint_epoch_00*.pth" --multiple \
+  --no_visualization  # Skip visualization generation for faster validation
+```
+
+#### Command Line Arguments
+
+- `checkpoint`: Path to checkpoint file or glob pattern (with --multiple)
+- `--val_ann`: Validation annotation file (default: 100 image subset)
+- `--val_img_dir`: Validation images directory (default: data/images/val2017)
+- `--onnx_model`: YOLO ONNX model path
+- `--data_stats`: Data statistics file for class weights
+- `--batch_size`: Batch size for validation (default: 8)
+- `--num_workers`: Number of data loader workers (default: 4)
+- `--device`: Device to use - cuda/cpu (default: cuda)
+- `--no_visualization`: Skip generating visualization images
+- `--val_output_dir`: Output directory for visualizations
+- `--multiple`: Enable validation of multiple checkpoints using glob pattern
+
+#### Output
+
+The validation script provides:
+- Detailed metrics for each checkpoint (Loss, CE Loss, Dice Loss, mIoU)
+- Comparison table when validating multiple checkpoints
+- Optional visualization images (same as during training)
+- Best checkpoint identification based on mIoU
+
+### Validation During Training
+
+Validation is automatically performed during training based on the `--validate_every` parameter. To run validation only without training:
+
+```bash
+# Using main.py with test_only flag
+uv run python main.py --test_only --resume checkpoints/best_model.pth
+```
+
 ## GPU Acceleration and TensorRT Support
 
 ### Installation
