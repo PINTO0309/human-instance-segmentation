@@ -20,6 +20,16 @@ This formulation helps the model better distinguish between multiple person inst
 1. **Environment Setup**
    ```bash
    uv sync
+   
+   # For TensorRT support, set LD_LIBRARY_PATH:
+   # Option 1: Use the activation script
+   source activate.sh
+   
+   # Option 2: If you have direnv installed
+   direnv allow
+   
+   # Option 3: Manually export
+   export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${PWD}/.venv/lib/python3.10/site-packages/tensorrt_libs
    ```
 
 2. **Test Pipeline**

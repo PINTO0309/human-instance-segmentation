@@ -20,6 +20,16 @@
 1. **環境設定**
    ```bash
    uv sync
+   
+   # TensorRTサポートのためLD_LIBRARY_PATHを設定:
+   # オプション1: アクティベーションスクリプトを使用
+   source activate.sh
+   
+   # オプション2: direnvがインストールされている場合
+   direnv allow
+   
+   # オプション3: 手動でエクスポート
+   export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${PWD}/.venv/lib/python3.10/site-packages/tensorrt_libs
    ```
 
 2. **パイプラインテスト**
