@@ -20,14 +20,14 @@
 1. **環境設定**
    ```bash
    uv sync
-   
+
    # TensorRTサポートのためLD_LIBRARY_PATHを設定:
    # オプション1: アクティベーションスクリプトを使用
    source activate.sh
-   
+
    # オプション2: direnvがインストールされている場合
    direnv allow
-   
+
    # オプション3: 手動でエクスポート
    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${PWD}/.venv/lib/python3.10/site-packages/tensorrt_libs
    ```
@@ -622,30 +622,50 @@ done
 
 ```bash
 # ベストモデルの検証
-uv run python validate.py checkpoints/best_model.pth
+uv run python validate.py --checkpoint checkpoints/best_model.pth
 
 # カスタム設定での特定チェックポイントの検証
-uv run python validate.py checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --data_stats data_analyze_full.json \
-  --batch_size 16 \
-  --num_workers 8
+uv run python validate.py --checkpoint checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+--data_stats data_analyze_full.json \
+--batch_size 16 \
+--num_workers 8
+
+# 検証セット内のすべての画像を検証
+uv run python validate.py \
+--checkpoint checkpoints/best_model.pth \
+--validate_all
+
+# 最高パフォーマンスのためにTensorRTを使用
+uv run python validate.py \
+--checkpoint checkpoints/best_model.pth \
+--execution_provider tensorrt
+
+# CPU実行を使用
+uv run python validate.py \
+--checkpoint checkpoints/best_model.pth \
+--execution_provider cpu \
+--device cpu
 ```
 
 #### 複数チェックポイントの検証
 
 ```bash
 # ディレクトリ内のすべてのチェックポイントを検証
-uv run python validate.py "checkpoints/*.pth" --multiple
+uv run python validate.py \
+--checkpoint "checkpoints/*.pth" \
+--multiple
 
 # パターンに一致するチェックポイントを検証
-uv run python validate.py "checkpoints/checkpoint_epoch_00*.pth" --multiple \
-  --no_visualization  # より高速な検証のために可視化生成をスキップ
+uv run python validate.py \
+--checkpoint "checkpoints/checkpoint_epoch_00*.pth" \
+--multiple \
+--no_visualization  # より高速な検証のために可視化生成をスキップ
 ```
 
 #### コマンドライン引数
 
-- `checkpoint`: チェックポイントファイルまたはglobパターンへのパス（--multipleと共に）
+- `--checkpoint`: チェックポイントファイルまたはglobパターンへのパス（--multipleと共に） [必須]
 - `--val_ann`: 検証アノテーションファイル（デフォルト：100画像サブセット）
 - `--val_img_dir`: 検証画像ディレクトリ（デフォルト：data/images/val2017）
 - `--onnx_model`: YOLO ONNXモデルパス
@@ -656,6 +676,8 @@ uv run python validate.py "checkpoints/checkpoint_epoch_00*.pth" --multiple \
 - `--no_visualization`: 可視化画像の生成をスキップ
 - `--val_output_dir`: 可視化の出力ディレクトリ
 - `--multiple`: globパターンを使用した複数チェックポイントの検証を有効にする
+- `--validate_all`: 4つのデフォルトテスト画像だけでなく、アノテーションファイル内のすべての画像を検証
+- `--execution_provider`: ONNX Runtimeの実行プロバイダ - cpu/cuda/tensorrt（デフォルト：cuda）
 
 #### 出力
 
@@ -671,7 +693,9 @@ uv run python validate.py "checkpoints/checkpoint_epoch_00*.pth" --multiple \
 
 ```bash
 # test_onlyフラグでmain.pyを使用
-uv run python main.py --test_only --resume checkpoints/best_model.pth
+uv run python main.py \
+--test_only \
+--resume checkpoints/best_model.pth
 ```
 
 ## GPUアクセラレーションとTensorRTサポート

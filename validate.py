@@ -23,7 +23,9 @@ def validate_checkpoint(
     num_workers: int = 4,
     device: str = 'cuda',
     generate_visualization: bool = True,
-    val_output_dir: str = 'validation_results'
+    val_output_dir: str = 'validation_results',
+    validate_all: bool = False,
+    execution_provider: str = 'cuda'
 ) -> Dict[str, float]:
     """Run validation on a single checkpoint.
     
@@ -38,6 +40,8 @@ def validate_checkpoint(
         device: Device to run on (cuda/cpu)
         generate_visualization: Whether to generate visualization images
         val_output_dir: Output directory for visualizations
+        validate_all: Whether to validate all images from the annotation file instead of just the 4 default test images
+        execution_provider: Execution provider for ONNX Runtime (cpu/cuda/tensorrt)
         
     Returns:
         Dictionary containing validation metrics
@@ -85,10 +89,20 @@ def validate_checkpoint(
     
     print(f"\nValidation dataset size: {len(val_loader.dataset)} samples")
     
+    # Setup providers based on execution_provider option
+    if execution_provider == 'cpu':
+        providers = ['CPUExecutionProvider']
+    elif execution_provider == 'tensorrt':
+        from src.human_edge_detection.feature_extractor import setup_tensorrt_providers
+        providers = setup_tensorrt_providers(Path(onnx_model_path))
+    else:  # cuda (default)
+        providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    
     # Create feature extractor
     feature_extractor = YOLOv9FeatureExtractor(
         onnx_path=onnx_model_path,
-        device=device
+        device=device,
+        providers=providers
     )
     
     # Create model and load weights
@@ -160,7 +174,7 @@ def validate_checkpoint(
             output_dir=val_output_dir,
             device=device
         )
-        visualizer.visualize_validation_images(epoch)
+        visualizer.visualize_validation_images(epoch, validate_all=validate_all)
         print(f"Visualization saved to: {val_output_dir}/")
     
     # Return metrics
@@ -185,7 +199,9 @@ def validate_multiple_checkpoints(
     num_workers: int = 4,
     device: str = 'cuda',
     generate_visualization: bool = False,
-    val_output_dir: str = 'validation_results'
+    val_output_dir: str = 'validation_results',
+    validate_all: bool = False,
+    execution_provider: str = 'cuda'
 ):
     """Validate multiple checkpoints matching a pattern.
     
@@ -218,7 +234,9 @@ def validate_multiple_checkpoints(
             num_workers=num_workers,
             device=device,
             generate_visualization=generate_visualization,
-            val_output_dir=val_output_dir
+            val_output_dir=val_output_dir,
+            validate_all=validate_all,
+            execution_provider=execution_provider
         )
         
         metrics['checkpoint_file'] = Path(checkpoint_path).name
@@ -245,8 +263,8 @@ def validate_multiple_checkpoints(
 def main():
     parser = argparse.ArgumentParser(description='Validate trained checkpoints')
     
-    # Required arguments
-    parser.add_argument('checkpoint', type=str,
+    # Checkpoint argument
+    parser.add_argument('--checkpoint', type=str, required=True,
                         help='Path to checkpoint file or glob pattern for multiple files')
     
     # Data arguments
@@ -281,14 +299,27 @@ def main():
     parser.add_argument('--multiple', action='store_true',
                         help='Validate multiple checkpoints using glob pattern')
     
+    # All images validation
+    parser.add_argument('--validate_all', action='store_true',
+                        help='Validate all images from the annotation file instead of just the 4 default test images')
+    
+    # Execution provider
+    parser.add_argument('--execution_provider', type=str, default='cuda',
+                        choices=['cpu', 'cuda', 'tensorrt'],
+                        help='Execution provider for ONNX Runtime (default: cuda)')
+    
     args = parser.parse_args()
     
     # Check device
     if args.device == 'cuda' and not torch.cuda.is_available():
         print("CUDA not available, using CPU")
         args.device = 'cpu'
+        if args.execution_provider in ['cuda', 'tensorrt']:
+            print("Switching execution provider to CPU")
+            args.execution_provider = 'cpu'
     
     print(f"Using device: {args.device}")
+    print(f"Using execution provider: {args.execution_provider}")
     
     if args.multiple:
         # Validate multiple checkpoints
@@ -302,7 +333,9 @@ def main():
             num_workers=args.num_workers,
             device=args.device,
             generate_visualization=not args.no_visualization,
-            val_output_dir=args.val_output_dir
+            val_output_dir=args.val_output_dir,
+            validate_all=args.validate_all,
+            execution_provider=args.execution_provider
         )
     else:
         # Validate single checkpoint
@@ -320,7 +353,9 @@ def main():
             num_workers=args.num_workers,
             device=args.device,
             generate_visualization=not args.no_visualization,
-            val_output_dir=args.val_output_dir
+            val_output_dir=args.val_output_dir,
+            validate_all=args.validate_all,
+            execution_provider=args.execution_provider
         )
 
 

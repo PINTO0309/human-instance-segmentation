@@ -20,14 +20,14 @@ This formulation helps the model better distinguish between multiple person inst
 1. **Environment Setup**
    ```bash
    uv sync
-   
+
    # For TensorRT support, set LD_LIBRARY_PATH:
    # Option 1: Use the activation script
    source activate.sh
-   
+
    # Option 2: If you have direnv installed
    direnv allow
-   
+
    # Option 3: Manually export
    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${PWD}/.venv/lib/python3.10/site-packages/tensorrt_libs
    ```
@@ -622,30 +622,52 @@ You can run validation on trained checkpoints without running the full training 
 
 ```bash
 # Validate best model
-uv run python validate.py checkpoints/best_model.pth
+uv run python validate.py \
+--checkpoint checkpoints/best_model.pth
 
 # Validate specific checkpoint with custom settings
-uv run python validate.py checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --data_stats data_analyze_full.json \
-  --batch_size 16 \
-  --num_workers 8
+uv run python validate.py \
+--checkpoint checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+--data_stats data_analyze_full.json \
+--batch_size 16 \
+--num_workers 8
+
+# Validate all images in the validation set
+uv run python validate.py \
+--checkpoint checkpoints/best_model.pth \
+--validate_all
+
+# Use TensorRT for maximum performance
+uv run python validate.py \
+--checkpoint checkpoints/best_model.pth \
+--execution_provider tensorrt
+
+# Use CPU execution
+uv run python validate.py \
+--checkpoint checkpoints/best_model.pth \
+--execution_provider cpu \
+--device cpu
 ```
 
 #### Validate Multiple Checkpoints
 
 ```bash
 # Validate all checkpoints in directory
-uv run python validate.py "checkpoints/*.pth" --multiple
+uv run python validate.py \
+--checkpoint "checkpoints/*.pth" \
+--multiple
 
 # Validate checkpoints matching pattern
-uv run python validate.py "checkpoints/checkpoint_epoch_00*.pth" --multiple \
-  --no_visualization  # Skip visualization generation for faster validation
+uv run python validate.py \
+--checkpoint "checkpoints/checkpoint_epoch_00*.pth" \
+--multiple \
+--no_visualization  # Skip visualization generation for faster validation
 ```
 
 #### Command Line Arguments
 
-- `checkpoint`: Path to checkpoint file or glob pattern (with --multiple)
+- `--checkpoint`: Path to checkpoint file or glob pattern (with --multiple) [required]
 - `--val_ann`: Validation annotation file (default: 100 image subset)
 - `--val_img_dir`: Validation images directory (default: data/images/val2017)
 - `--onnx_model`: YOLO ONNX model path
@@ -656,6 +678,8 @@ uv run python validate.py "checkpoints/checkpoint_epoch_00*.pth" --multiple \
 - `--no_visualization`: Skip generating visualization images
 - `--val_output_dir`: Output directory for visualizations
 - `--multiple`: Enable validation of multiple checkpoints using glob pattern
+- `--validate_all`: Validate all images from the annotation file instead of just the 4 default test images
+- `--execution_provider`: Execution provider for ONNX Runtime - cpu/cuda/tensorrt (default: cuda)
 
 #### Output
 
@@ -671,7 +695,9 @@ Validation is automatically performed during training based on the `--validate_e
 
 ```bash
 # Using main.py with test_only flag
-uv run python main.py --test_only --resume checkpoints/best_model.pth
+uv run python main.py \
+--test_only \
+--resume checkpoints/best_model.pth
 ```
 
 ## GPU Acceleration and TensorRT Support
