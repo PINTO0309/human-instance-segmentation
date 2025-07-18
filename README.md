@@ -4,6 +4,8 @@ This repository implements a lightweight ROI-based instance segmentation model f
 
 ## Overview
 
+<img width="1500" height="1000" alt="architecture_diagram" src="https://github.com/user-attachments/assets/4e235e0f-205b-44e2-9126-e5e954fee82e" />
+
 The model uses a 3-class segmentation approach:
 - **Class 0**: Background
 - **Class 1**: Target mask (primary instance in ROI)
