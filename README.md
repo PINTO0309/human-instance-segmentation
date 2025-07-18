@@ -1,5 +1,7 @@
 # ROI-based Instance Segmentation for Human Detection
 
+[English](README.md) | [日本語](README_ja.md)
+
 This repository implements a lightweight ROI-based instance segmentation model for human detection using YOLOv9 features and a custom segmentation decoder.
 
 ## Overview
