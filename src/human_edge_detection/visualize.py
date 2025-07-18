@@ -482,27 +482,69 @@ class ValidationVisualizer:
         gt_scaled = gt_image.resize((img_width, img_height), Image.LANCZOS)
         pred_scaled = pred_image.resize((img_width, img_height), Image.LANCZOS)
         
-        # Create canvas for single image pair
-        total_width = img_width + 2 * padding
-        total_height = 2 * img_height + 3 * padding
+        # Create canvas for side-by-side layout
+        total_width = 2 * img_width + 3 * padding
+        total_height = img_height + 2 * padding
         
         combined = Image.new('RGB', (total_width, total_height), color='white')
         
-        # Place images
+        # Place images side by side
         combined.paste(gt_scaled, (padding, padding))
-        combined.paste(pred_scaled, (padding, img_height + 2 * padding))
+        combined.paste(pred_scaled, (img_width + 2 * padding, padding))
         
         # Add labels
         draw = ImageDraw.Draw(combined)
         try:
-            font_size = int(20 * scale_factor)
+            # Use same font size as in _create_combined_image
+            font_size = int(30 * scale_factor * 1.5)
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
         except:
             font = ImageFont.load_default()
         
-        # Draw labels
-        draw.text((padding, 5), "GT", fill='black', font=font)
-        draw.text((padding, img_height + padding + 5), "Pred", fill='black', font=font)
+        # Calculate text sizes for both labels
+        label_padding = 10
+        gt_text = "Ground Truth"
+        pred_text = "Predictions"
+        
+        # Get text bounding boxes
+        gt_bbox = draw.textbbox((0, 0), gt_text, font=font)
+        pred_bbox = draw.textbbox((0, 0), pred_text, font=font)
+        
+        gt_text_width = gt_bbox[2] - gt_bbox[0]
+        pred_text_width = pred_bbox[2] - pred_bbox[0]
+        
+        # Use the maximum width for both rectangles
+        rect_width = max(gt_text_width, pred_text_width) + 2 * label_padding
+        
+        # Helper function to draw text in colored rectangle with fixed width
+        def draw_text_in_rectangle(draw, pos, text, bg_color, text_color, font, rect_width, padding=10):
+            x, y = pos
+            
+            # Get text bounding box
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
+            # Draw background rectangle with fixed width
+            rect_x1 = x
+            rect_y1 = y
+            rect_x2 = x + rect_width
+            rect_y2 = y + text_height + 2 * padding
+            draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2], fill=bg_color)
+            
+            # Draw text centered horizontally in rectangle
+            text_x = rect_x1 + (rect_width - text_width) // 2
+            # Adjust y position to account for text baseline
+            text_y = rect_y1 + padding - bbox[1]
+            draw.text((text_x, text_y), text, fill=text_color, font=font)
+        
+        # Label for GT image (white text in light red rectangle)
+        # Light red: RGB(255, 102, 102)
+        draw_text_in_rectangle(draw, (10, 5), gt_text, bg_color=(255, 102, 102), text_color='white', font=font, rect_width=rect_width)
+        
+        # Label for prediction image (white text in dark green rectangle)
+        # Dark green: RGB(0, 153, 0)
+        draw_text_in_rectangle(draw, (img_width + padding + 10, 5), pred_text, bg_color=(0, 153, 0), text_color='white', font=font, rect_width=rect_width)
         
         # Create subdirectory for epoch
         epoch_dir = self.output_dir / f'epoch_{epoch:04d}'
