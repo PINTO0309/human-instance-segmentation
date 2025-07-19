@@ -40,7 +40,7 @@ def create_enhanced_data_loaders(
         mask_size=(56, 56),
         min_roi_size=min_roi_size
     )
-    
+
     val_dataset = COCOInstanceSegmentationDataset(
         annotation_file=val_annotation_file,
         image_dir=val_image_dir,
@@ -48,7 +48,7 @@ def create_enhanced_data_loaders(
         mask_size=(56, 56),
         min_roi_size=min_roi_size
     )
-    
+
     # Create data loaders
     train_loader = DataLoader(
         train_dataset,
@@ -57,7 +57,7 @@ def create_enhanced_data_loaders(
         num_workers=num_workers,
         pin_memory=True
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -65,7 +65,7 @@ def create_enhanced_data_loaders(
         num_workers=num_workers,
         pin_memory=True
     )
-    
+
     return train_loader, val_loader
 
 
@@ -92,7 +92,7 @@ def create_optimizer(model, config: dict):
         )
     else:
         raise ValueError(f"Unknown optimizer: {config['optimizer']}")
-    
+
     return optimizer
 
 
@@ -119,7 +119,7 @@ def create_scheduler(optimizer, config: dict):
         )
     else:
         raise ValueError(f"Unknown scheduler: {config['scheduler']}")
-    
+
     return scheduler
 
 
@@ -146,13 +146,13 @@ def create_enhanced_trainer(
         image_size=config.get('image_size', (640, 640)),
         min_roi_size=config.get('min_roi_size', 16)
     )
-    
+
     # Create feature extractor
     feature_extractor = YOLOv9FeatureExtractor(
         onnx_path=onnx_model_path,
         device=device
     )
-    
+
     # Create model
     model = create_model(
         num_classes=config['num_classes'],
@@ -161,7 +161,7 @@ def create_enhanced_trainer(
         mask_size=config['mask_size'],
         roi_size=config.get('roi_size', 28)  # Default to improved ROI size
     )
-    
+
     # Create loss function
     loss_fn = create_loss_function(
         pixel_ratios=pixel_ratios,
@@ -172,13 +172,13 @@ def create_enhanced_trainer(
         device=device,
         separation_aware_weights=separation_aware_weights
     )
-    
+
     # Create optimizer
     optimizer = create_optimizer(model, config)
-    
+
     # Create scheduler
     scheduler = create_scheduler(optimizer, config)
-    
+
     # Create trainer
     trainer = Trainer(
         model=model,
@@ -194,15 +194,15 @@ def create_enhanced_trainer(
         save_every=config.get('save_every', 1),
         validate_every=config.get('validate_every', 1)
     )
-    
+
     # Set gradient clipping if specified
     if config.get('gradient_clip', 0) > 0:
         trainer.gradient_clip_val = config['gradient_clip']
-    
+
     # Create and set validation visualizer
     from pycocotools.coco import COCO
     from .visualize import ValidationVisualizer
-    
+
     val_coco = COCO(val_annotation_file)
     visualizer = ValidationVisualizer(
         model=model,
@@ -213,7 +213,7 @@ def create_enhanced_trainer(
         device=device
     )
     trainer.set_visualizer(visualizer)
-    
+
     return trainer
 
 

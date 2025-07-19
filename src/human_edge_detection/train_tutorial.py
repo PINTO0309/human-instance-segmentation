@@ -83,7 +83,7 @@ class Trainer:
 
         # Validation visualizer (will be set later)
         self.visualizer = None
-        
+
         # Gradient clipping
         self.gradient_clip_val = 0.0
 
@@ -127,11 +127,11 @@ class Trainer:
 
             # Backward pass
             loss.backward()
-            
+
             # Gradient clipping
             if self.gradient_clip_val > 0:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
-            
+
             self.optimizer.step()
 
             # Update metrics
@@ -140,7 +140,7 @@ class Trainer:
 
             # Get current learning rate
             current_lr = self.optimizer.param_groups[0]['lr']
-            
+
             # Update progress bar
             pbar.set_postfix({
                 'loss': f"{loss.item():.4f}",
@@ -228,7 +228,7 @@ class Trainer:
         # Compute mIoU
         iou_per_class = intersection / (union + 1e-6)
         miou = iou_per_class[1:].mean().item()  # Exclude background
-        
+
         # Ensure clean console output after progress bar
         print()  # Add newline after progress bar
 
@@ -248,7 +248,7 @@ class Trainer:
         # Create checkpoint filename
         # checkpoint_epoch_{4桁epoch}_{Height}x{Width}_{mIoU4桁整数}.pth
         miou_int = int(miou * 10000)
-        filename = f"checkpoint_epoch_{self.epoch:04d}_640x640_{miou_int:04d}.pth"
+        filename = f"checkpoint_epoch_{self.epoch + 1:04d}_640x640_{miou_int:04d}.pth"
         filepath = self.checkpoint_dir / filename
 
         # Save checkpoint
@@ -292,7 +292,7 @@ class Trainer:
             # Validation
             if (epoch + 1) % self.validate_every == 0:
                 val_losses, miou = self.validate()
-                
+
                 # Display validation results prominently
                 print(f"\n{'='*50}")
                 print(f"Validation Results - Epoch {epoch + 1}")
