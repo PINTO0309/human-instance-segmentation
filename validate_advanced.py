@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""Standalone validation script for models trained with run_experiments.py."""
+
+import argparse
+import json
+import torch
+import warnings
+from pathlib import Path
+from typing import Dict, Optional, Tuple
+import torch.nn as nn
+
+# Suppress FutureWarning messages
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+from src.human_edge_detection.feature_extractor import YOLOv9FeatureExtractor
+from src.human_edge_detection.model import create_model
+from src.human_edge_detection.losses import create_loss_function
+from src.human_edge_detection.train_utils import evaluate_model
+from src.human_edge_detection.dataset import COCOInstanceSegmentationDataset
+from src.human_edge_detection.dataset_adapter import create_collate_fn
+from torch.utils.data import DataLoader
+from pycocotools.coco import COCO
+
+# Import advanced components
+from src.human_edge_detection.advanced.multi_scale_model import create_multiscale_model
+from src.human_edge_detection.advanced.distance_aware_loss import create_distance_aware_loss
+from src.human_edge_detection.advanced.cascade_segmentation import create_cascade_model, CascadeLoss
+from src.human_edge_detection.advanced.visualization_adapter import AdvancedValidationVisualizer
+from src.human_edge_detection.experiments.config_manager import ExperimentConfig
+
+
+def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optional[object]]:
+    """Build model based on configuration.
+
+    Returns:
+        model: The segmentation model
+        feature_extractor: Feature extractor (if using base model)
+    """
+    if config.multiscale.enabled:
+        # Multi-scale model
+        model = create_multiscale_model(
+            onnx_model_path=config.model.onnx_model,
+            target_layers=config.multiscale.target_layers,
+            num_classes=config.model.num_classes,
+            roi_size=config.model.roi_size,
+            mask_size=config.model.mask_size,
+            fusion_method=config.multiscale.fusion_method,
+            execution_provider=config.model.execution_provider
+        )
+
+        # Apply cascade if enabled
+        if config.cascade.enabled:
+            model = create_cascade_model(
+                base_model=model,
+                num_classes=config.model.num_classes,
+                cascade_stages=config.cascade.num_stages,
+                share_features=config.cascade.share_features
+            )
+
+        feature_extractor = None  # Integrated in model
+
+    else:
+        # Base single-scale model
+        feature_extractor = YOLOv9FeatureExtractor(
+            onnx_path=config.model.onnx_model,
+            execution_provider=config.model.execution_provider
+        )
+
+        model = create_model(
+            num_classes=config.model.num_classes,
+            roi_size=config.model.roi_size,
+            mask_size=config.model.mask_size
+        )
+
+    return model.to(device), feature_extractor
+
+
+def build_loss_function(
+    config: ExperimentConfig,
+    data_stats: Optional[Dict] = None
+) -> nn.Module:
+    """Build loss function based on configuration."""
+
+    if config.distance_loss.enabled:
+        # Distance-aware loss
+        base_loss = create_loss_function(
+            num_classes=config.model.num_classes,
+            data_stats=data_stats,
+            ce_weight=config.training.ce_weight,
+            dice_weight=config.training.dice_weight
+        )
+
+        loss_fn = create_distance_aware_loss(
+            base_loss=base_loss,
+            boundary_width=config.distance_loss.boundary_width,
+            boundary_weight=config.distance_loss.boundary_weight,
+            instance_sep_weight=config.distance_loss.instance_sep_weight,
+            adaptive=config.distance_loss.adaptive,
+            adaptation_rate=config.distance_loss.adaptation_rate
+        )
+
+    elif config.cascade.enabled and config.multiscale.enabled:
+        # Cascade loss
+        base_loss = create_loss_function(
+            num_classes=config.model.num_classes,
+            data_stats=data_stats,
+            ce_weight=config.training.ce_weight,
+            dice_weight=config.training.dice_weight
+        )
+        loss_fn = CascadeLoss(
+            base_loss=base_loss,
+            stage_weights=config.cascade.stage_weights
+        )
+
+    else:
+        # Standard loss
+        loss_fn = create_loss_function(
+            num_classes=config.model.num_classes,
+            data_stats=data_stats,
+            ce_weight=config.training.ce_weight,
+            dice_weight=config.training.dice_weight
+        )
+
+    return loss_fn
+
+
+def validate_advanced_checkpoint(
+    checkpoint_path: str,
+    device: str = 'cuda',
+    generate_visualization: bool = True,
+    validate_all: bool = False,
+    override_config: Optional[Dict] = None
+) -> Dict[str, float]:
+    """Validate a checkpoint from run_experiments.py.
+
+    Args:
+        checkpoint_path: Path to the checkpoint file
+        device: Device to run on (cuda/cpu)
+        generate_visualization: Whether to generate visualization images
+        validate_all: Whether to validate all images or just default test images
+        override_config: Optional config overrides
+
+    Returns:
+        Dictionary containing validation metrics
+    """
+    print(f"Loading checkpoint: {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    # Extract configuration from checkpoint
+    config_dict = checkpoint['config']
+    if override_config:
+        # Apply overrides
+        for key, value in override_config.items():
+            keys = key.split('.')
+            d = config_dict
+            for k in keys[:-1]:
+                d = d[k]
+            d[keys[-1]] = value
+
+    # Create config object
+    config = ExperimentConfig(**config_dict)
+
+    # Get experiment directory
+    checkpoint_path = Path(checkpoint_path)
+    exp_dir = checkpoint_path.parent.parent
+
+    print(f"\nExperiment: {config.name}")
+    print(f"Description: {config.description}")
+    print(f"Features enabled:")
+    print(f"  - Multi-scale: {config.multiscale.enabled}")
+    print(f"  - Distance loss: {config.distance_loss.enabled}")
+    print(f"  - Cascade: {config.cascade.enabled}")
+    print(f"  - Relational: {config.relational.enabled}")
+
+    # Build model
+    print("\nBuilding model...")
+    model, feature_extractor = build_model(config, device)
+
+    # Load model weights
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+
+    # Load data statistics
+    data_stats = None
+    if config.data.data_stats:
+        data_stats_path = Path(config.data.data_stats)
+        if data_stats_path.exists():
+            print(f"Loading data statistics from {data_stats_path}")
+            with open(data_stats_path, 'r') as f:
+                data_stats = json.load(f)
+
+    # Build loss function
+    loss_fn = build_loss_function(config, data_stats)
+
+    # Create validation dataset
+    print("\nLoading validation dataset...")
+    val_dataset = COCOInstanceSegmentationDataset(
+        annotation_file=config.data.val_annotation,
+        img_dir=config.data.val_img_dir,
+        transform=None  # No augmentation for validation
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config.training.batch_size,
+        shuffle=False,
+        num_workers=config.data.num_workers,
+        pin_memory=config.data.pin_memory,
+        collate_fn=create_collate_fn(pad_value=0)
+    )
+
+    print(f"Validation samples: {len(val_dataset)}")
+
+    # Run validation
+    print("\nRunning validation...")
+    val_metrics = evaluate_model(
+        model, val_loader, loss_fn, device,
+        feature_extractor=feature_extractor,
+        config=config
+    )
+
+    # Print results
+    print(f"\nValidation Results:")
+    print(f"  Total Loss: {val_metrics['total_loss']:.4f}")
+    print(f"  CE Loss: {val_metrics['ce_loss']:.4f}")
+    print(f"  Dice Loss: {val_metrics['dice_loss']:.4f}")
+    print(f"  mIoU: {val_metrics['miou']:.4f}")
+
+    for i in range(config.model.num_classes):
+        print(f"  IoU Class {i}: {val_metrics[f'iou_class_{i}']:.4f}")
+
+    # Generate visualization if requested
+    if generate_visualization:
+        print("\nGenerating validation visualization...")
+        val_coco = COCO(config.data.val_annotation)
+
+        # Create output directory
+        vis_output_dir = exp_dir / 'validation_results'
+        vis_output_dir.mkdir(exist_ok=True)
+
+        visualizer = AdvancedValidationVisualizer(
+            model=model,
+            feature_extractor=feature_extractor,
+            coco=val_coco,
+            image_dir=config.data.val_img_dir,
+            output_dir=vis_output_dir,
+            device=device,
+            is_multiscale=config.multiscale.enabled
+        )
+
+        # Use epoch from checkpoint or -1 for display
+        epoch = checkpoint.get('epoch', -1)
+        visualizer.visualize_validation_images(epoch, validate_all=validate_all)
+
+    return val_metrics
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Validate models trained with run_experiments.py')
+
+    parser.add_argument('checkpoint', type=str,
+                        help='Path to checkpoint file (.pth)')
+    parser.add_argument('--device', type=str, default='cuda',
+                        help='Device to run on (cuda/cpu)')
+    parser.add_argument('--no_visualization', action='store_true',
+                        help='Skip generating visualization images')
+    parser.add_argument('--validate_all', action='store_true',
+                        help='Validate all images instead of default test images')
+    parser.add_argument('--override', type=str, action='append',
+                        help='Override config values (e.g., --override data.batch_size=16)')
+
+    args = parser.parse_args()
+
+    # Parse config overrides
+    override_config = {}
+    if args.override:
+        for override in args.override:
+            key, value = override.split('=')
+            # Try to parse value as JSON, otherwise keep as string
+            try:
+                value = json.loads(value)
+            except:
+                pass
+            override_config[key] = value
+
+    # Run validation
+    metrics = validate_advanced_checkpoint(
+        checkpoint_path=args.checkpoint,
+        device=args.device,
+        generate_visualization=not args.no_visualization,
+        validate_all=args.validate_all,
+        override_config=override_config
+    )
+
+    # Save metrics
+    checkpoint_path = Path(args.checkpoint)
+    metrics_path = checkpoint_path.parent / f'{checkpoint_path.stem}_validation_metrics.json'
+    with open(metrics_path, 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print(f"\nSaved validation metrics to {metrics_path}")
+
+
+if __name__ == '__main__':
+    main()
