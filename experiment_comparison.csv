@@ -1,0 +1,4 @@
+experiment,multiscale,distance_loss,cascade,best_miou,best_epoch
+baseline,False,False,False,0.18685947615835016,0
+multiscale,True,False,False,0.42567997140266867,0
+multiscale_distance,True,True,False,0.4295594701280695,0

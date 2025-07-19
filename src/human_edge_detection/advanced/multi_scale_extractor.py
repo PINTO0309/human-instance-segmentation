@@ -90,9 +90,26 @@ class MultiScaleYOLOFeatureExtractor:
             'tensorrt': ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
         }
         
+        # Get providers list
+        provider_list = providers.get(self.execution_provider, ['CPUExecutionProvider'])
+        
+        # Special handling for TensorRT
+        if self.execution_provider == 'tensorrt':
+            # TensorRT provider options
+            tensorrt_options = {
+                'trt_engine_cache_enable': True,
+                'trt_engine_cache_path': str(self.model_path.parent),
+                'trt_fp16_enable': True,
+            }
+            provider_list = [
+                ('TensorrtExecutionProvider', tensorrt_options),
+                'CUDAExecutionProvider',
+                'CPUExecutionProvider'
+            ]
+        
         self.session = ort.InferenceSession(
             str(self.model_path),
-            providers=providers.get(self.execution_provider, ['CPUExecutionProvider'])
+            providers=provider_list
         )
         
         # Get model info
@@ -110,10 +127,15 @@ class MultiScaleYOLOFeatureExtractor:
                 if output.name == spec['name'] and layer_id in self.target_layers:
                     self.output_map[layer_id] = output.name
                     
+        # Get actual provider being used
+        actual_providers = self.session.get_providers()
+        
         print(f"Initialized MultiScaleFeatureExtractor:")
         print(f"  Model: {self.model_path}")
         print(f"  Target layers: {self.target_layers}")
         print(f"  Output map: {self.output_map}")
+        print(f"  Requested provider: {self.execution_provider}")
+        print(f"  Actual providers: {actual_providers}")
         
     def extract_features(self, image_batch: torch.Tensor) -> Dict[str, torch.Tensor]:
         """Extract multi-scale features from image batch.

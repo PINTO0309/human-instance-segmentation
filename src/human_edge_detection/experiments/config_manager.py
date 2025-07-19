@@ -68,7 +68,7 @@ class TrainingConfig:
 
     # Validation
     validate_every: int = 1
-    save_every: int = 5
+    save_every: int = 1
     early_stopping_patience: int = 10
 
     # Loss weights
@@ -79,7 +79,7 @@ class TrainingConfig:
 @dataclass
 class DataConfig:
     """Data configuration."""
-    train_annotation: str = 'data/annotations/instances_train2017_person_only_no_crow_500.json'
+    train_annotation: str = 'data/annotations/instances_train2017_person_only_no_crowd_500.json'
     val_annotation: str = 'data/annotations/instances_val2017_person_only_no_crowd_100.json'
     train_img_dir: str = 'data/images/train2017'
     val_img_dir: str = 'data/images/val2017'
@@ -101,7 +101,7 @@ class ModelConfig:
     num_classes: int = 3
     roi_size: int = 28
     mask_size: int = 56
-    execution_provider: str = 'cuda'
+    execution_provider: str = 'tensorrt'
 
 
 @dataclass

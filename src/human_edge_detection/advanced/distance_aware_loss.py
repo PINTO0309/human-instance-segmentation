@@ -252,7 +252,11 @@ class DistanceAwareSegmentationLoss(nn.Module):
             total_loss: Combined loss value
             loss_dict: Dictionary with loss components
         """
-        N, C, H, W = predictions.shape
+        # Handle both batch format (B, C, H, W) and ROI format (N_rois, C, H, W)
+        if len(predictions.shape) == 4:
+            N, C, H, W = predictions.shape
+        else:
+            raise ValueError(f"Expected 4D predictions, got shape {predictions.shape}")
         
         # Compute base CE loss (per-pixel)
         ce_loss_map = self.ce_loss(predictions, targets)

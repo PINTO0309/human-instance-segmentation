@@ -7,7 +7,15 @@ from typing import Dict, Optional, Tuple
 from tqdm import tqdm
 
 from .model import ROIBatchProcessor
-from .utils import calculate_iou
+def calculate_iou(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """Calculate IoU between predicted and target masks."""
+    intersection = (pred & target).float().sum()
+    union = (pred | target).float().sum()
+    
+    if union == 0:
+        return 1.0 if intersection == 0 else 0.0
+    
+    return (intersection / union).item()
 
 
 def evaluate_model(
@@ -43,7 +51,7 @@ def evaluate_model(
     num_batches = 0
     
     with torch.no_grad():
-        progress_bar = tqdm(dataloader, desc='Validation')
+        progress_bar = tqdm(dataloader, desc='Validation', dynamic_ncols=True, leave=False)
         
         for batch in progress_bar:
             # Move to device
@@ -60,14 +68,15 @@ def evaluate_model(
             # Forward pass
             if config and config.multiscale.enabled:
                 # Multi-scale model
-                if config.cascade.enabled:
+                if config.cascade.enabled and hasattr(model, 'cascade_head'):
+                    # Only use return_all_stages if model actually supports cascade
                     predictions = model(features, rois, return_all_stages=True)
                 else:
                     predictions = model(features, rois)
             else:
-                # Base model with ROI processor
-                roi_processor = ROIBatchProcessor(model)
-                predictions = roi_processor(features, rois)
+                # Base model - call with named arguments
+                output = model(features=features, rois=rois)
+                predictions = output['masks']
                 
             # Compute loss
             instance_info = batch.get('instance_info') if config and config.distance_loss.enabled else None
@@ -77,7 +86,11 @@ def evaluate_model(
                 loss, loss_dict = loss_fn(predictions, masks, instance_info)
                 pred_for_metrics = predictions[-1]  # Last stage
             else:
-                loss, loss_dict = loss_fn(predictions, masks, instance_info)
+                # Standard loss - check if distance loss is enabled
+                if config and config.distance_loss.enabled:
+                    loss, loss_dict = loss_fn(predictions, masks, instance_info)
+                else:
+                    loss, loss_dict = loss_fn(predictions, masks)
                 pred_for_metrics = predictions
                 
             # Update loss metrics

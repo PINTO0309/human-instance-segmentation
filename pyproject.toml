@@ -22,6 +22,7 @@ dependencies = [
     "pandas>=2.3.1",
     "seaborn>=0.13.2",
     "pyyaml>=6.0.2",
+    "scipy>=1.15.3",
 ]
 
 [build-system]

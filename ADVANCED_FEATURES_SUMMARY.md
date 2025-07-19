@@ -64,27 +64,27 @@
 
 ```bash
 # ベースライン（シングルスケール）
-python train_advanced.py --config baseline
+uv run python train_advanced.py --config baseline
 
 # マルチスケール特徴のみ
-python train_advanced.py --config multiscale
+uv run python train_advanced.py --config multiscale
 
 # マルチスケール + 距離認識ロス
-python train_advanced.py --config multiscale_distance
+uv run python train_advanced.py --config multiscale_distance
 
 # 全機能有効
-python train_advanced.py --config full
+uv run python train_advanced.py --config full
 ```
 
 ### カスタム設定での実行
 
 ```bash
 # 特定の層のみ使用
-python train_advanced.py --config multiscale \
+uv run python train_advanced.py --config multiscale \
   --config_modifications '{"multiscale.target_layers": ["layer_5", "layer_34"]}'
 
 # バッチサイズとエポック数の変更
-python train_advanced.py --config multiscale_distance \
+uv run python train_advanced.py --config multiscale_distance \
   --config_modifications '{"training.batch_size": 32, "training.num_epochs": 50}'
 ```
 
@@ -92,10 +92,10 @@ python train_advanced.py --config multiscale_distance \
 
 ```bash
 # 主要な設定で実験を実行して比較
-python run_experiments.py --configs baseline multiscale multiscale_distance full --epochs 20
+uv run python run_experiments.py --configs baseline multiscale multiscale_distance full --epochs 20
 
 # 既存の結果のみ比較
-python run_experiments.py --skip_training
+uv run python run_experiments.py --skip_training
 ```
 
 ## 推奨される検証手順
@@ -103,36 +103,36 @@ python run_experiments.py --skip_training
 ### Phase 1: ベースライン確立（1-2日）
 ```bash
 # シンプルな設定で動作確認
-python train_advanced.py --config baseline --config_modifications '{"training.num_epochs": 10}'
+uv run python train_advanced.py --config baseline --config_modifications '{"training.num_epochs": 10}'
 ```
 
 ### Phase 2: マルチスケール検証（2-3日）
 ```bash
 # マルチスケールの効果を確認
-python train_advanced.py --config multiscale --config_modifications '{"training.num_epochs": 30}'
+uv run python train_advanced.py --config multiscale --config_modifications '{"training.num_epochs": 30}'
 
 # 異なる層の組み合わせを試す
-python train_advanced.py --config multiscale \
+uv run python train_advanced.py --config multiscale \
   --config_modifications '{"multiscale.target_layers": ["layer_3", "layer_34"]}'
 ```
 
 ### Phase 3: 距離ロス追加（2-3日）
 ```bash
 # 距離認識ロスの効果を確認
-python train_advanced.py --config multiscale_distance
+uv run python train_advanced.py --config multiscale_distance
 
 # 境界重みの調整
-python train_advanced.py --config multiscale_distance \
+uv run python train_advanced.py --config multiscale_distance \
   --config_modifications '{"distance_loss.boundary_weight": 3.0, "distance_loss.instance_sep_weight": 4.0}'
 ```
 
 ### Phase 4: カスケード追加（3-4日）
 ```bash
 # カスケードの効果を確認
-python train_advanced.py --config multiscale_cascade
+uv run python train_advanced.py --config multiscale_cascade
 
 # 全機能での最終評価
-python train_advanced.py --config full
+uv run python train_advanced.py --config full
 ```
 
 ## 設定ファイルの構造
@@ -181,14 +181,53 @@ uv add scipy
 ### ONNX Runtime エラー
 ```bash
 # CUDAプロバイダーが使えない場合
---config_modifications '{"model.execution_provider": "cpu"}'
+uv run python train_advanced.py --config baseline \
+  --config_modifications '{"model.execution_provider": "cpu"}'
 ```
 
 ### メモリ不足
 ```bash
 # バッチサイズとワーカー数を減らす
---config_modifications '{"training.batch_size": 8, "data.num_workers": 4}'
+uv run python train_advanced.py --config multiscale \
+  --config_modifications '{"training.batch_size": 8, "data.num_workers": 4}'
 ```
+
+## Running Experiments
+
+Run multiple experiments with different configurations:
+
+```bash
+# Run all configurations with default settings
+uv run python run_experiments.py
+
+# Run specific configurations with custom settings
+uv run python run_experiments.py \
+  --configs baseline multiscale multiscale_distance \
+  --epochs 50 \
+  --batch_size 16
+
+# Compare existing results without training
+uv run python run_experiments.py --skip_training
+
+# Export ONNX models for existing experiments
+uv run python run_experiments.py --export_onnx --configs baseline
+```
+
+### ONNX Export
+
+Before each experiment starts, if a previous best model exists, it will be automatically exported to ONNX format. You can also export existing models manually:
+
+```bash
+# Export specific model to ONNX
+uv run python -m src.human_edge_detection.export_onnx \
+  --checkpoint experiments/baseline/checkpoints/best_model.pth \
+  --output experiments/baseline/checkpoints/best_model.onnx
+
+# Export all experiment models
+uv run python run_experiments.py --export_onnx
+```
+
+Note: ONNX export is currently supported only for baseline single-scale models. Multi-scale models require custom export logic due to their multiple feature inputs.
 
 ## 次のステップ
 

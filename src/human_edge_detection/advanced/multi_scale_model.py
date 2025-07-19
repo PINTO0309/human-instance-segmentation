@@ -36,7 +36,6 @@ class MultiScaleRoIAlign(nn.Module):
         for layer_id, stride in feature_strides.items():
             self.roi_aligns[layer_id] = DynamicRoIAlign(
                 spatial_scale=1.0 / stride,
-                output_size=(roi_size, roi_size),
                 sampling_ratio=sampling_ratio,
                 aligned=True
             )
@@ -59,7 +58,9 @@ class MultiScaleRoIAlign(nn.Module):
         
         for layer_id, feat in features.items():
             if layer_id in self.roi_aligns:
-                roi_features[layer_id] = self.roi_aligns[layer_id](feat, rois)
+                roi_features[layer_id] = self.roi_aligns[layer_id](
+                    feat, rois, self.roi_size, self.roi_size
+                )
                 
         return roi_features
     
@@ -172,7 +173,10 @@ class MultiScaleFeatureFusion(nn.Module):
         if self.fusion_method == 'adaptive':
             # Weighted sum with learnable weights
             weights = F.softmax(self.fusion_weights[:len(reduced_features)], dim=0)
-            fused = sum(w * f for w, f in zip(weights, reduced_features))
+            # Use torch operations to avoid tracer warning
+            stacked_features = torch.stack(reduced_features, dim=0)
+            weights_expanded = weights.view(-1, 1, 1, 1, 1)
+            fused = (stacked_features * weights_expanded).sum(dim=0)
             
         elif self.fusion_method == 'concat':
             # Concatenate and project
@@ -180,8 +184,8 @@ class MultiScaleFeatureFusion(nn.Module):
             fused = self.fusion_proj(fused)
             
         elif self.fusion_method == 'sum':
-            # Simple sum
-            fused = sum(reduced_features)
+            # Simple sum using torch operations
+            fused = torch.stack(reduced_features, dim=0).sum(dim=0)
             
         else:
             raise ValueError(f"Unknown fusion method: {self.fusion_method}")

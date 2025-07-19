@@ -464,11 +464,16 @@ class ValidationVisualizer:
         # Dark green: RGB(0, 153, 0)
         draw_text_in_rectangle(draw, (10, img_height + padding + 5), pred_text, bg_color=(0, 153, 0), text_color='white', font=font, rect_width=rect_width)
 
+        # Resize to 60% before saving
+        resized_width = int(combined.width * 0.6)
+        resized_height = int(combined.height * 0.6)
+        combined_resized = combined.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+        
         # Save image
         filename = f"validation_all_images_epoch_{epoch:04d}.png"
         output_path = self.output_dir / filename
-        combined.save(output_path)
-        print(f"Saved validation visualization: {output_path}")
+        combined_resized.save(output_path)
+        print(f"Saved validation visualization (60% size): {output_path}")
     
     def _save_individual_image(self, gt_image: Image.Image, pred_image: Image.Image, epoch: int, filename: str):
         """Save individual validation result for a single image."""
