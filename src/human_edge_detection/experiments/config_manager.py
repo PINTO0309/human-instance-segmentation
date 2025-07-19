@@ -49,28 +49,28 @@ class RelationalConfig:
 class TrainingConfig:
     """Training configuration."""
     # Basic settings
-    batch_size: int = 16
+    batch_size: int = 8
     learning_rate: float = 1e-3
     num_epochs: int = 100
-    
+
     # Optimizer
     optimizer: str = 'adamw'
     weight_decay: float = 1e-4
-    
+
     # Scheduler
     scheduler: str = 'cosine'
     min_lr: float = 1e-6
     warmup_epochs: int = 5
-    
+
     # Training options
     gradient_clip: float = 5.0
     mixed_precision: bool = True
-    
+
     # Validation
     validate_every: int = 1
     save_every: int = 5
     early_stopping_patience: int = 10
-    
+
     # Loss weights
     ce_weight: float = 1.0
     dice_weight: float = 1.0
@@ -79,16 +79,16 @@ class TrainingConfig:
 @dataclass
 class DataConfig:
     """Data configuration."""
-    train_annotation: str = 'data/annotations/instances_train2017_person_only_no_crowd.json'
-    val_annotation: str = 'data/annotations/instances_val2017_person_only_no_crowd.json'
+    train_annotation: str = 'data/annotations/instances_train2017_person_only_no_crow_500.json'
+    val_annotation: str = 'data/annotations/instances_val2017_person_only_no_crowd_100.json'
     train_img_dir: str = 'data/images/train2017'
     val_img_dir: str = 'data/images/val2017'
     data_stats: str = 'data_analyze_full.json'
-    
+
     # Data loading
     num_workers: int = 8
     pin_memory: bool = True
-    
+
     # Augmentation
     use_augmentation: bool = True
     augmentation_prob: float = 0.5
@@ -109,7 +109,7 @@ class ExperimentConfig:
     """Complete experiment configuration."""
     name: str
     description: str = ""
-    
+
     # Sub-configurations
     model: ModelConfig = field(default_factory=ModelConfig)
     data: DataConfig = field(default_factory=DataConfig)
@@ -118,16 +118,16 @@ class ExperimentConfig:
     distance_loss: DistanceLossConfig = field(default_factory=DistanceLossConfig)
     cascade: CascadeConfig = field(default_factory=CascadeConfig)
     relational: RelationalConfig = field(default_factory=RelationalConfig)
-    
+
     # Output settings
     output_dir: str = 'experiments'
     checkpoint_dir: str = 'checkpoints'
     log_dir: str = 'logs'
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return asdict(self)
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ExperimentConfig':
         """Create from dictionary."""
@@ -146,14 +146,14 @@ class ExperimentConfig:
             data['cascade'] = CascadeConfig(**data['cascade'])
         if 'relational' in data and isinstance(data['relational'], dict):
             data['relational'] = RelationalConfig(**data['relational'])
-            
+
         return cls(**data)
-    
+
     def save(self, path: str):
         """Save configuration to file."""
         path = Path(path)
         data = self.to_dict()
-        
+
         if path.suffix == '.json':
             with open(path, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -162,12 +162,12 @@ class ExperimentConfig:
                 yaml.dump(data, f, default_flow_style=False)
         else:
             raise ValueError(f"Unsupported file format: {path.suffix}")
-            
+
     @classmethod
     def load(cls, path: str) -> 'ExperimentConfig':
         """Load configuration from file."""
         path = Path(path)
-        
+
         if path.suffix == '.json':
             with open(path, 'r') as f:
                 data = json.load(f)
@@ -176,20 +176,20 @@ class ExperimentConfig:
                 data = yaml.safe_load(f)
         else:
             raise ValueError(f"Unsupported file format: {path.suffix}")
-            
+
         return cls.from_dict(data)
 
 
 class ConfigManager:
     """Manager for experiment configurations."""
-    
+
     # Predefined configurations
     CONFIGS = {
         'baseline': ExperimentConfig(
             name='baseline',
             description='Baseline single-scale model'
         ),
-        
+
         'multiscale': ExperimentConfig(
             name='multiscale',
             description='Multi-scale features only',
@@ -199,7 +199,7 @@ class ConfigManager:
                 fusion_method='adaptive'
             )
         ),
-        
+
         'multiscale_distance': ExperimentConfig(
             name='multiscale_distance',
             description='Multi-scale + distance-aware loss',
@@ -215,7 +215,7 @@ class ConfigManager:
                 instance_sep_weight=3.0
             )
         ),
-        
+
         'multiscale_cascade': ExperimentConfig(
             name='multiscale_cascade',
             description='Multi-scale + cascade',
@@ -230,7 +230,7 @@ class ConfigManager:
                 stage_weights=[0.3, 0.3, 0.4]
             )
         ),
-        
+
         'full': ExperimentConfig(
             name='full',
             description='All features enabled',
@@ -252,7 +252,7 @@ class ConfigManager:
                 stage_weights=[0.3, 0.3, 0.4]
             )
         ),
-        
+
         'efficient': ExperimentConfig(
             name='efficient',
             description='Efficient configuration with fewer layers',
@@ -269,21 +269,21 @@ class ConfigManager:
             )
         )
     }
-    
+
     @classmethod
     def get_config(cls, name: str) -> ExperimentConfig:
         """Get a predefined configuration."""
         if name not in cls.CONFIGS:
             raise ValueError(f"Unknown config: {name}. Available: {list(cls.CONFIGS.keys())}")
-            
+
         # Return a deep copy to avoid mutations
         return copy.deepcopy(cls.CONFIGS[name])
-    
+
     @classmethod
     def list_configs(cls) -> List[str]:
         """List available configurations."""
         return list(cls.CONFIGS.keys())
-    
+
     @classmethod
     def create_custom_config(
         cls,
@@ -292,7 +292,7 @@ class ConfigManager:
     ) -> ExperimentConfig:
         """Create a custom config based on a predefined one."""
         config = cls.get_config(base_config)
-        
+
         # Apply modifications
         for key, value in modifications.items():
             if '.' in key:
@@ -304,14 +304,14 @@ class ConfigManager:
                 setattr(obj, parts[-1], value)
             else:
                 setattr(config, key, value)
-                
+
         return config
 
 
 def create_experiment_dirs(config: ExperimentConfig) -> Dict[str, Path]:
     """Create experiment directories."""
     base_dir = Path(config.output_dir) / config.name
-    
+
     dirs = {
         'base': base_dir,
         'checkpoints': base_dir / 'checkpoints',
@@ -319,33 +319,33 @@ def create_experiment_dirs(config: ExperimentConfig) -> Dict[str, Path]:
         'configs': base_dir / 'configs',
         'visualizations': base_dir / 'visualizations'
     }
-    
+
     for dir_path in dirs.values():
         dir_path.mkdir(parents=True, exist_ok=True)
-        
+
     return dirs
 
 
 if __name__ == "__main__":
     # Test configuration management
     print("Testing ConfigManager...")
-    
+
     # List available configs
     print(f"Available configs: {ConfigManager.list_configs()}")
-    
+
     # Get baseline config
     baseline = ConfigManager.get_config('baseline')
     print(f"\nBaseline config: {baseline.name}")
     print(f"  Multiscale enabled: {baseline.multiscale.enabled}")
     print(f"  Distance loss enabled: {baseline.distance_loss.enabled}")
-    
+
     # Get full config
     full = ConfigManager.get_config('full')
     print(f"\nFull config: {full.name}")
     print(f"  Multiscale enabled: {full.multiscale.enabled}")
     print(f"  Distance loss enabled: {full.distance_loss.enabled}")
     print(f"  Cascade enabled: {full.cascade.enabled}")
-    
+
     # Create custom config
     custom = ConfigManager.create_custom_config(
         'multiscale',
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     print(f"\nCustom config: {custom.name}")
     print(f"  Batch size: {custom.training.batch_size}")
     print(f"  Fusion method: {custom.multiscale.fusion_method}")
-    
+
     # Save and load config
     import tempfile
     with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as f:
