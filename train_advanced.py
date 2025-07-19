@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
 from tqdm import tqdm
 
 # Import base components
@@ -167,7 +167,7 @@ def train_epoch(
 
         # Mixed precision training
         if config.training.mixed_precision and scaler is not None:
-            with autocast():
+            with torch.amp.autocast('cuda'):
                 # Forward pass
                 if config.multiscale.enabled:
                     # Multi-scale model
