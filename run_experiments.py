@@ -404,6 +404,11 @@ def main():
         results = []
 
         for config in args.configs:
+            # Export untrained model first if specified
+            if args.export_onnx:
+                print(f"\nExporting untrained model for {config}...")
+                export_untrained_model_to_onnx(config, args.output_dir)
+            
             # Prepare additional arguments
             additional_args = [
                 '--config_modifications',

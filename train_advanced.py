@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from tqdm import tqdm
 
 # Import base components
@@ -30,6 +30,7 @@ from src.human_edge_detection.visualize import ValidationVisualizer
 # Import advanced components
 from src.human_edge_detection.advanced.multi_scale_extractor import MultiScaleYOLOFeatureExtractor
 from src.human_edge_detection.advanced.multi_scale_model import create_multiscale_model
+from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
 from src.human_edge_detection.advanced.distance_aware_loss import create_distance_aware_loss
 from src.human_edge_detection.advanced.cascade_segmentation import create_cascade_model, CascadeLoss
 
@@ -47,16 +48,28 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         feature_extractor: Feature extractor (if using base model)
     """
     if config.multiscale.enabled:
-        # Multi-scale model
-        model = create_multiscale_model(
-            onnx_model_path=config.model.onnx_model,
-            target_layers=config.multiscale.target_layers,
-            num_classes=config.model.num_classes,
-            roi_size=config.model.roi_size,
-            mask_size=config.model.mask_size,
-            fusion_method=config.multiscale.fusion_method,
-            execution_provider=config.model.execution_provider
-        )
+        # Check if variable ROI sizes are specified
+        if config.model.variable_roi_sizes:
+            # Variable ROI model
+            model = create_variable_roi_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                roi_sizes=config.model.variable_roi_sizes,
+                num_classes=config.model.num_classes,
+                mask_size=config.model.mask_size,
+                execution_provider=config.model.execution_provider
+            )
+        else:
+            # Standard multi-scale model
+            model = create_multiscale_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                num_classes=config.model.num_classes,
+                roi_size=config.model.roi_size,
+                mask_size=config.model.mask_size,
+                fusion_method=config.multiscale.fusion_method,
+                execution_provider=config.model.execution_provider
+            )
 
         # Apply cascade if enabled
         if config.cascade.enabled:
@@ -103,7 +116,9 @@ def build_loss_function(
             dice_weight=config.training.dice_weight,
             adaptive=config.distance_loss.adaptive,
             device=device,
-            separation_aware_weights=separation_aware_weights
+            separation_aware_weights=separation_aware_weights,
+            use_focal=config.training.use_focal,
+            focal_gamma=config.training.focal_gamma
         )
 
         # Wrap in cascade loss if needed
@@ -122,7 +137,9 @@ def build_loss_function(
             ce_weight=config.training.ce_weight,
             dice_weight=config.training.dice_weight,
             device=device,
-            separation_aware_weights=separation_aware_weights
+            separation_aware_weights=separation_aware_weights,
+            use_focal=config.training.use_focal,
+            focal_gamma=config.training.focal_gamma
         )
 
     return loss_fn
@@ -319,6 +336,7 @@ def main():
     print(f"Features enabled:")
     print(f"  - Multi-scale: {config.multiscale.enabled}")
     print(f"  - Distance loss: {config.distance_loss.enabled}")
+    print(f"  - Focal loss: {config.training.use_focal} (gamma={config.training.focal_gamma})")
     print(f"  - Cascade: {config.cascade.enabled}")
     print(f"  - Relational: {config.relational.enabled}")
 
@@ -415,7 +433,7 @@ def main():
         scheduler = None
 
     # Setup mixed precision
-    scaler = GradScaler() if config.training.mixed_precision else None
+    scaler = GradScaler('cuda') if config.training.mixed_precision else None
 
     # Setup tensorboard
     writer = SummaryWriter(exp_dirs['logs'])
@@ -481,24 +499,28 @@ def main():
         print(f"Saved untrained model to {untrained_checkpoint_path}")
 
         # Export untrained model to ONNX
-        from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
-        untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
-        model_type = 'multiscale' if config.multiscale.enabled else 'baseline'
+        try:
+            from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
+            untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
+            model_type = 'multiscale' if config.multiscale.enabled else 'baseline'
 
-        print("\nExporting untrained model to ONNX...")
-        success = export_checkpoint_to_onnx_advanced(
-            checkpoint_path=str(untrained_checkpoint_path),
-            output_path=str(untrained_onnx_path),
-            model_type=model_type,
-            config=config.to_dict(),
-            device=device,
-            verify=False  # Skip verification for untrained models
-        )
+            print("\nExporting untrained model to ONNX...")
+            success = export_checkpoint_to_onnx_advanced(
+                checkpoint_path=str(untrained_checkpoint_path),
+                output_path=str(untrained_onnx_path),
+                model_type=model_type,
+                config=config.to_dict(),
+                device=device,
+                verify=False  # Skip verification for untrained models
+            )
 
-        if success:
-            print(f"Exported untrained model to {untrained_onnx_path}")
-        else:
-            print("Warning: Failed to export untrained model to ONNX")
+            if success:
+                print(f"Exported untrained model to {untrained_onnx_path}")
+            else:
+                print("Warning: Failed to export untrained model to ONNX")
+        except Exception as e:
+            print(f"Warning: Failed to export untrained model to ONNX: {e}")
+            print("Continuing with training...")
 
     # Training loop
     print(f"\nStarting training for {config.training.num_epochs} epochs...")

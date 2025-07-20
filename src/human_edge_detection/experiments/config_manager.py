@@ -75,6 +75,9 @@ class TrainingConfig:
     ce_weight: float = 1.0
     dice_weight: float = 1.0
 
+    # Focal loss settings
+    use_focal: bool = False
+    focal_gamma: float = 2.0
 
 @dataclass
 class DataConfig:
@@ -102,6 +105,7 @@ class ModelConfig:
     roi_size: int = 28
     mask_size: int = 56
     execution_provider: str = 'tensorrt'
+    variable_roi_sizes: Optional[Dict[str, int]] = None  # For variable ROI experiments
 
 
 @dataclass
@@ -266,6 +270,263 @@ class ConfigManager:
                 boundary_width=3,  # Smaller boundary
                 boundary_weight=1.5,
                 instance_sep_weight=2.0
+            )
+        ),
+
+        'variable_roi_hires': ExperimentConfig(
+            name='variable_roi_hires',
+            description='Variable ROI with high-res layer using larger ROI',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 28, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            )
+        ),
+
+        'variable_roi_progressive1': ExperimentConfig(
+            name='variable_roi_progressive1',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            )
+        ),
+
+        'variable_roi_progressive2': ExperimentConfig(
+            name='variable_roi_progressive2',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 80, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            )
+        ),
+
+        'variable_roi_progressive3': ExperimentConfig(
+            name='variable_roi_progressive3',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 80, 'layer_22': 40, 'layer_34': 40}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            )
+        ),
+
+        'variable_roi_progressive4': ExperimentConfig(
+            name='variable_roi_progressive4',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 160, 'layer_22': 80, 'layer_34': 80}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            )
+        ),
+
+        'variable_roi_progressive5': ExperimentConfig(
+            name='variable_roi_progressive5',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_all1.json"
+            )
+        ),
+
+        'variable_roi_progressive6': ExperimentConfig(
+            name='variable_roi_progressive6',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_151.json"
+            )
+        ),
+
+        'variable_roi_progressive7': ExperimentConfig(
+            name='variable_roi_progressive7',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_121.json"
+            )
+        ),
+
+        'variable_roi_progressive8': ExperimentConfig(
+            name='variable_roi_progressive8',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_131.json"
+            )
+        ),
+
+        'variable_roi_progressive9': ExperimentConfig(
+            name='variable_roi_progressive9',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_051520.json"
+            )
+        ),
+
+        'variable_roi_progressive_focal': ExperimentConfig(
+            name='variable_roi_progressive_focal',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_061512.json"
+            ),
+            training=TrainingConfig(
+                use_focal=True,
+                focal_gamma=3.0
+            )
+        ),
+
+        'variable_roi_progressive_focal2': ExperimentConfig(
+            name='variable_roi_progressive_focal2',
+            description='Progressive ROI sizes across scales',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=3,
+                boundary_weight=1.5,
+                instance_sep_weight=2.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_081012.json"
+            ),
+            training=TrainingConfig(
+                use_focal=True,
+                focal_gamma=2.0
             )
         )
     }

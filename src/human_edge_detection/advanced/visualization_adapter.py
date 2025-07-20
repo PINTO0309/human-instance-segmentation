@@ -211,7 +211,11 @@ class AdvancedValidationVisualizer(BaseValidationVisualizer):
             # Get predictions for each instance
             with torch.no_grad():
                 # For multiscale models, extract features through the model
-                if hasattr(self.model, 'feature_extractor'):
+                if hasattr(self.model, 'extractor'):
+                    # Variable ROI model
+                    features = self.model.extractor.extract_features(image_tensor)
+                elif hasattr(self.model, 'feature_extractor'):
+                    # Standard multiscale model
                     features = self.model.feature_extractor.extract_features(image_tensor)
                 else:
                     # For base models, use separate feature extractor

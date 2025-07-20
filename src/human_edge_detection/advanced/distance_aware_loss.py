@@ -382,7 +382,9 @@ def create_distance_aware_loss(
     dice_weight: float = 1.0,
     adaptive: bool = False,
     device: str = 'cpu',
-    separation_aware_weights: Optional[dict] = None
+    separation_aware_weights: Optional[dict] = None,
+    use_focal: bool = False,
+    focal_gamma: float = 2.0
 ) -> nn.Module:
     """Create distance-aware loss function.
 
@@ -396,6 +398,8 @@ def create_distance_aware_loss(
         adaptive: Whether to use adaptive weights
         device: Device for tensors
         separation_aware_weights: Pre-computed class weights
+        use_focal: Whether to use focal loss instead of cross-entropy
+        focal_gamma: Gamma parameter for focal loss
 
     Returns:
         Loss function module
@@ -422,7 +426,9 @@ def create_distance_aware_loss(
         dice_weight=dice_weight,
         boundary_width=boundary_width,
         boundary_weight=boundary_weight,
-        instance_sep_weight=instance_sep_weight
+        instance_sep_weight=instance_sep_weight,
+        use_focal=use_focal,
+        focal_gamma=focal_gamma
     )
 
     if adaptive:

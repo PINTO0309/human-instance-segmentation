@@ -169,6 +169,7 @@ def validate_advanced_checkpoint(
     print(f"Features enabled:")
     print(f"  - Multi-scale: {config.multiscale.enabled}")
     print(f"  - Distance loss: {config.distance_loss.enabled}")
+    print(f"  - Focal loss: {config.training.use_focal} (gamma={config.training.focal_gamma})")
     print(f"  - Cascade: {config.cascade.enabled}")
     print(f"  - Relational: {config.relational.enabled}")
 
