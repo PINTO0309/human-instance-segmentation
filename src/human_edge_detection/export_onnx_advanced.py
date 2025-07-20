@@ -58,6 +58,10 @@ class AdvancedONNXExporter:
             return self._export_multiscale(output_path, batch_size, opset_version, verify)
         elif self.model_type == 'variable_roi':
             return self._export_variable_roi(output_path, batch_size, opset_version, verify)
+        elif self.model_type == 'hierarchical':
+            return self._export_hierarchical(output_path, batch_size, opset_version, verify)
+        elif self.model_type == 'class_specific':
+            return self._export_class_specific(output_path, batch_size, opset_version, verify)
         else:
             print(f"Unknown model type: {self.model_type}")
             return False
@@ -236,6 +240,130 @@ class AdvancedONNXExporter:
             print("Consider using the PyTorch model directly or implementing custom ONNX operators.")
             return False
 
+    def _export_hierarchical(
+        self,
+        output_path: str,
+        batch_size: int,
+        opset_version: int,
+        verify: bool
+    ) -> bool:
+        """Export hierarchical segmentation model."""
+        print("Exporting hierarchical segmentation model...")
+        
+        self.model.eval()
+        
+        # Hierarchical models need special handling
+        if not hasattr(self.model, 'hierarchical_head'):
+            print("Model does not have hierarchical head")
+            return False
+            
+        # Create dummy inputs based on the base model structure
+        dummy_features = {}
+        
+        # Determine the feature structure from base model
+        if hasattr(self.model, 'base_model') and hasattr(self.model.base_model, 'extractor'):
+            # Variable ROI model structure
+            for layer_id in ['layer_3', 'layer_22', 'layer_34']:
+                if layer_id in ['layer_3']:
+                    dummy_features[layer_id] = torch.randn(batch_size, 256, 160, 160).to(self.device)
+                elif layer_id == 'layer_22':
+                    dummy_features[layer_id] = torch.randn(batch_size, 512, 80, 80).to(self.device)
+                else:
+                    dummy_features[layer_id] = torch.randn(batch_size, 1024, 80, 80).to(self.device)
+        else:
+            # Default features
+            dummy_features['layer_3'] = torch.randn(batch_size, 256, 160, 160).to(self.device)
+            dummy_features['layer_22'] = torch.randn(batch_size, 512, 80, 80).to(self.device)
+            dummy_features['layer_34'] = torch.randn(batch_size, 1024, 80, 80).to(self.device)
+        
+        num_rois = 2
+        dummy_rois = torch.zeros(num_rois, 5).to(self.device)
+        dummy_rois[:, 0] = torch.arange(num_rois) % batch_size
+        dummy_rois[:, 1:] = torch.tensor([
+            [100, 100, 300, 300],
+            [200, 200, 400, 400]
+        ]).float()
+        
+        print(f"Exporting to {output_path}")
+        print(f"Feature layers: {list(dummy_features.keys())}")
+        
+        # Create wrapper that calls the hierarchical model properly
+        class HierarchicalWrapper(nn.Module):
+            def __init__(self, model, layer_names):
+                super().__init__()
+                self.model = model
+                self.layer_names = sorted(layer_names)
+                
+            def forward(self, *args):
+                # Last argument is rois
+                feature_tensors = args[:-1]
+                rois = args[-1]
+                
+                # Reconstruct feature dictionary
+                features = {name: tensor for name, tensor in zip(self.layer_names, feature_tensors)}
+                
+                # Call hierarchical model - it returns (logits, aux_outputs)
+                output = self.model(features, rois)
+                if isinstance(output, tuple):
+                    return output[0]  # Return only logits for ONNX
+                return output
+        
+        wrapper = HierarchicalWrapper(self.model, list(dummy_features.keys()))
+        wrapper.eval()
+        
+        # Prepare inputs
+        feature_tensors = [dummy_features[name] for name in sorted(dummy_features.keys())]
+        export_inputs = tuple(feature_tensors + [dummy_rois])
+        input_names = [f'features_{name}' for name in sorted(dummy_features.keys())] + ['rois']
+        
+        try:
+            torch.onnx.export(
+                wrapper,
+                export_inputs,
+                output_path,
+                input_names=input_names,
+                output_names=['masks'],
+                dynamic_axes={
+                    **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
+                    'rois': {0: 'num_rois'},
+                    'masks': {0: 'num_rois'}
+                },
+                opset_version=opset_version,
+                do_constant_folding=True,
+                verbose=False
+            )
+            
+            print("Export successful!")
+            
+            if ONNXSIM_AVAILABLE:
+                self._simplify_model(output_path)
+                
+            if verify:
+                print("Verification skipped for hierarchical models due to complexity.")
+                
+            return True
+            
+        except Exception as e:
+            print(f"Export failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _export_class_specific(
+        self,
+        output_path: str,
+        batch_size: int,
+        opset_version: int,
+        verify: bool
+    ) -> bool:
+        """Export class-specific decoder model."""
+        print("Exporting class-specific decoder model...")
+        
+        self.model.eval()
+        
+        # Class-specific models are similar to variable ROI but with custom decoder
+        return self._export_variable_roi_core(output_path, batch_size, opset_version, verify)
+    
     def _export_variable_roi(
         self,
         output_path: str,
@@ -247,6 +375,17 @@ class AdvancedONNXExporter:
         print("Exporting variable ROI model with ONNX-compatible operations...")
 
         self.model.eval()
+        
+        return self._export_variable_roi_core(output_path, batch_size, opset_version, verify)
+    
+    def _export_variable_roi_core(
+        self,
+        output_path: str,
+        batch_size: int,
+        opset_version: int,
+        verify: bool
+    ) -> bool:
+        """Core export logic for variable ROI-based models."""
 
         # Import ONNX-compatible version
         from .advanced.variable_roi_onnx import create_onnx_variable_roi_segmentation_head
@@ -276,6 +415,13 @@ class AdvancedONNXExporter:
                 'layer_22': 512,
                 'layer_34': 1024
             }
+        
+        # Check if this is an RGB enhanced model
+        is_rgb_enhanced = hasattr(self.model, 'rgb_encoder') and self.model.rgb_encoder is not None
+        if is_rgb_enhanced and hasattr(orig_seg_head, 'rgb_enhanced_layers'):
+            # For RGB enhanced models, the feature channels are already correct in the original model
+            # The RGB features are concatenated internally, so we don't need to adjust channels here
+            pass
 
         # Create ONNX-compatible segmentation head
         # Note: We use the original model's segmentation head directly
@@ -307,42 +453,99 @@ class AdvancedONNXExporter:
         print(f"ROI sizes: {roi_sizes}")
 
         # Create wrapper for ONNX export
-        class VariableROIWrapper(nn.Module):
-            def __init__(self, seg_head, layer_names):
-                super().__init__()
-                self.seg_head = seg_head
-                self.layer_names = sorted(layer_names)
+        if is_rgb_enhanced:
+            # RGB enhanced model - export decoder only
+            print("RGB enhanced model detected - exporting decoder only")
+            
+            # Create wrapper that includes RGB encoder
+            class RGBEnhancedDecoderWrapper(nn.Module):
+                def __init__(self, rgb_encoder, seg_head):
+                    super().__init__()
+                    self.rgb_encoder = rgb_encoder
+                    self.seg_head = seg_head
+                    
+                def forward(self, *args):
+                    # Args: features for each layer + rgb_images + rois
+                    # The order matches the sorted layer names
+                    *feature_tensors, rgb_images, rois = args
+                    
+                    # Extract RGB features from raw images
+                    rgb_features = self.rgb_encoder(rgb_images)
+                    
+                    # Reconstruct feature dictionary
+                    layer_names = sorted(self.seg_head.var_roi_align.feature_strides.keys())
+                    features = {name: tensor for name, tensor in zip(layer_names, feature_tensors)}
+                    
+                    # Call segmentation head with RGB features
+                    return self.seg_head(features, rois, rgb_features)
+            
+            # Get RGB encoder from the model
+            rgb_encoder = self.model.rgb_encoder
+            rgb_encoder.eval()
+            
+            wrapper = RGBEnhancedDecoderWrapper(rgb_encoder, onnx_seg_head)
+            
+            # Prepare dummy inputs for decoder
+            # RGB images (B, 3, 640, 640)
+            dummy_rgb_images = torch.randn(batch_size, 3, 640, 640).to(self.device)
+            
+            # Feature tensors + RGB images + ROIs
+            feature_tensors = [dummy_features[name] for name in sorted(dummy_features.keys())]
+            export_inputs = tuple(feature_tensors + [dummy_rgb_images, dummy_rois])
+            input_names = [f'features_{name}' for name in sorted(dummy_features.keys())] + ['rgb_images', 'rois']
+            
+        else:
+            # Standard variable ROI model
+            class VariableROIWrapper(nn.Module):
+                def __init__(self, seg_head, layer_names):
+                    super().__init__()
+                    self.seg_head = seg_head
+                    self.layer_names = sorted(layer_names)
 
-            def forward(self, *args):
-                # Last argument is rois
-                feature_tensors = args[:-1]
-                rois = args[-1]
+                def forward(self, *args):
+                    # Last argument is rois
+                    feature_tensors = args[:-1]
+                    rois = args[-1]
 
-                # Reconstruct feature dictionary
-                features = {name: tensor for name, tensor in zip(self.layer_names, feature_tensors)}
-                return self.seg_head(features, rois)
-
-        wrapper = VariableROIWrapper(onnx_seg_head, list(dummy_features.keys()))
-        wrapper.eval()
-
-        # Prepare inputs
-        feature_tensors = [dummy_features[name] for name in sorted(dummy_features.keys())]
-
-        try:
-            # Export with fixed opset version
+                    # Reconstruct feature dictionary
+                    features = {name: tensor for name, tensor in zip(self.layer_names, feature_tensors)}
+                    return self.seg_head(features, rois)
+            
+            wrapper = VariableROIWrapper(onnx_seg_head, list(dummy_features.keys()))
+            
+            # Standard model uses pre-extracted features
+            feature_tensors = [dummy_features[name] for name in sorted(dummy_features.keys())]
+            export_inputs = tuple(feature_tensors + [dummy_rois])
             input_names = [f'features_{name}' for name in sorted(dummy_features.keys())] + ['rois']
 
-            torch.onnx.export(
-                wrapper,
-                tuple(feature_tensors + [dummy_rois]),
-                output_path,
-                input_names=input_names,
-                output_names=['masks'],
-                dynamic_axes={
+        wrapper.eval()
+
+        try:
+            # Prepare dynamic axes
+            if is_rgb_enhanced:
+                # For RGB enhanced decoder
+                dynamic_axes = {
+                    **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
+                    'rgb_images': {0: 'batch_size'},
+                    'rois': {0: 'num_rois'},
+                    'masks': {0: 'num_rois'}
+                }
+            else:
+                # For standard model
+                dynamic_axes = {
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
                     'masks': {0: 'num_rois'}
-                },
+                }
+            
+            # Export with fixed opset version
+            torch.onnx.export(
+                wrapper,
+                export_inputs,
+                output_path,
+                input_names=input_names,
+                output_names=['masks'],
+                dynamic_axes=dynamic_axes,
                 opset_version=opset_version,
                 do_constant_folding=True,
                 verbose=False
@@ -484,10 +687,16 @@ def export_checkpoint_to_onnx_advanced(
     if config is None and 'config' in checkpoint:
         config = checkpoint['config']
 
-    # Check if it's a variable ROI model
+    # Check model type from config
     if config and isinstance(config, dict):
         model_config = config.get('model', {})
-        if model_config.get('variable_roi_sizes'):
+        
+        # Check for new architecture types first
+        if model_config.get('use_hierarchical', False):
+            model_type = 'hierarchical'
+        elif model_config.get('use_class_specific_decoder', False):
+            model_type = 'class_specific'
+        elif model_config.get('variable_roi_sizes'):
             model_type = 'variable_roi'
 
     if model_type == 'baseline':
@@ -520,19 +729,45 @@ def export_checkpoint_to_onnx_advanced(
 
     elif model_type == 'variable_roi':
         # Create variable ROI model
-        from .advanced.variable_roi_model import create_variable_roi_model
+        from .advanced.variable_roi_model import create_variable_roi_model, create_rgb_enhanced_variable_roi_model
 
         model_config = config.get('model', {}) if config else {}
         multiscale_config = config.get('multiscale', {}) if config else {}
+        
+        # Check if RGB enhancement is enabled
+        use_rgb_enhancement = model_config.get('use_rgb_enhancement', False)
+        
+        if use_rgb_enhancement:
+            model = create_rgb_enhanced_variable_roi_model(
+                onnx_model_path=model_config.get('onnx_model', 'ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx'),
+                target_layers=multiscale_config.get('target_layers', ['layer_3', 'layer_22', 'layer_34']),
+                roi_sizes=model_config.get('variable_roi_sizes', {'layer_3': 56, 'layer_22': 28, 'layer_34': 28}),
+                num_classes=model_config.get('num_classes', 3),
+                mask_size=model_config.get('mask_size', 56),
+                execution_provider=model_config.get('execution_provider', 'cpu'),
+                rgb_enhanced_layers=model_config.get('rgb_enhanced_layers', ['layer_34']),
+                use_rgb_enhancement=True
+            )
+        else:
+            model = create_variable_roi_model(
+                onnx_model_path=model_config.get('onnx_model', 'ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx'),
+                target_layers=multiscale_config.get('target_layers', ['layer_3', 'layer_22', 'layer_34']),
+                roi_sizes=model_config.get('variable_roi_sizes', {'layer_3': 56, 'layer_22': 28, 'layer_34': 28}),
+                num_classes=model_config.get('num_classes', 3),
+                mask_size=model_config.get('mask_size', 56),
+                execution_provider=model_config.get('execution_provider', 'cpu')
+            )
 
-        model = create_variable_roi_model(
-            onnx_model_path=model_config.get('onnx_model', 'ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx'),
-            target_layers=multiscale_config.get('target_layers', ['layer_3', 'layer_22', 'layer_34']),
-            roi_sizes=model_config.get('variable_roi_sizes', {'layer_3': 56, 'layer_22': 28, 'layer_34': 28}),
-            num_classes=model_config.get('num_classes', 3),
-            mask_size=model_config.get('mask_size', 56),
-            execution_provider=model_config.get('execution_provider', 'cpu')
-        )
+    elif model_type == 'hierarchical' or model_type == 'class_specific':
+        # Use the same model building logic as in train_advanced.py
+        from train_advanced import build_model
+        
+        # Convert config dict to ExperimentConfig object
+        from .experiments.config_manager import ExperimentConfig
+        exp_config = ExperimentConfig.from_dict(config)
+        
+        # Build model
+        model, _ = build_model(exp_config, device)
 
     else:
         print(f"Unknown model type: {model_type}")
@@ -570,14 +805,31 @@ def export_checkpoint_to_onnx_advanced(
                 'rois': '[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]'
             }
         else:
-            # For multiscale, we export only the segmentation head
-            metadata['input_format'] = {
-                'features_layer_3': '[B, 256, 160, 160] - High-resolution YOLO features',
-                'features_layer_22': '[B, 512, 80, 80] - Mid-level YOLO features',
-                'features_layer_34': '[B, 1024, 80, 80] - Deep YOLO features',
-                'rois': '[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]'
-            }
-            metadata['note'] = 'This model requires pre-extracted YOLO features. Use the YOLO ONNX model separately for feature extraction.'
+            # Check if this is an RGB enhanced model
+            is_rgb_enhanced = (config and isinstance(config, dict) and 
+                             config.get('model', {}).get('use_rgb_enhancement', False))
+            
+            if is_rgb_enhanced:
+                # RGB enhanced model includes RGB encoder
+                metadata['input_format'] = {
+                    'features_layer_3': '[B, 256, 160, 160] - High-resolution YOLO features',
+                    'features_layer_22': '[B, 512, 80, 80] - Mid-level YOLO features',
+                    'features_layer_34': '[B, 1024, 80, 80] - Deep YOLO features',
+                    'rgb_images': '[B, 3, 640, 640] - RGB input images',
+                    'rois': '[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]'
+                }
+                metadata['note'] = 'This model includes RGB encoder and requires both pre-extracted YOLO features and RGB images.'
+                metadata['rgb_enhanced'] = True
+                metadata['rgb_enhanced_layers'] = config.get('model', {}).get('rgb_enhanced_layers', ['layer_34'])
+            else:
+                # Standard multiscale model
+                metadata['input_format'] = {
+                    'features_layer_3': '[B, 256, 160, 160] - High-resolution YOLO features',
+                    'features_layer_22': '[B, 512, 80, 80] - Mid-level YOLO features',
+                    'features_layer_34': '[B, 1024, 80, 80] - Deep YOLO features',
+                    'rois': '[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]'
+                }
+                metadata['note'] = 'This model requires pre-extracted YOLO features. Use the YOLO ONNX model separately for feature extraction.'
 
         metadata['output_format'] = {
             'masks': '[N, 3, 56, 56] - Segmentation logits for each ROI'

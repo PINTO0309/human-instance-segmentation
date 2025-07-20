@@ -651,3 +651,90 @@ uv run python run_experiments.py --configs variable_roi_hires --epochs 1 --batch
 3. 標準のmultiscale_distanceモデルとの詳細な比較
 4. メモリ効率と精度のトレードオフ分析
 5. 実運用に向けた推論最適化
+
+## 11. RGB特徴拡張 (RGBEnhancedVariableROIModel) ⭐NEW
+**ファイル**: `src/human_edge_detection/advanced/variable_roi_model.py`
+
+**概要**: YOLOv9の特徴マップに加えて、元のRGB画像から軽量エンコーダで特徴を抽出し、特定の層で融合
+
+**利点**:
+- 低レベル特徴（エッジ、テクスチャ）の補完
+- YOLO特徴との相補的な情報提供
+- 軽量な追加処理（64チャンネルのみ）
+
+**使い方**:
+```python
+# 単一層でのRGB拡張
+config = ConfigManager.get_config('rgb_enhanced_lightweight')
+
+# 複数層でのRGB拡張
+config = ConfigManager.get_config('rgb_enhanced_multi_layer')
+
+# 実行
+uv run python run_experiments.py --configs rgb_enhanced_lightweight --epochs 20
+```
+
+## 12. 階層的セグメンテーション (Hierarchical Segmentation) ⭐NEW
+**ファイル**: `src/human_edge_detection/advanced/hierarchical_segmentation.py`
+
+**概要**: クラスのモード崩壊を防ぐため、背景vs前景と、ターゲットvs非ターゲットを階層的に分離
+
+**アーキテクチャ**:
+```
+入力特徴
+   ├─→ 背景vs前景ブランチ → 背景/前景マスク
+   └─→ ターゲットvs非ターゲットブランチ → インスタンス分類
+         └─→ 最終出力: 3クラスセグメンテーション
+```
+
+**特徴**:
+- 2段階の分類: まず背景/前景を分離、次にインスタンスを分類
+- クラス間の干渉を構造的に防止
+- 一貫性損失により階層間の整合性を保証
+
+**使い方**:
+```python
+config = ConfigManager.get_config('hierarchical_segmentation')
+
+# 実行
+uv run python run_experiments.py --configs hierarchical_segmentation --epochs 20
+```
+
+## 13. クラス特化デコーダ (Class-Specific Decoder) ⭐NEW  
+**ファイル**: `src/human_edge_detection/advanced/class_specific_decoder.py`
+
+**概要**: 各クラスに独立したデコーダパスを持たせることで、クラス間の勾配干渉を防止
+
+**アーキテクチャ**:
+```
+入力特徴
+   ├─→ 背景デコーダ（軽量）
+   ├─→ ターゲットデコーダ（複雑）
+   └─→ 非ターゲットデコーダ（複雑）
+         └─→ クラス間相互作用モジュール → 最終出力
+```
+
+**特徴**:
+- 背景用の軽量デコーダとインスタンス用の複雑なデコーダを分離
+- クラス間相互作用モジュールで完全な分離を防止
+- クラスごとのアテンション機構で背景の支配を抑制
+
+**使い方**:
+```python
+config = ConfigManager.get_config('class_specific_decoder')
+
+# 実行
+uv run python run_experiments.py --configs class_specific_decoder --epochs 20
+```
+
+## ONNX エクスポート対応状況
+
+すべての新しいアーキテクチャ（RGB拡張、階層的セグメンテーション、クラス特化デコーダ）は、ONNXエクスポートに対応済みです：
+
+```bash
+# 未学習モデルのONNXエクスポート
+uv run python run_experiments.py --configs hierarchical_segmentation class_specific_decoder --epochs 0 --export_onnx
+
+# 学習済みモデルのONNXエクスポート
+uv run python run_experiments.py --configs hierarchical_segmentation --export_onnx
+```

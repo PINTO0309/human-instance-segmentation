@@ -106,6 +106,10 @@ class ModelConfig:
     mask_size: int = 56
     execution_provider: str = 'tensorrt'
     variable_roi_sizes: Optional[Dict[str, int]] = None  # For variable ROI experiments
+    use_rgb_enhancement: bool = False  # Whether to use RGB enhancement
+    rgb_enhanced_layers: List[str] = field(default_factory=lambda: ['layer_34'])  # Which layers to enhance with RGB
+    use_hierarchical: bool = False  # Use hierarchical segmentation architecture
+    use_class_specific_decoder: bool = False  # Use class-specific decoders
 
 
 @dataclass
@@ -527,6 +531,173 @@ class ConfigManager:
             training=TrainingConfig(
                 use_focal=True,
                 focal_gamma=2.0
+            )
+        ),
+
+        'rgb_enhanced_lightweight': ExperimentConfig(
+            name='rgb_enhanced_lightweight',
+            description='RGB enhancement on layer_34 only (lightweight version)',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_rgb_enhancement=True,
+                rgb_enhanced_layers=['layer_34']  # Enhance only the deepest layer
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=3,
+                boundary_weight=1.5,
+                instance_sep_weight=2.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_081012.json"
+            ),
+            training=TrainingConfig(
+                use_focal=True,
+                focal_gamma=2.0,
+                learning_rate=5e-4  # Slightly lower learning rate for stability
+            )
+        ),
+
+        'rgb_enhanced_baseline': ExperimentConfig(
+            name='rgb_enhanced_baseline',
+            description='RGB enhancement baseline without focal loss',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_rgb_enhancement=True,
+                rgb_enhanced_layers=['layer_34']
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=5,
+                boundary_weight=2.0,
+                instance_sep_weight=3.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json"
+            )
+        ),
+
+        'rgb_enhanced_multi_layer': ExperimentConfig(
+            name='rgb_enhanced_multi_layer',
+            description='RGB enhancement on all layers (layer_3, layer_22, layer_34)',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_rgb_enhancement=True,
+                rgb_enhanced_layers=['layer_3', 'layer_22', 'layer_34']  # Enhance all layers
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=3,
+                boundary_weight=1.5,
+                instance_sep_weight=2.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_081012.json"
+            ),
+            training=TrainingConfig(
+                use_focal=True,
+                focal_gamma=2.0,
+                learning_rate=5e-4,
+                batch_size=2  # Reduced batch size for memory
+            )
+        ),
+
+        'rgb_enhanced_dual_layer': ExperimentConfig(
+            name='rgb_enhanced_dual_layer',
+            description='RGB enhancement on layer_3 and layer_34',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_rgb_enhancement=True,
+                rgb_enhanced_layers=['layer_3', 'layer_34']  # Enhance high-res and deep layers
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=3,
+                boundary_weight=1.5,
+                instance_sep_weight=2.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_081012.json"
+            ),
+            training=TrainingConfig(
+                use_focal=True,
+                focal_gamma=2.0,
+                learning_rate=5e-4,
+                batch_size=2
+            )
+        ),
+
+        'hierarchical_segmentation': ExperimentConfig(
+            name='hierarchical_segmentation',
+            description='Hierarchical segmentation to prevent mode collapse',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_hierarchical=True  # New flag for hierarchical architecture
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=False  # Use hierarchical loss instead
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json"
+            ),
+            training=TrainingConfig(
+                use_focal=False,  # Hierarchical loss handles class balance
+                learning_rate=5e-4,
+                batch_size=2
+            )
+        ),
+
+        'class_specific_decoder': ExperimentConfig(
+            name='class_specific_decoder',
+            description='Class-specific decoders to prevent interference',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_class_specific_decoder=True  # New flag
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=True,
+                boundary_width=3,
+                boundary_weight=1.5,
+                instance_sep_weight=2.0
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json"
+            ),
+            training=TrainingConfig(
+                use_focal=True,
+                focal_gamma=2.0,
+                learning_rate=5e-4,
+                batch_size=2
             )
         )
     }

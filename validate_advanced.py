@@ -23,6 +23,10 @@ from pycocotools.coco import COCO
 
 # Import advanced components
 from src.human_edge_detection.advanced.multi_scale_model import create_multiscale_model
+from src.human_edge_detection.advanced.variable_roi_model import (
+    create_variable_roi_model,
+    create_rgb_enhanced_variable_roi_model
+)
 from src.human_edge_detection.advanced.distance_aware_loss import create_distance_aware_loss
 from src.human_edge_detection.advanced.cascade_segmentation import create_cascade_model, CascadeLoss
 from src.human_edge_detection.advanced.visualization_adapter import AdvancedValidationVisualizer
@@ -37,16 +41,42 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         feature_extractor: Feature extractor (if using base model)
     """
     if config.multiscale.enabled:
-        # Multi-scale model
-        model = create_multiscale_model(
-            onnx_model_path=config.model.onnx_model,
-            target_layers=config.multiscale.target_layers,
-            num_classes=config.model.num_classes,
-            roi_size=config.model.roi_size,
-            mask_size=config.model.mask_size,
-            fusion_method=config.multiscale.fusion_method,
-            execution_provider=config.model.execution_provider
-        )
+        # Check if variable ROI sizes are specified
+        if config.model.variable_roi_sizes:
+            # Check if RGB enhancement is enabled
+            if config.model.use_rgb_enhancement:
+                # RGB enhanced variable ROI model
+                model = create_rgb_enhanced_variable_roi_model(
+                    onnx_model_path=config.model.onnx_model,
+                    target_layers=config.multiscale.target_layers,
+                    roi_sizes=config.model.variable_roi_sizes,
+                    num_classes=config.model.num_classes,
+                    mask_size=config.model.mask_size,
+                    execution_provider=config.model.execution_provider,
+                    rgb_enhanced_layers=getattr(config.model, 'rgb_enhanced_layers', ['layer_34']),
+                    use_rgb_enhancement=True
+                )
+            else:
+                # Standard variable ROI model
+                model = create_variable_roi_model(
+                    onnx_model_path=config.model.onnx_model,
+                    target_layers=config.multiscale.target_layers,
+                    roi_sizes=config.model.variable_roi_sizes,
+                    num_classes=config.model.num_classes,
+                    mask_size=config.model.mask_size,
+                    execution_provider=config.model.execution_provider
+                )
+        else:
+            # Standard multi-scale model
+            model = create_multiscale_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                num_classes=config.model.num_classes,
+                roi_size=config.model.roi_size,
+                mask_size=config.model.mask_size,
+                fusion_method=config.multiscale.fusion_method,
+                execution_provider=config.model.execution_provider
+            )
 
         # Apply cascade if enabled
         if config.cascade.enabled:
@@ -172,6 +202,9 @@ def validate_advanced_checkpoint(
     print(f"  - Focal loss: {config.training.use_focal} (gamma={config.training.focal_gamma})")
     print(f"  - Cascade: {config.cascade.enabled}")
     print(f"  - Relational: {config.relational.enabled}")
+    if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
+        enhanced_layers = getattr(config.model, 'rgb_enhanced_layers', ['layer_34'])
+        print(f"  - RGB enhancement: {config.model.use_rgb_enhancement} (layers: {', '.join(enhanced_layers)})")
 
     # Build model
     print("\nBuilding model...")

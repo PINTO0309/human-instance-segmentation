@@ -30,7 +30,10 @@ from src.human_edge_detection.visualize import ValidationVisualizer
 # Import advanced components
 from src.human_edge_detection.advanced.multi_scale_extractor import MultiScaleYOLOFeatureExtractor
 from src.human_edge_detection.advanced.multi_scale_model import create_multiscale_model
-from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
+from src.human_edge_detection.advanced.variable_roi_model import (
+    create_variable_roi_model, 
+    create_rgb_enhanced_variable_roi_model
+)
 from src.human_edge_detection.advanced.distance_aware_loss import create_distance_aware_loss
 from src.human_edge_detection.advanced.cascade_segmentation import create_cascade_model, CascadeLoss
 
@@ -47,11 +50,13 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         model: The segmentation model
         feature_extractor: Feature extractor (if using base model)
     """
-    if config.multiscale.enabled:
-        # Check if variable ROI sizes are specified
+    # Check for new architecture flags first
+    if config.model.use_hierarchical:
+        # Build base model first
         if config.model.variable_roi_sizes:
-            # Variable ROI model
-            model = create_variable_roi_model(
+            # Variable ROI model as base
+            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
+            base_model = create_variable_roi_model(
                 onnx_model_path=config.model.onnx_model,
                 target_layers=config.multiscale.target_layers,
                 roi_sizes=config.model.variable_roi_sizes,
@@ -59,6 +64,84 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                 mask_size=config.model.mask_size,
                 execution_provider=config.model.execution_provider
             )
+        else:
+            # Standard multi-scale model as base
+            base_model = create_multiscale_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                num_classes=config.model.num_classes,
+                roi_size=config.model.roi_size,
+                mask_size=config.model.mask_size,
+                fusion_method=config.multiscale.fusion_method,
+                execution_provider=config.model.execution_provider
+            )
+        
+        # Wrap with hierarchical architecture
+        from src.human_edge_detection.advanced.hierarchical_segmentation import create_hierarchical_model
+        model = create_hierarchical_model(base_model)
+        feature_extractor = None
+        
+    elif config.model.use_class_specific_decoder:
+        # Build model with class-specific decoder
+        if config.model.variable_roi_sizes:
+            # Create custom variable ROI model with class-specific decoder
+            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
+            from src.human_edge_detection.advanced.class_specific_decoder import ClassBalancedSegmentationHead
+            
+            # Create base model
+            base_model = create_variable_roi_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                roi_sizes=config.model.variable_roi_sizes,
+                num_classes=config.model.num_classes,
+                mask_size=config.model.mask_size,
+                execution_provider=config.model.execution_provider
+            )
+            
+            # Replace segmentation head with class-balanced version
+            old_head = base_model.segmentation_head
+            base_model.segmentation_head = ClassBalancedSegmentationHead(
+                in_channels=256,  # Assuming standard fusion output
+                num_classes=config.model.num_classes,
+                mask_size=config.model.mask_size,
+                use_class_specific=True
+            )
+            # Copy necessary components
+            base_model.segmentation_head.var_roi_align = old_head.var_roi_align
+            base_model.segmentation_head.feature_fusion = old_head.feature_fusion
+            
+            model = base_model
+        else:
+            raise NotImplementedError("Class-specific decoder only implemented for variable ROI models")
+        
+        feature_extractor = None
+        
+    elif config.multiscale.enabled:
+        # Check if variable ROI sizes are specified
+        if config.model.variable_roi_sizes:
+            # Check if RGB enhancement is enabled
+            if config.model.use_rgb_enhancement:
+                # RGB enhanced variable ROI model
+                model = create_rgb_enhanced_variable_roi_model(
+                    onnx_model_path=config.model.onnx_model,
+                    target_layers=config.multiscale.target_layers,
+                    roi_sizes=config.model.variable_roi_sizes,
+                    num_classes=config.model.num_classes,
+                    mask_size=config.model.mask_size,
+                    execution_provider=config.model.execution_provider,
+                    rgb_enhanced_layers=getattr(config.model, 'rgb_enhanced_layers', ['layer_34']),
+                    use_rgb_enhancement=True
+                )
+            else:
+                # Standard variable ROI model
+                model = create_variable_roi_model(
+                    onnx_model_path=config.model.onnx_model,
+                    target_layers=config.multiscale.target_layers,
+                    roi_sizes=config.model.variable_roi_sizes,
+                    num_classes=config.model.num_classes,
+                    mask_size=config.model.mask_size,
+                    execution_provider=config.model.execution_provider
+                )
         else:
             # Standard multi-scale model
             model = create_multiscale_model(
@@ -104,6 +187,16 @@ def build_loss_function(
     separation_aware_weights: Optional[dict] = None
 ) -> nn.Module:
     """Build loss function based on configuration."""
+    
+    # Check for hierarchical model first
+    if config.model.use_hierarchical:
+        from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
+        return HierarchicalLoss(
+            bg_weight=1.0,
+            fg_weight=1.5,
+            target_weight=2.0,
+            consistency_weight=0.1
+        )
 
     if config.distance_loss.enabled:
         # Distance-aware loss
@@ -205,7 +298,11 @@ def train_epoch(
                 # Compute loss
                 instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
-                if config.cascade.enabled and isinstance(predictions, tuple):
+                # Handle hierarchical model output
+                if config.model.use_hierarchical and isinstance(predictions, tuple):
+                    logits, aux_outputs = predictions
+                    loss, loss_dict = loss_fn(logits, masks, aux_outputs)
+                elif config.cascade.enabled and isinstance(predictions, tuple):
                     # Cascade returns multiple stages
                     loss, loss_dict = loss_fn(predictions, masks, instance_info)
                 else:
@@ -247,7 +344,11 @@ def train_epoch(
 
             instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
-            if config.cascade.enabled and isinstance(predictions, tuple):
+            # Handle hierarchical model output
+            if config.model.use_hierarchical and isinstance(predictions, tuple):
+                logits, aux_outputs = predictions
+                loss, loss_dict = loss_fn(logits, masks, aux_outputs)
+            elif config.cascade.enabled and isinstance(predictions, tuple):
                 # Cascade returns multiple stages
                 loss, loss_dict = loss_fn(predictions, masks, instance_info)
             else:
@@ -339,6 +440,13 @@ def main():
     print(f"  - Focal loss: {config.training.use_focal} (gamma={config.training.focal_gamma})")
     print(f"  - Cascade: {config.cascade.enabled}")
     print(f"  - Relational: {config.relational.enabled}")
+    if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
+        enhanced_layers = getattr(config.model, 'rgb_enhanced_layers', ['layer_34'])
+        print(f"  - RGB enhancement: {config.model.use_rgb_enhancement} (layers: {', '.join(enhanced_layers)})")
+    if hasattr(config.model, 'use_hierarchical') and config.model.use_hierarchical:
+        print(f"  - Hierarchical architecture: {config.model.use_hierarchical}")
+    if hasattr(config.model, 'use_class_specific_decoder') and config.model.use_class_specific_decoder:
+        print(f"  - Class-specific decoder: {config.model.use_class_specific_decoder}")
 
     # Setup device - always use CUDA for PyTorch if available
     # TensorRT is only for ONNX Runtime inference
@@ -502,9 +610,21 @@ def main():
         try:
             from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
             untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
-            model_type = 'multiscale' if config.multiscale.enabled else 'baseline'
-
-            print("\nExporting untrained model to ONNX...")
+            # Determine model type
+            if config.model.use_hierarchical:
+                model_type = 'hierarchical'
+            elif config.model.use_class_specific_decoder:
+                model_type = 'class_specific'
+            elif config.multiscale.enabled:
+                model_type = 'multiscale'
+            else:
+                model_type = 'baseline'
+            
+            if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
+                print("\nExporting RGB enhanced decoder to ONNX...")
+            else:
+                print("\nExporting untrained model to ONNX...")
+                
             success = export_checkpoint_to_onnx_advanced(
                 checkpoint_path=str(untrained_checkpoint_path),
                 output_path=str(untrained_onnx_path),
@@ -515,7 +635,14 @@ def main():
             )
 
             if success:
-                print(f"Exported untrained model to {untrained_onnx_path}")
+                if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
+                    print(f"Exported RGB enhanced decoder to {untrained_onnx_path}")
+                    print("Note: This ONNX model includes RGB encoder and requires:")
+                    print("  - Pre-extracted YOLO features (layer_3, layer_22, layer_34)")
+                    print("  - RGB images (3x640x640)")
+                    print("  - ROI boxes")
+                else:
+                    print(f"Exported untrained model to {untrained_onnx_path}")
             else:
                 print("Warning: Failed to export untrained model to ONNX")
         except Exception as e:

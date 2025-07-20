@@ -1,2 +1,2 @@
 experiment,multiscale,distance_loss,cascade,best_miou,best_epoch
-variable_roi_progressive_focal2,True,True,False,0.4630665652407187,8
+rgb_enhanced_multi_layer,True,True,False,0.46725807019850957,10

@@ -11,7 +11,7 @@ from ..model import LayerNorm2d, ResidualBlock
 
 class VariableROIAlign(nn.Module):
     """Extract ROI features with different sizes for different scales."""
-    
+
     def __init__(
         self,
         feature_strides: Dict[str, int],
@@ -19,56 +19,56 @@ class VariableROIAlign(nn.Module):
         sampling_ratio: int = 2
     ):
         """Initialize variable ROI align.
-        
+
         Args:
             feature_strides: Dictionary mapping layer IDs to feature strides
             roi_sizes: Dictionary mapping layer IDs to ROI sizes
             sampling_ratio: Number of sampling points
         """
         super().__init__()
-        
+
         self.feature_strides = feature_strides
         self.roi_sizes = roi_sizes
-        
+
         # Create ROI align for each scale
         self.roi_aligns = nn.ModuleDict()
-        
+
         for layer_id, stride in feature_strides.items():
             self.roi_aligns[layer_id] = DynamicRoIAlign(
                 spatial_scale=1.0 / stride,
                 sampling_ratio=sampling_ratio,
                 aligned=True
             )
-            
+
     def forward(
         self,
         features: Dict[str, torch.Tensor],
         rois: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """Extract ROI features with variable sizes.
-        
+
         Args:
             features: Dictionary of feature maps
             rois: ROI boxes (N, 5) - [batch_idx, x1, y1, x2, y2]
-            
+
         Returns:
             Dictionary of ROI features for each scale
         """
         roi_features = {}
-        
+
         for layer_id, feat in features.items():
             if layer_id in self.roi_aligns:
                 roi_size = self.roi_sizes.get(layer_id, 28)  # Default to 28
                 roi_features[layer_id] = self.roi_aligns[layer_id](
                     feat, rois, roi_size, roi_size
                 )
-                
+
         return roi_features
 
 
 class HierarchicalFeatureFusion(nn.Module):
     """Fuse features with different ROI sizes hierarchically."""
-    
+
     def __init__(
         self,
         input_channels: Dict[str, int],
@@ -77,7 +77,7 @@ class HierarchicalFeatureFusion(nn.Module):
         target_size: int = 28
     ):
         """Initialize hierarchical fusion.
-        
+
         Args:
             input_channels: Dictionary of input channels for each layer
             roi_sizes: Dictionary of ROI sizes for each layer
@@ -85,24 +85,24 @@ class HierarchicalFeatureFusion(nn.Module):
             target_size: Target size for all features
         """
         super().__init__()
-        
+
         self.roi_sizes = roi_sizes
         self.target_size = target_size
-        
+
         # Create size adjustment and channel reduction for each layer
         self.size_adjusters = nn.ModuleDict()
         self.channel_reducers = nn.ModuleDict()
-        
+
         for layer_id, in_channels in input_channels.items():
             roi_size = roi_sizes.get(layer_id, target_size)
-            
+
             # Channel reduction
             self.channel_reducers[layer_id] = nn.Sequential(
                 nn.Conv2d(in_channels, output_channels, 1),
                 LayerNorm2d(output_channels),
                 nn.ReLU(inplace=True)
             )
-            
+
             # Size adjustment if needed
             if roi_size != target_size:
                 if roi_size > target_size:
@@ -147,10 +147,10 @@ class HierarchicalFeatureFusion(nn.Module):
                         LayerNorm2d(output_channels),
                         nn.ReLU(inplace=True)
                     )
-                    
+
         # Fusion weights
         self.fusion_weights = nn.Parameter(torch.ones(len(input_channels)))
-        
+
         # Final fusion layers
         self.fusion_conv = nn.Sequential(
             nn.Conv2d(output_channels, output_channels, 3, padding=1),
@@ -158,48 +158,48 @@ class HierarchicalFeatureFusion(nn.Module):
             nn.ReLU(inplace=True),
             ResidualBlock(output_channels)
         )
-        
+
     def forward(self, roi_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Fuse variable-sized ROI features.
-        
+
         Args:
             roi_features: Dictionary of ROI features from different scales
-            
+
         Returns:
             Fused feature tensor (N, C, H, W)
         """
         adjusted_features = []
         layer_ids = sorted(roi_features.keys())
-        
+
         for layer_id in layer_ids:
             if layer_id in roi_features:
                 # Apply channel reduction
                 feat = self.channel_reducers[layer_id](roi_features[layer_id])
-                
+
                 # Apply size adjustment if needed
                 if layer_id in self.size_adjusters:
                     feat = self.size_adjusters[layer_id](feat)
-                    
+
                 adjusted_features.append(feat)
-                
+
         if not adjusted_features:
             raise ValueError("No features to fuse")
-            
+
         # Weighted fusion
         weights = F.softmax(self.fusion_weights[:len(adjusted_features)], dim=0)
         stacked_features = torch.stack(adjusted_features, dim=0)
         weights_expanded = weights.view(-1, 1, 1, 1, 1)
         fused = (stacked_features * weights_expanded).sum(dim=0)
-        
+
         # Final fusion processing
         fused = self.fusion_conv(fused)
-        
+
         return fused
 
 
 class VariableROISegmentationHead(nn.Module):
     """Segmentation head with variable ROI sizes."""
-    
+
     def __init__(
         self,
         feature_channels: Dict[str, int],
@@ -210,7 +210,7 @@ class VariableROISegmentationHead(nn.Module):
         mid_channels: int = 256
     ):
         """Initialize variable ROI segmentation head.
-        
+
         Args:
             feature_channels: Channels for each feature layer
             feature_strides: Strides for each feature layer
@@ -220,16 +220,16 @@ class VariableROISegmentationHead(nn.Module):
             mid_channels: Intermediate channel count
         """
         super().__init__()
-        
+
         self.num_classes = num_classes
         self.mask_size = mask_size
-        
+
         # Variable ROI align
         self.var_roi_align = VariableROIAlign(
             feature_strides=feature_strides,
             roi_sizes=roi_sizes
         )
-        
+
         # Hierarchical feature fusion
         self.feature_fusion = HierarchicalFeatureFusion(
             input_channels=feature_channels,
@@ -237,8 +237,244 @@ class VariableROISegmentationHead(nn.Module):
             output_channels=mid_channels,
             target_size=28  # Base size for fusion
         )
-        
+
         # Enhanced decoder for better detail preservation
+        self.decoder = nn.Sequential(
+            # Initial processing
+            ResidualBlock(mid_channels),
+            ResidualBlock(mid_channels),
+
+            # First upsampling: 28x28 -> 56x56
+            nn.ConvTranspose2d(mid_channels, mid_channels, 2, stride=2),
+            LayerNorm2d(mid_channels),
+            nn.ReLU(inplace=True),
+
+            # Refinement
+            ResidualBlock(mid_channels),
+            nn.Conv2d(mid_channels, mid_channels // 2, 3, padding=1),
+            LayerNorm2d(mid_channels // 2),
+            nn.ReLU(inplace=True),
+
+            # Final prediction
+            nn.Conv2d(mid_channels // 2, num_classes, 1)
+        )
+
+    def forward(
+        self,
+        features: Dict[str, torch.Tensor],
+        rois: torch.Tensor
+    ) -> torch.Tensor:
+        """Forward pass.
+
+        Args:
+            features: Multi-scale feature maps
+            rois: ROI boxes
+
+        Returns:
+            Mask predictions (N, num_classes, mask_size, mask_size)
+        """
+        # Extract variable-sized ROI features
+        roi_features = self.var_roi_align(features, rois)
+
+        # Fuse features hierarchically
+        fused_features = self.feature_fusion(roi_features)
+
+        # Decode to masks
+        masks = self.decoder(fused_features)
+
+        return masks
+
+
+def create_variable_roi_model(
+    onnx_model_path: str,
+    target_layers: List[str],
+    roi_sizes: Dict[str, int],
+    num_classes: int = 3,
+    mask_size: int = 56,
+    execution_provider: str = 'cpu'
+) -> nn.Module:
+    """Create variable ROI multi-scale model.
+
+    Args:
+        onnx_model_path: Path to YOLO ONNX model
+        target_layers: List of layer IDs to extract
+        roi_sizes: Dictionary mapping layer IDs to ROI sizes
+        num_classes: Number of segmentation classes
+        mask_size: Output mask size
+        execution_provider: ONNX execution provider
+
+    Returns:
+        Complete model
+    """
+    from .multi_scale_extractor import MultiScaleYOLOFeatureExtractor
+
+    # Feature configurations
+    FEATURE_INFO = {
+        'layer_3': {'channels': 256, 'stride': 4},    # 160x160
+        'layer_19': {'channels': 256, 'stride': 4},   # 160x160
+        'layer_5': {'channels': 512, 'stride': 8},    # 80x80
+        'layer_22': {'channels': 512, 'stride': 8},   # 80x80
+        'layer_34': {'channels': 1024, 'stride': 8}   # 80x80
+    }
+
+    # Create feature extractor
+    extractor = MultiScaleYOLOFeatureExtractor(
+        model_path=onnx_model_path,
+        target_layers=target_layers,
+        execution_provider=execution_provider
+    )
+
+    # Get feature info for selected layers
+    feature_channels = {
+        layer: FEATURE_INFO[layer]['channels']
+        for layer in target_layers
+    }
+    feature_strides = {
+        layer: FEATURE_INFO[layer]['stride']
+        for layer in target_layers
+    }
+
+    # Create segmentation head
+    segmentation_head = VariableROISegmentationHead(
+        feature_channels=feature_channels,
+        feature_strides=feature_strides,
+        roi_sizes=roi_sizes,
+        num_classes=num_classes,
+        mask_size=mask_size
+    )
+
+    # Combine into complete model
+    class VariableROIModel(nn.Module):
+        def __init__(self, extractor, segmentation_head):
+            super().__init__()
+            self.extractor = extractor
+            self.segmentation_head = segmentation_head
+
+        def forward(self, images: torch.Tensor, rois: torch.Tensor) -> torch.Tensor:
+            # Extract multi-scale features
+            features = self.extractor.extract_features(images)
+
+            # Generate masks
+            masks = self.segmentation_head(features, rois)
+
+            return masks
+
+    return VariableROIModel(extractor, segmentation_head)
+
+
+class LightweightRGBEncoder(nn.Module):
+    """Lightweight RGB encoder for extracting low-level features."""
+    
+    def __init__(self, output_channels: int = 64):
+        """Initialize RGB encoder.
+        
+        Args:
+            output_channels: Number of output channels
+        """
+        super().__init__()
+        
+        # Lightweight feature extraction
+        self.encoder = nn.Sequential(
+            # Initial feature extraction
+            nn.Conv2d(3, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            
+            # Downsample to match YOLO feature scale
+            nn.Conv2d(32, 64, 3, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, output_channels, 3, padding=1),
+            nn.ReLU(inplace=True)
+        )
+        
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """Extract RGB features.
+        
+        Args:
+            images: Input RGB images (B, 3, H, W)
+            
+        Returns:
+            RGB features (B, C, H/2, W/2)
+        """
+        return self.encoder(images)
+
+
+class RGBEnhancedVariableROISegmentationHead(nn.Module):
+    """Variable ROI segmentation head with RGB enhancement."""
+    
+    def __init__(
+        self,
+        feature_channels: Dict[str, int],
+        feature_strides: Dict[str, int],
+        roi_sizes: Dict[str, int],
+        num_classes: int = 3,
+        mask_size: int = 56,
+        mid_channels: int = 256,
+        rgb_channels: int = 64,
+        rgb_enhanced_layers: List[str] = None  # Layers to enhance with RGB
+    ):
+        """Initialize RGB enhanced segmentation head.
+        
+        Args:
+            feature_channels: Channels for each feature layer
+            feature_strides: Strides for each feature layer
+            roi_sizes: ROI sizes for each layer
+            num_classes: Number of output classes
+            mask_size: Output mask size
+            mid_channels: Intermediate channel count
+            rgb_channels: Number of RGB feature channels
+            rgb_enhanced_layers: Which layers to enhance with RGB features
+        """
+        super().__init__()
+        
+        self.num_classes = num_classes
+        self.mask_size = mask_size
+        self.rgb_enhanced_layers = rgb_enhanced_layers or ['layer_34']
+        
+        # Variable ROI align for YOLO features
+        self.var_roi_align = VariableROIAlign(
+            feature_strides=feature_strides,
+            roi_sizes=roi_sizes
+        )
+        
+        # RGB ROI align and projection for each enhanced layer
+        self.rgb_roi_aligns = nn.ModuleDict()
+        self.rgb_projections = nn.ModuleDict()
+        self.rgb_roi_sizes = {}
+        
+        # Copy feature channels to avoid modifying original
+        feature_channels = dict(feature_channels)
+        
+        for layer_name in self.rgb_enhanced_layers:
+            if layer_name in feature_strides:
+                # Create ROI align for this layer
+                self.rgb_roi_aligns[layer_name] = DynamicRoIAlign(
+                    spatial_scale=0.5,  # RGB is at higher resolution
+                    sampling_ratio=4,
+                    aligned=True
+                )
+                self.rgb_roi_sizes[layer_name] = roi_sizes.get(layer_name, 28)
+                
+                # RGB feature projection for this layer
+                self.rgb_projections[layer_name] = nn.Sequential(
+                    nn.Conv2d(rgb_channels, mid_channels // 4, 1),
+                    LayerNorm2d(mid_channels // 4),
+                    nn.ReLU(inplace=True)
+                )
+                
+                # Update feature channels for this enhanced layer
+                feature_channels[layer_name] = feature_channels[layer_name] + mid_channels // 4
+        
+        # Hierarchical feature fusion
+        self.feature_fusion = HierarchicalFeatureFusion(
+            input_channels=feature_channels,
+            roi_sizes=roi_sizes,
+            output_channels=mid_channels,
+            target_size=28
+        )
+        
+        # Enhanced decoder
         self.decoder = nn.Sequential(
             # Initial processing
             ResidualBlock(mid_channels),
@@ -258,23 +494,46 @@ class VariableROISegmentationHead(nn.Module):
             # Final prediction
             nn.Conv2d(mid_channels // 2, num_classes, 1)
         )
-        
+    
     def forward(
         self,
         features: Dict[str, torch.Tensor],
-        rois: torch.Tensor
+        rois: torch.Tensor,
+        rgb_features: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """Forward pass.
+        """Forward pass with optional RGB enhancement.
         
         Args:
-            features: Multi-scale feature maps
+            features: Multi-scale YOLO feature maps
             rois: ROI boxes
+            rgb_features: Optional RGB features for enhancement
             
         Returns:
             Mask predictions (N, num_classes, mask_size, mask_size)
         """
-        # Extract variable-sized ROI features
+        # Extract variable-sized ROI features from YOLO
         roi_features = self.var_roi_align(features, rois)
+        
+        # Enhance with RGB features if provided
+        if rgb_features is not None and len(self.rgb_roi_aligns) > 0:
+            # Process RGB features for each enhanced layer
+            for layer_name in self.rgb_enhanced_layers:
+                if layer_name in roi_features and layer_name in self.rgb_roi_aligns:
+                    # Extract RGB ROI features for this layer
+                    rgb_roi_features = self.rgb_roi_aligns[layer_name](
+                        rgb_features, rois,
+                        self.rgb_roi_sizes[layer_name], 
+                        self.rgb_roi_sizes[layer_name]
+                    )
+                    
+                    # Project RGB features for this layer
+                    rgb_roi_features = self.rgb_projections[layer_name](rgb_roi_features)
+                    
+                    # Concatenate with YOLO features for this layer
+                    roi_features[layer_name] = torch.cat([
+                        roi_features[layer_name],
+                        rgb_roi_features
+                    ], dim=1)
         
         # Fuse features hierarchically
         fused_features = self.feature_fusion(roi_features)
@@ -285,15 +544,17 @@ class VariableROISegmentationHead(nn.Module):
         return masks
 
 
-def create_variable_roi_model(
+def create_rgb_enhanced_variable_roi_model(
     onnx_model_path: str,
     target_layers: List[str],
     roi_sizes: Dict[str, int],
     num_classes: int = 3,
     mask_size: int = 56,
-    execution_provider: str = 'cpu'
+    execution_provider: str = 'cpu',
+    rgb_enhanced_layers: List[str] = None,
+    use_rgb_enhancement: bool = True
 ) -> nn.Module:
-    """Create variable ROI multi-scale model.
+    """Create RGB-enhanced variable ROI model.
     
     Args:
         onnx_model_path: Path to YOLO ONNX model
@@ -302,9 +563,11 @@ def create_variable_roi_model(
         num_classes: Number of segmentation classes
         mask_size: Output mask size
         execution_provider: ONNX execution provider
+        rgb_enhanced_layers: Which layers to enhance with RGB
+        use_rgb_enhancement: Whether to use RGB enhancement
         
     Returns:
-        Complete model
+        Complete model with optional RGB enhancement
     """
     from .multi_scale_extractor import MultiScaleYOLOFeatureExtractor
     
@@ -317,8 +580,8 @@ def create_variable_roi_model(
         'layer_34': {'channels': 1024, 'stride': 8}   # 80x80
     }
     
-    # Create feature extractor
-    extractor = MultiScaleYOLOFeatureExtractor(
+    # Create YOLO feature extractor
+    yolo_extractor = MultiScaleYOLOFeatureExtractor(
         model_path=onnx_model_path,
         target_layers=target_layers,
         execution_provider=execution_provider
@@ -326,37 +589,60 @@ def create_variable_roi_model(
     
     # Get feature info for selected layers
     feature_channels = {
-        layer: FEATURE_INFO[layer]['channels'] 
+        layer: FEATURE_INFO[layer]['channels']
         for layer in target_layers
     }
     feature_strides = {
-        layer: FEATURE_INFO[layer]['stride'] 
+        layer: FEATURE_INFO[layer]['stride']
         for layer in target_layers
     }
     
+    # Create RGB encoder if using enhancement
+    rgb_encoder = LightweightRGBEncoder() if use_rgb_enhancement else None
+    
     # Create segmentation head
-    segmentation_head = VariableROISegmentationHead(
-        feature_channels=feature_channels,
-        feature_strides=feature_strides,
-        roi_sizes=roi_sizes,
-        num_classes=num_classes,
-        mask_size=mask_size
-    )
+    if use_rgb_enhancement:
+        segmentation_head = RGBEnhancedVariableROISegmentationHead(
+            feature_channels=feature_channels,
+            feature_strides=feature_strides,
+            roi_sizes=roi_sizes,
+            num_classes=num_classes,
+            mask_size=mask_size,
+            rgb_enhanced_layers=rgb_enhanced_layers or ['layer_34']
+        )
+    else:
+        segmentation_head = VariableROISegmentationHead(
+            feature_channels=feature_channels,
+            feature_strides=feature_strides,
+            roi_sizes=roi_sizes,
+            num_classes=num_classes,
+            mask_size=mask_size
+        )
     
     # Combine into complete model
-    class VariableROIModel(nn.Module):
-        def __init__(self, extractor, segmentation_head):
+    class RGBEnhancedVariableROIModel(nn.Module):
+        def __init__(self, yolo_extractor, rgb_encoder, segmentation_head):
             super().__init__()
-            self.extractor = extractor
+            self.yolo_extractor = yolo_extractor
+            self.rgb_encoder = rgb_encoder
             self.segmentation_head = segmentation_head
+            self.use_rgb = rgb_encoder is not None
             
         def forward(self, images: torch.Tensor, rois: torch.Tensor) -> torch.Tensor:
-            # Extract multi-scale features
-            features = self.extractor.extract_features(images)
+            # Extract YOLO multi-scale features
+            yolo_features = self.yolo_extractor.extract_features(images)
+            
+            # Extract RGB features if using enhancement
+            rgb_features = None
+            if self.use_rgb and self.rgb_encoder is not None:
+                rgb_features = self.rgb_encoder(images)
             
             # Generate masks
-            masks = self.segmentation_head(features, rois)
+            if isinstance(self.segmentation_head, RGBEnhancedVariableROISegmentationHead):
+                masks = self.segmentation_head(yolo_features, rois, rgb_features)
+            else:
+                masks = self.segmentation_head(yolo_features, rois)
             
             return masks
-            
-    return VariableROIModel(extractor, segmentation_head)
+    
+    return RGBEnhancedVariableROIModel(yolo_extractor, rgb_encoder, segmentation_head)

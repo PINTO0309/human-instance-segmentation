@@ -61,7 +61,16 @@ def export_untrained_model_to_onnx(config_name: str, output_dir: str = 'experime
 
     # Export to ONNX
     untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
-    model_type = 'multiscale' if config.multiscale.enabled else 'baseline'
+    
+    # Determine model type
+    if config.model.use_hierarchical:
+        model_type = 'hierarchical'
+    elif config.model.use_class_specific_decoder:
+        model_type = 'class_specific'
+    elif config.multiscale.enabled:
+        model_type = 'multiscale'
+    else:
+        model_type = 'baseline'
 
     print(f"Exporting untrained model to ONNX...")
     success = export_checkpoint_to_onnx_advanced(
@@ -112,7 +121,17 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
 
     # Determine model type
     is_multiscale = exp_config.get('multiscale', {}).get('enabled', False)
-    model_type = 'multiscale' if is_multiscale else 'baseline'
+    is_hierarchical = exp_config.get('model', {}).get('use_hierarchical', False)
+    is_class_specific = exp_config.get('model', {}).get('use_class_specific_decoder', False)
+    
+    if is_hierarchical:
+        model_type = 'hierarchical'
+    elif is_class_specific:
+        model_type = 'class_specific'
+    elif is_multiscale:
+        model_type = 'multiscale'
+    else:
+        model_type = 'baseline'
 
     # Import advanced export function
     from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced

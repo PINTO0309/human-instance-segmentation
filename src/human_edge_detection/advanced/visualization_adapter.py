@@ -211,8 +211,11 @@ class AdvancedValidationVisualizer(BaseValidationVisualizer):
             # Get predictions for each instance
             with torch.no_grad():
                 # For multiscale models, extract features through the model
-                if hasattr(self.model, 'extractor'):
-                    # Variable ROI model
+                if hasattr(self.model, 'yolo_extractor'):
+                    # RGB-enhanced variable ROI model
+                    features = self.model.yolo_extractor.extract_features(image_tensor)
+                elif hasattr(self.model, 'extractor'):
+                    # Standard variable ROI model
                     features = self.model.extractor.extract_features(image_tensor)
                 elif hasattr(self.model, 'feature_extractor'):
                     # Standard multiscale model
@@ -233,13 +236,28 @@ class AdvancedValidationVisualizer(BaseValidationVisualizer):
                     rois = ROIBatchProcessor.prepare_rois_for_batch(roi_tensor).to(self.device)
 
                     # Get prediction - MULTISCALE MODEL INTERFACE
-                    # Call segmentation head directly with pre-extracted features
-                    predictions = self.model.segmentation_head(features, rois)
-                    if isinstance(predictions, tuple):
-                        # Cascade output
-                        mask_logits = predictions[-1]
-                    else:
+                    # Check model type and call appropriately
+                    if hasattr(self.model, 'hierarchical_head'):
+                        # Hierarchical model - returns (logits, aux_outputs)
+                        predictions = self.model(features, rois)
+                        if isinstance(predictions, tuple):
+                            mask_logits, _ = predictions  # Ignore aux outputs for visualization
+                        else:
+                            mask_logits = predictions
+                    elif (hasattr(self.model, 'rgb_encoder') and self.model.rgb_encoder is not None and 
+                        hasattr(self.model, 'use_rgb') and self.model.use_rgb):
+                        # RGB enhanced model - extract RGB features
+                        rgb_features = self.model.rgb_encoder(image_tensor)
+                        predictions = self.model.segmentation_head(features, rois, rgb_features)
                         mask_logits = predictions
+                    else:
+                        # Standard model - call segmentation head directly with pre-extracted features
+                        predictions = self.model.segmentation_head(features, rois)
+                        if isinstance(predictions, tuple):
+                            # Cascade output
+                            mask_logits = predictions[-1]
+                        else:
+                            mask_logits = predictions
 
                     # Get predicted class
                     mask_pred = torch.argmax(mask_logits[0], dim=0).cpu().numpy()
