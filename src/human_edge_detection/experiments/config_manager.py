@@ -109,6 +109,7 @@ class ModelConfig:
     use_rgb_enhancement: bool = False  # Whether to use RGB enhancement
     rgb_enhanced_layers: List[str] = field(default_factory=lambda: ['layer_34'])  # Which layers to enhance with RGB
     use_hierarchical: bool = False  # Use hierarchical segmentation architecture
+    use_hierarchical_unet: bool = False  # Use UNet-based hierarchical segmentation
     use_class_specific_decoder: bool = False  # Use class-specific decoders
 
 
@@ -652,7 +653,7 @@ class ConfigManager:
             description='Hierarchical segmentation to prevent mode collapse',
             model=ModelConfig(
                 variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_hierarchical=True  # New flag for hierarchical architecture
+                use_hierarchical=True
             ),
             multiscale=MultiScaleConfig(
                 enabled=True,
@@ -663,10 +664,110 @@ class ConfigManager:
                 enabled=False  # Use hierarchical loss instead
             ),
             data=DataConfig(
-                data_stats="data_analyze_full.json"
+                data_stats="data_analyze_no_separation.json"
             ),
             training=TrainingConfig(
                 use_focal=False,  # Hierarchical loss handles class balance
+                learning_rate=5e-4,
+                batch_size=2
+            )
+        ),
+
+        'hierarchical_segmentation2': ExperimentConfig(
+            name='hierarchical_segmentation2',
+            description='Hierarchical segmentation to prevent mode collapse',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_34': 28},
+                use_hierarchical=True
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=False  # Use hierarchical loss instead
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_no_separation.json"
+            ),
+            training=TrainingConfig(
+                use_focal=False,  # Hierarchical loss handles class balance
+                learning_rate=5e-4,
+                batch_size=2
+            )
+        ),
+
+        'hierarchical_segmentation3': ExperimentConfig(
+            name='hierarchical_segmentation3',
+            description='Hierarchical segmentation to prevent mode collapse',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_22': 42},
+                use_hierarchical=True
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_22'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=False  # Use hierarchical loss instead
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_no_separation.json"
+            ),
+            training=TrainingConfig(
+                use_focal=False,  # Hierarchical loss handles class balance
+                learning_rate=5e-4,
+                batch_size=2
+            )
+        ),
+
+        'hierarchical_segmentation4': ExperimentConfig(
+            name='hierarchical_segmentation4',
+            description='Hierarchical segmentation to prevent mode collapse',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_22': 42, 'layer_34': 28},
+                use_hierarchical=True
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=False  # Use hierarchical loss instead
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_no_separation.json"
+            ),
+            training=TrainingConfig(
+                use_focal=False,  # Hierarchical loss handles class balance
+                learning_rate=5e-4,
+                batch_size=2
+            )
+        ),
+
+        'hierarchical_segmentation_unet': ExperimentConfig(
+            name='hierarchical_segmentation_unet',
+            description='Hierarchical segmentation with UNet-based foreground/background separation',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_hierarchical_unet=True
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=False  # Use hierarchical loss instead
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_no_separation.json"
+            ),
+            training=TrainingConfig(
+                num_epochs=100,
                 learning_rate=5e-4,
                 batch_size=2
             )

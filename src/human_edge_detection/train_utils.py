@@ -81,7 +81,17 @@ def evaluate_model(
             # Compute loss
             instance_info = batch.get('instance_info') if config and config.distance_loss.enabled else None
             
-            if config and config.cascade.enabled and isinstance(predictions, tuple):
+            # Handle hierarchical model output
+            if config and hasattr(config.model, 'use_hierarchical') and (config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet)):
+                if isinstance(predictions, tuple):
+                    logits, aux_outputs = predictions
+                    loss, loss_dict = loss_fn(logits, masks, aux_outputs)
+                    pred_for_metrics = logits
+                else:
+                    # Hierarchical model should return tuple, but didn't
+                    loss, loss_dict = loss_fn(predictions, masks, {})
+                    pred_for_metrics = predictions
+            elif config and config.cascade.enabled and isinstance(predictions, tuple):
                 # Use final stage predictions for metrics
                 loss, loss_dict = loss_fn(predictions, masks, instance_info)
                 pred_for_metrics = predictions[-1]  # Last stage

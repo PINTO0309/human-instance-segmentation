@@ -170,15 +170,25 @@ class ClassBalancedSegmentationHead(nn.Module):
         """Forward pass with class balancing.
         
         Args:
-            features: Input features
+            features: Input features (can be dict for variable ROI models or tensor)
             rois: ROI boxes (optional, for compatibility with variable ROI models)
             
         Returns:
             Segmentation logits
         """
-        # Note: This implementation doesn't use rois directly as it operates on 
-        # already extracted ROI features. The rois parameter is for interface compatibility.
+        # Handle variable ROI models that pass feature dictionaries
+        if isinstance(features, dict) and hasattr(self, 'var_roi_align'):
+            # Extract ROI features using variable ROI align
+            roi_features = self.var_roi_align(features, rois)
+            
+            # Fuse features if we have feature fusion
+            if hasattr(self, 'feature_fusion'):
+                features = self.feature_fusion(roi_features)
+            else:
+                # Simple concatenation if no fusion module
+                features = list(roi_features.values())[0]
         
+        # Now features is a tensor
         # Refine features
         refined = self.feature_refine(features)
         

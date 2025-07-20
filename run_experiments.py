@@ -147,7 +147,7 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
         checkpoint_path=str(checkpoint_path),
         output_path=str(onnx_path),
         model_type=model_type,
-        config=exp_config,
+        config=exp_config,  # Already a dict
         device='cuda' if torch.cuda.is_available() else 'cpu',
         verify=True
     )

@@ -692,7 +692,7 @@ def export_checkpoint_to_onnx_advanced(
         model_config = config.get('model', {})
         
         # Check for new architecture types first
-        if model_config.get('use_hierarchical', False):
+        if model_config.get('use_hierarchical', False) or model_config.get('use_hierarchical_unet', False):
             model_type = 'hierarchical'
         elif model_config.get('use_class_specific_decoder', False):
             model_type = 'class_specific'
@@ -774,7 +774,12 @@ def export_checkpoint_to_onnx_advanced(
         return False
 
     # Load model weights with strict=False for architecture changes
-    model.load_state_dict(checkpoint['model_state_dict'])
+    try:
+        model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+    except RuntimeError as e:
+        print(f"Warning: Failed to load model weights with strict=True, trying strict=False...")
+        print(f"Error: {e}")
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
 
     # Create exporter
     exporter = AdvancedONNXExporter(model, model_type=model_type, device=device)
@@ -795,9 +800,24 @@ def export_checkpoint_to_onnx_advanced(
             'model_type': model_type,
             'checkpoint_path': str(checkpoint_path),
             'epoch': checkpoint.get('epoch', -1),
-            'best_miou': checkpoint.get('best_miou', -1),
-            'config': config
+            'best_miou': checkpoint.get('best_miou', -1)
         }
+        
+        # Convert config to dict if it's not already
+        if config:
+            if isinstance(config, dict):
+                # Check if nested objects need conversion
+                config_dict = {}
+                for k, v in config.items():
+                    if hasattr(v, 'to_dict'):
+                        config_dict[k] = v.to_dict()
+                    elif hasattr(v, '__dict__'):
+                        config_dict[k] = vars(v)
+                    else:
+                        config_dict[k] = v
+                metadata['config'] = config_dict
+            else:
+                metadata['config'] = config if isinstance(config, dict) else None
 
         if model_type == 'baseline':
             metadata['input_format'] = {
@@ -806,8 +826,13 @@ def export_checkpoint_to_onnx_advanced(
             }
         else:
             # Check if this is an RGB enhanced model
-            is_rgb_enhanced = (config and isinstance(config, dict) and 
-                             config.get('model', {}).get('use_rgb_enhancement', False))
+            is_rgb_enhanced = False
+            if config and isinstance(config, dict):
+                model_config = config.get('model', {})
+                if isinstance(model_config, dict):
+                    is_rgb_enhanced = model_config.get('use_rgb_enhancement', False)
+                elif hasattr(model_config, 'use_rgb_enhancement'):
+                    is_rgb_enhanced = model_config.use_rgb_enhancement
             
             if is_rgb_enhanced:
                 # RGB enhanced model includes RGB encoder
@@ -820,7 +845,13 @@ def export_checkpoint_to_onnx_advanced(
                 }
                 metadata['note'] = 'This model includes RGB encoder and requires both pre-extracted YOLO features and RGB images.'
                 metadata['rgb_enhanced'] = True
-                metadata['rgb_enhanced_layers'] = config.get('model', {}).get('rgb_enhanced_layers', ['layer_34'])
+                metadata['rgb_enhanced_layers'] = ['layer_34']
+                if config and isinstance(config, dict):
+                    model_config = config.get('model', {})
+                    if isinstance(model_config, dict):
+                        metadata['rgb_enhanced_layers'] = model_config.get('rgb_enhanced_layers', ['layer_34'])
+                    elif hasattr(model_config, 'rgb_enhanced_layers'):
+                        metadata['rgb_enhanced_layers'] = model_config.rgb_enhanced_layers
             else:
                 # Standard multiscale model
                 metadata['input_format'] = {

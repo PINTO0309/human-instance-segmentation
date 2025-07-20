@@ -1,4 +1,4 @@
-"""Hierarchical segmentation architecture for stable multi-class learning."""
+"""Hierarchical segmentation with UNet-based foreground/background separation."""
 
 import torch
 import torch.nn as nn
@@ -8,8 +8,115 @@ from typing import Dict, Optional, Tuple
 from ..model import LayerNorm2d, ResidualBlock
 
 
-class HierarchicalSegmentationHead(nn.Module):
-    """Hierarchical segmentation head that separates background vs foreground from target vs non-target."""
+class ShallowUNet(nn.Module):
+    """Shallow U-Net for foreground/background separation."""
+    
+    def __init__(self, in_channels: int, base_channels: int = 64):
+        """Initialize shallow U-Net.
+        
+        Args:
+            in_channels: Number of input channels
+            base_channels: Base channel count for the network
+        """
+        super().__init__()
+        
+        # Encoder path
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(in_channels, base_channels, 3, padding=1),
+            LayerNorm2d(base_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, base_channels, 3, padding=1),
+            LayerNorm2d(base_channels),
+            nn.ReLU(inplace=True)
+        )
+        
+        self.pool1 = nn.MaxPool2d(2)
+        
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(base_channels, base_channels * 2, 3, padding=1),
+            LayerNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels * 2, base_channels * 2, 3, padding=1),
+            LayerNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True)
+        )
+        
+        self.pool2 = nn.MaxPool2d(2)
+        
+        # Bottom
+        self.bottom = nn.Sequential(
+            nn.Conv2d(base_channels * 2, base_channels * 4, 3, padding=1),
+            LayerNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
+            LayerNorm2d(base_channels * 4),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Decoder path
+        self.up2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, 2, stride=2)
+        self.dec2 = nn.Sequential(
+            nn.Conv2d(base_channels * 4, base_channels * 2, 3, padding=1),
+            LayerNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels * 2, base_channels * 2, 3, padding=1),
+            LayerNorm2d(base_channels * 2),
+            nn.ReLU(inplace=True)
+        )
+        
+        self.up1 = nn.ConvTranspose2d(base_channels * 2, base_channels, 2, stride=2)
+        self.dec1 = nn.Sequential(
+            nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
+            LayerNorm2d(base_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, base_channels, 3, padding=1),
+            LayerNorm2d(base_channels),
+            nn.ReLU(inplace=True)
+        )
+        
+        # Final layer
+        self.final = nn.Conv2d(base_channels, 2, 1)  # 2 classes: bg, fg
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through U-Net.
+        
+        Args:
+            x: Input tensor (N, C, H, W)
+            
+        Returns:
+            Logits for background/foreground (N, 2, H, W)
+        """
+        # Encoder
+        enc1 = self.enc1(x)
+        x1 = self.pool1(enc1)
+        
+        enc2 = self.enc2(x1)
+        x2 = self.pool2(enc2)
+        
+        # Bottom
+        bottom = self.bottom(x2)
+        
+        # Decoder
+        up2 = self.up2(bottom)
+        # Handle size mismatch
+        if up2.shape[2:] != enc2.shape[2:]:
+            up2 = F.interpolate(up2, size=enc2.shape[2:], mode='bilinear', align_corners=False)
+        dec2 = self.dec2(torch.cat([up2, enc2], dim=1))
+        
+        up1 = self.up1(dec2)
+        # Handle size mismatch
+        if up1.shape[2:] != enc1.shape[2:]:
+            up1 = F.interpolate(up1, size=enc1.shape[2:], mode='bilinear', align_corners=False)
+        dec1 = self.dec1(torch.cat([up1, enc1], dim=1))
+        
+        # Final output
+        out = self.final(dec1)
+        
+        return out
+
+
+class HierarchicalSegmentationHeadUNet(nn.Module):
+    """Hierarchical segmentation head with UNet-based foreground/background separation."""
     
     def __init__(
         self,
@@ -18,7 +125,7 @@ class HierarchicalSegmentationHead(nn.Module):
         num_classes: int = 3,
         mask_size: int = 56
     ):
-        """Initialize hierarchical segmentation head.
+        """Initialize hierarchical segmentation head with UNet.
         
         Args:
             in_channels: Input feature channels
@@ -41,14 +148,15 @@ class HierarchicalSegmentationHead(nn.Module):
             ResidualBlock(mid_channels),
         )
         
-        # Branch 1: Background vs Foreground (binary)
-        self.bg_vs_fg_branch = nn.Sequential(
-            ResidualBlock(mid_channels),
-            nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
-            LayerNorm2d(mid_channels // 2),
+        # Branch 1: Background vs Foreground using UNet
+        self.bg_vs_fg_unet = ShallowUNet(mid_channels, base_channels=128)
+        
+        # Upsampling to match mask_size
+        self.upsample_bg_fg = nn.Sequential(
+            nn.ConvTranspose2d(2, 32, 2, stride=2),
+            LayerNorm2d(32),
             nn.ReLU(inplace=True),
-            ResidualBlock(mid_channels // 2),
-            nn.Conv2d(mid_channels // 2, 2, 1)  # 2 classes: bg, fg
+            nn.Conv2d(32, 2, 1)
         )
         
         # Branch 2: Target vs Non-target (within foreground)
@@ -61,16 +169,18 @@ class HierarchicalSegmentationHead(nn.Module):
             nn.Conv2d(mid_channels // 2, 2, 1)  # 2 classes: target, non-target
         )
         
-        # Gating mechanism to focus target/non-target branch on foreground regions
+        # Enhanced gating mechanism using UNet features
         self.fg_gate = nn.Sequential(
             nn.Conv2d(2, mid_channels // 4, 1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(mid_channels // 4, mid_channels, 1),
+            nn.Conv2d(mid_channels // 4, mid_channels // 2, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid_channels // 2, mid_channels, 1),
             nn.Sigmoid()
         )
         
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """Forward pass with hierarchical prediction.
+        """Forward pass with hierarchical prediction using UNet.
         
         Args:
             features: Input features (N, C, H, W)
@@ -82,17 +192,15 @@ class HierarchicalSegmentationHead(nn.Module):
         # Shared feature extraction
         shared = self.shared_features(features)
         
-        # Branch 1: Background vs Foreground
-        bg_fg_logits = self.bg_vs_fg_branch(shared)
+        # Branch 1: Background vs Foreground with UNet
+        bg_fg_logits_low = self.bg_vs_fg_unet(shared)
+        
+        # Upsample to mask size
+        bg_fg_logits = self.upsample_bg_fg(bg_fg_logits_low)
         bg_fg_probs = F.softmax(bg_fg_logits, dim=1)
         
-        # Create foreground attention gate
-        fg_attention = self.fg_gate(bg_fg_logits)
-        
-        # Downsample attention to match shared features size
-        # bg_fg_logits is 56x56, but shared is 28x28
-        # Use fixed downsampling to avoid dynamic condition in ONNX export
-        fg_attention = F.interpolate(fg_attention, size=shared.shape[-2:], mode='bilinear', align_corners=False)
+        # Create foreground attention gate from UNet features
+        fg_attention = self.fg_gate(bg_fg_logits_low)
         
         # Branch 2: Target vs Non-target (modulated by foreground attention)
         gated_features = shared * fg_attention
@@ -104,7 +212,7 @@ class HierarchicalSegmentationHead(nn.Module):
         final_logits = torch.zeros(batch_size, 3, self.mask_size, self.mask_size, 
                                   device=features.device)
         
-        # Background probability from first branch
+        # Background probability from UNet branch
         final_logits[:, 0] = bg_fg_logits[:, 0]  # Background logit
         
         # Target and non-target from second branch, scaled by foreground probability
@@ -115,6 +223,7 @@ class HierarchicalSegmentationHead(nn.Module):
         
         aux_outputs = {
             'bg_fg_logits': bg_fg_logits,
+            'bg_fg_logits_low': bg_fg_logits_low,
             'target_nontarget_logits': target_nontarget_logits,
             'fg_attention': fg_attention
         }
@@ -122,119 +231,16 @@ class HierarchicalSegmentationHead(nn.Module):
         return final_logits, aux_outputs
 
 
-class HierarchicalLoss(nn.Module):
-    """Loss function for hierarchical segmentation."""
-    
-    def __init__(
-        self,
-        bg_weight: float = 1.0,
-        fg_weight: float = 1.0,
-        target_weight: float = 1.0,
-        consistency_weight: float = 0.1
-    ):
-        """Initialize hierarchical loss.
-        
-        Args:
-            bg_weight: Weight for background vs foreground loss
-            fg_weight: Weight for target vs non-target loss
-            target_weight: Additional weight for target class
-            consistency_weight: Weight for consistency between branches
-        """
-        super().__init__()
-        self.bg_weight = bg_weight
-        self.fg_weight = fg_weight
-        self.target_weight = target_weight
-        self.consistency_weight = consistency_weight
-        
-    def forward(
-        self, 
-        predictions: torch.Tensor, 
-        targets: torch.Tensor,
-        aux_outputs: Dict[str, torch.Tensor]
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """Compute hierarchical loss.
-        
-        Args:
-            predictions: Final 3-class predictions (N, 3, H, W)
-            targets: Ground truth labels (N, H, W)
-            aux_outputs: Auxiliary outputs from hierarchical head
-            
-        Returns:
-            total_loss: Combined loss
-            loss_dict: Dictionary of individual losses
-        """
-        # Create binary masks for hierarchical supervision
-        bg_mask = (targets == 0).long()
-        fg_mask = (targets > 0).long()
-        target_mask = (targets == 1).long()
-        nontarget_mask = (targets == 2).long()
-        
-        # Loss 1: Background vs Foreground
-        bg_fg_targets = fg_mask  # 0 for background, 1 for foreground
-        bg_fg_loss = F.cross_entropy(
-            aux_outputs['bg_fg_logits'], 
-            bg_fg_targets,
-            weight=torch.tensor([1.0, self.target_weight]).to(predictions.device)
-        )
-        
-        # Loss 2: Target vs Non-target (only on foreground pixels)
-        if fg_mask.any():
-            # Create targets for foreground pixels: 0 for target, 1 for non-target
-            target_nontarget_targets = torch.zeros_like(targets)
-            target_nontarget_targets[target_mask.bool()] = 0
-            target_nontarget_targets[nontarget_mask.bool()] = 1
-            
-            # Apply foreground mask and compute loss
-            # Use the foreground mask as weight instead of masking
-            target_nontarget_loss = F.cross_entropy(
-                aux_outputs['target_nontarget_logits'],
-                target_nontarget_targets.long(),
-                reduction='none'
-            )
-            # Apply foreground mask and average
-            target_nontarget_loss = (target_nontarget_loss * fg_mask.float()).sum() / fg_mask.float().sum().clamp(min=1)
-        else:
-            target_nontarget_loss = torch.tensor(0.0, device=predictions.device)
-        
-        # Loss 3: Final 3-class cross entropy
-        final_loss = F.cross_entropy(predictions, targets)
-        
-        # Loss 4: Consistency regularization
-        # Ensure that background prediction from branch 1 matches final background prediction
-        consistency_loss = F.mse_loss(
-            F.softmax(aux_outputs['bg_fg_logits'], dim=1)[:, 0],
-            F.softmax(predictions, dim=1)[:, 0]
-        )
-        
-        # Combine losses
-        total_loss = (
-            self.bg_weight * bg_fg_loss +
-            self.fg_weight * target_nontarget_loss +
-            final_loss +
-            self.consistency_weight * consistency_loss
-        )
-        
-        loss_dict = {
-            'bg_fg_loss': bg_fg_loss.item(),
-            'target_nontarget_loss': target_nontarget_loss.item(),
-            'final_loss': final_loss.item(),
-            'consistency_loss': consistency_loss.item(),
-            'total_loss': total_loss.item()
-        }
-        
-        return total_loss, loss_dict
-
-
-def create_hierarchical_model(base_model: nn.Module) -> nn.Module:
-    """Wrap a base model with hierarchical segmentation head.
+def create_hierarchical_model_unet(base_model: nn.Module) -> nn.Module:
+    """Wrap a base model with UNet-based hierarchical segmentation head.
     
     Args:
         base_model: Base segmentation model
         
     Returns:
-        Model with hierarchical segmentation
+        Model with UNet-based hierarchical segmentation
     """
-    class HierarchicalSegmentationModel(nn.Module):
+    class HierarchicalSegmentationModelUNet(nn.Module):
         def __init__(self, base_model):
             super().__init__()
             self.base_model = base_model
@@ -253,8 +259,8 @@ def create_hierarchical_model(base_model: nn.Module) -> nn.Module:
                 else:
                     in_channels = 256
                 
-                # Create hierarchical head
-                self.hierarchical_head = HierarchicalSegmentationHead(
+                # Create UNet-based hierarchical head
+                self.hierarchical_head = HierarchicalSegmentationHeadUNet(
                     in_channels=in_channels,
                     mid_channels=256,
                     num_classes=3,
@@ -318,4 +324,4 @@ def create_hierarchical_model(base_model: nn.Module) -> nn.Module:
             # Always return tuple for consistency
             return logits, aux_outputs
     
-    return HierarchicalSegmentationModel(base_model)
+    return HierarchicalSegmentationModelUNet(base_model)

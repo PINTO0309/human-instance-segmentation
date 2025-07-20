@@ -81,6 +81,37 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         model = create_hierarchical_model(base_model)
         feature_extractor = None
         
+    elif config.model.use_hierarchical_unet:
+        # Build multi-scale model with UNet-based hierarchical architecture
+        if config.model.variable_roi_sizes:
+            # Create custom variable ROI model
+            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
+            base_model = create_variable_roi_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                roi_sizes=config.model.variable_roi_sizes,
+                num_classes=config.model.num_classes,
+                mask_size=config.model.mask_size,
+                execution_provider=config.model.execution_provider
+            )
+        else:
+            # Create standard multi-scale model
+            from src.human_edge_detection.advanced.multiscale_model import create_multiscale_model
+            base_model = create_multiscale_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                num_classes=config.model.num_classes,
+                roi_size=config.model.roi_size,
+                mask_size=config.model.mask_size,
+                fusion_method=config.multiscale.fusion_method,
+                execution_provider=config.model.execution_provider
+            )
+        
+        # Wrap with UNet-based hierarchical architecture
+        from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
+        model = create_hierarchical_model_unet(base_model)
+        feature_extractor = None
+        
     elif config.model.use_class_specific_decoder:
         # Build model with class-specific decoder
         if config.model.variable_roi_sizes:
@@ -189,7 +220,7 @@ def build_loss_function(
     """Build loss function based on configuration."""
     
     # Check for hierarchical model first
-    if config.model.use_hierarchical:
+    if config.model.use_hierarchical or config.model.use_hierarchical_unet:
         from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
         return HierarchicalLoss(
             bg_weight=1.0,
@@ -299,9 +330,16 @@ def train_epoch(
                 instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
                 # Handle hierarchical model output
-                if config.model.use_hierarchical and isinstance(predictions, tuple):
-                    logits, aux_outputs = predictions
-                    loss, loss_dict = loss_fn(logits, masks, aux_outputs)
+                if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
+                    if isinstance(predictions, tuple):
+                        logits, aux_outputs = predictions
+                        loss, loss_dict = loss_fn(logits, masks, aux_outputs)
+                    else:
+                        # Hierarchical model should return tuple, but didn't
+                        print(f"WARNING: Hierarchical model returned {type(predictions)} instead of tuple")
+                        print(f"Predictions shape: {predictions.shape if hasattr(predictions, 'shape') else 'N/A'}")
+                        # This should not happen, raise error for debugging
+                        raise RuntimeError("Hierarchical model must return (logits, aux_outputs) tuple")
                 elif config.cascade.enabled and isinstance(predictions, tuple):
                     # Cascade returns multiple stages
                     loss, loss_dict = loss_fn(predictions, masks, instance_info)
@@ -345,9 +383,15 @@ def train_epoch(
             instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
             # Handle hierarchical model output
-            if config.model.use_hierarchical and isinstance(predictions, tuple):
-                logits, aux_outputs = predictions
-                loss, loss_dict = loss_fn(logits, masks, aux_outputs)
+            if config.model.use_hierarchical:
+                if isinstance(predictions, tuple):
+                    logits, aux_outputs = predictions
+                    loss, loss_dict = loss_fn(logits, masks, aux_outputs)
+                else:
+                    # Hierarchical model should return tuple, but didn't
+                    # This might happen during the first forward pass
+                    # Treat as regular predictions and pass empty aux_outputs
+                    loss, loss_dict = loss_fn(predictions, masks, {})
             elif config.cascade.enabled and isinstance(predictions, tuple):
                 # Cascade returns multiple stages
                 loss, loss_dict = loss_fn(predictions, masks, instance_info)
@@ -611,7 +655,7 @@ def main():
             from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
             untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
             # Determine model type
-            if config.model.use_hierarchical:
+            if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
                 model_type = 'hierarchical'
             elif config.model.use_class_specific_decoder:
                 model_type = 'class_specific'
