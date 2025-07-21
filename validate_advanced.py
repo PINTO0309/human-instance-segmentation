@@ -45,7 +45,6 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         # Build multi-scale model with hierarchical architecture
         if config.model.variable_roi_sizes:
             # Create custom variable ROI model
-            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
             base_model = create_variable_roi_model(
                 onnx_model_path=config.model.onnx_model,
                 target_layers=config.multiscale.target_layers,
@@ -56,7 +55,6 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             )
         else:
             # Create standard multi-scale model
-            from src.human_edge_detection.advanced.multiscale_model import create_multiscale_model
             base_model = create_multiscale_model(
                 onnx_model_path=config.model.onnx_model,
                 target_layers=config.multiscale.target_layers,
@@ -144,7 +142,8 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
 
 def build_loss_function(
     config: ExperimentConfig,
-    data_stats: Optional[Dict] = None
+    data_stats: Optional[Dict] = None,
+    device: str = 'cuda'
 ) -> nn.Module:
     """Build loss function based on configuration."""
 
@@ -158,31 +157,39 @@ def build_loss_function(
             consistency_weight=0.1
         )
 
+    # Extract pixel ratios and separation aware weights from data_stats
+    pixel_ratios = None
+    separation_aware_weights = None
+    if data_stats:
+        pixel_ratios = data_stats.get('pixel_ratios', None)
+        separation_aware_weights = data_stats.get('separation_aware_weights', None)
+
     if config.distance_loss.enabled:
         # Distance-aware loss
-        base_loss = create_loss_function(
-            num_classes=config.model.num_classes,
-            data_stats=data_stats,
-            ce_weight=config.training.ce_weight,
-            dice_weight=config.training.dice_weight
-        )
-
         loss_fn = create_distance_aware_loss(
-            base_loss=base_loss,
+            pixel_ratios=pixel_ratios,
             boundary_width=config.distance_loss.boundary_width,
             boundary_weight=config.distance_loss.boundary_weight,
             instance_sep_weight=config.distance_loss.instance_sep_weight,
+            ce_weight=config.training.ce_weight,
+            dice_weight=config.training.dice_weight,
             adaptive=config.distance_loss.adaptive,
-            adaptation_rate=config.distance_loss.adaptation_rate
+            device=device,
+            separation_aware_weights=separation_aware_weights,
+            use_focal=config.training.use_focal,
+            focal_gamma=config.training.focal_gamma
         )
 
     elif config.cascade.enabled and config.multiscale.enabled:
         # Cascade loss
         base_loss = create_loss_function(
-            num_classes=config.model.num_classes,
-            data_stats=data_stats,
+            pixel_ratios=pixel_ratios,
             ce_weight=config.training.ce_weight,
-            dice_weight=config.training.dice_weight
+            dice_weight=config.training.dice_weight,
+            device=device,
+            separation_aware_weights=separation_aware_weights,
+            use_focal=config.training.use_focal,
+            focal_gamma=config.training.focal_gamma
         )
         loss_fn = CascadeLoss(
             base_loss=base_loss,
@@ -192,10 +199,13 @@ def build_loss_function(
     else:
         # Standard loss
         loss_fn = create_loss_function(
-            num_classes=config.model.num_classes,
-            data_stats=data_stats,
+            pixel_ratios=pixel_ratios,
             ce_weight=config.training.ce_weight,
-            dice_weight=config.training.dice_weight
+            dice_weight=config.training.dice_weight,
+            device=device,
+            separation_aware_weights=separation_aware_weights,
+            use_focal=config.training.use_focal,
+            focal_gamma=config.training.focal_gamma
         )
 
     return loss_fn
@@ -271,7 +281,7 @@ def validate_advanced_checkpoint(
                 data_stats = json.load(f)
 
     # Build loss function
-    loss_fn = build_loss_function(config, data_stats)
+    loss_fn = build_loss_function(config, data_stats, device)
 
     # Create validation dataset
     print("\nLoading validation dataset...")
