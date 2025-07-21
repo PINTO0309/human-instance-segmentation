@@ -320,13 +320,17 @@ class ValidationVisualizer:
                     x2 = x1 + bbox[2] * 640 / orig_width
                     y2 = y1 + bbox[3] * 640 / orig_height
 
-                    # Add padding
-                    padding = self.roi_padding
-                    w, h = x2 - x1, y2 - y1
-                    x1 = max(0, x1 - w * padding)
-                    y1 = max(0, y1 - h * padding)
-                    x2 = min(640, x2 + w * padding)
-                    y2 = min(640, y2 + h * padding)
+                    # Note: ROI padding is already applied in the dataset during training,
+                    # so we should NOT apply it again here for consistency.
+                    # Only apply padding if explicitly needed for visualization purposes.
+                    if self.roi_padding > 0:
+                        # Add padding for visualization if specified
+                        padding = self.roi_padding
+                        w, h = x2 - x1, y2 - y1
+                        x1 = max(0, x1 - w * padding)
+                        y1 = max(0, y1 - h * padding)
+                        x2 = min(640, x2 + w * padding)
+                        y2 = min(640, y2 + h * padding)
 
                     # Normalize ROI
                     roi_norm = torch.tensor([[x1/640, y1/640, x2/640, y2/640]], dtype=torch.float32)
