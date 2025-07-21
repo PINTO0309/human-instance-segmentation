@@ -66,7 +66,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                 fusion_method=config.multiscale.fusion_method,
                 execution_provider=config.model.execution_provider
             )
-        
+
         # Wrap with appropriate hierarchical architecture
         if hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet:
             from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
@@ -74,9 +74,9 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         else:
             from src.human_edge_detection.advanced.hierarchical_segmentation import create_hierarchical_model
             model = create_hierarchical_model(base_model)
-        
+
         feature_extractor = None
-        
+
     elif config.multiscale.enabled:
         # Check if variable ROI sizes are specified
         if config.model.variable_roi_sizes:
@@ -147,7 +147,7 @@ def build_loss_function(
     data_stats: Optional[Dict] = None
 ) -> nn.Module:
     """Build loss function based on configuration."""
-    
+
     # Check for hierarchical model first
     if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
         from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss

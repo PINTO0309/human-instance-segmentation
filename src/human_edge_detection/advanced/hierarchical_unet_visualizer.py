@@ -89,9 +89,6 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         
         print(f"Processing {len(validation_images)} test images for 3-row visualization")
         
-        # Store aux_outputs from first forward pass
-        stored_aux_outputs = {}
-        
         for val_img_info in validation_images:
             filename = val_img_info['filename']
             
@@ -183,10 +180,6 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                 else:
                     features = img_tensor
                 
-                # Process all annotations to get UNet output
-                # We need to call the model at least once to get aux_outputs
-                first_aux_outputs = None
-                
                 # Process each annotation as ROI
                 for i, ann in enumerate(anns):
                     color = self.colors[i % len(self.colors)]
@@ -220,8 +213,6 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                     # Extract predictions and aux outputs
                     if isinstance(output, tuple):
                         mask_logits, aux_outputs = output
-                        if first_aux_outputs is None:
-                            first_aux_outputs = aux_outputs
                     elif isinstance(output, dict) and 'masks' in output:
                         mask_logits = output['masks']
                         aux_outputs = {}
@@ -256,13 +247,14 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                     target_mask = (full_mask == 1)
                     pred_image = self._apply_mask(pred_image, target_mask, color)
                     
-                    # Process UNet output for all ROIs
-                    if first_aux_outputs and 'bg_fg_logits' in first_aux_outputs:
-                        bg_fg_logits = first_aux_outputs['bg_fg_logits']
+                    # Process UNet output for current ROI
+                    if aux_outputs and 'bg_fg_logits' in aux_outputs:
+                        bg_fg_logits = aux_outputs['bg_fg_logits']
                         bg_fg_probs = torch.softmax(bg_fg_logits, dim=1)
                         fg_prob = bg_fg_probs[0, 1].cpu().numpy()  # Foreground probability
                         
-                        # Resize to ROI size
+                        # bg_fg_logits is already at mask_size (56x56), same as mask_logits
+                        # Resize to ROI size using same dimensions as the mask
                         fg_prob_resized = cv2.resize(fg_prob, (slice_w, slice_h), interpolation=cv2.INTER_LINEAR)
                         
                         # Create mask visualization in ROI region
