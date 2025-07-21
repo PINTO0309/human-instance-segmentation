@@ -106,7 +106,7 @@ class ModelConfig:
     onnx_model: str = 'ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx'
     num_classes: int = 3
     roi_size: int = 28
-    mask_size: int = 64
+    mask_size: int = 56
     execution_provider: str = 'tensorrt'
     variable_roi_sizes: Optional[Dict[str, int]] = None  # For variable ROI experiments
     use_rgb_enhancement: bool = False  # Whether to use RGB enhancement
