@@ -34,7 +34,8 @@ class ValidationVisualizer:
         coco: COCO,
         image_dir: str,
         output_dir: str = 'validation_results',
-        device: str = 'cuda'
+        device: str = 'cuda',
+        roi_padding: float = 0.0
     ):
         """Initialize visualizer.
 
@@ -45,6 +46,7 @@ class ValidationVisualizer:
             image_dir: Directory containing images
             output_dir: Directory to save visualization results
             device: Device to run inference on
+            roi_padding: ROI padding ratio (0.0 = no padding, 0.1 = 10% padding)
         """
         self.model = model.to(device)
         self.feature_extractor = feature_extractor
@@ -53,6 +55,7 @@ class ValidationVisualizer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.device = device
+        self.roi_padding = roi_padding
 
         # Color palette for instances
         self.colors = self._generate_colors(20)
@@ -318,7 +321,7 @@ class ValidationVisualizer:
                     y2 = y1 + bbox[3] * 640 / orig_height
 
                     # Add padding
-                    padding = 0.1
+                    padding = self.roi_padding
                     w, h = x2 - x1, y2 - y1
                     x1 = max(0, x1 - w * padding)
                     y1 = max(0, y1 - h * padding)

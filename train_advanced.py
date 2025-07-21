@@ -527,13 +527,15 @@ def main():
     train_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.train_annotation,
         image_dir=config.data.train_img_dir,
-        mask_size=(config.model.mask_size, config.model.mask_size)
+        mask_size=(config.model.mask_size, config.model.mask_size),
+        roi_padding=config.data.roi_padding
     )
 
     val_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.val_annotation,
         image_dir=config.data.val_img_dir,
-        mask_size=(config.model.mask_size, config.model.mask_size)
+        mask_size=(config.model.mask_size, config.model.mask_size),
+        roi_padding=config.data.roi_padding
     )
 
     print(f"Training samples: {len(train_dataset)}")

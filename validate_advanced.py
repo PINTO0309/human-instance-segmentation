@@ -329,7 +329,8 @@ def validate_advanced_checkpoint(
                 image_dir=config.data.val_img_dir,
                 output_dir=vis_output_dir,
                 device=device,
-                is_multiscale=config.multiscale.enabled
+                is_multiscale=config.multiscale.enabled,
+                roi_padding=config.data.roi_padding
             )
         else:
             visualizer = AdvancedValidationVisualizer(
@@ -339,7 +340,8 @@ def validate_advanced_checkpoint(
                 image_dir=config.data.val_img_dir,
                 output_dir=vis_output_dir,
                 device=device,
-                is_multiscale=config.multiscale.enabled
+                is_multiscale=config.multiscale.enabled,
+                roi_padding=config.data.roi_padding
             )
 
         # Use epoch from checkpoint or -1 for display

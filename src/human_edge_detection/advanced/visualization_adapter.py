@@ -19,7 +19,8 @@ class AdvancedValidationVisualizer(BaseValidationVisualizer):
         image_dir: str,
         output_dir: str = 'validation_results',
         device: str = 'cuda',
-        is_multiscale: bool = False
+        is_multiscale: bool = False,
+        roi_padding: float = 0.0
     ):
         """Initialize advanced visualizer.
 
@@ -31,6 +32,7 @@ class AdvancedValidationVisualizer(BaseValidationVisualizer):
             output_dir: Directory to save visualizations
             device: Device to run inference on
             is_multiscale: Whether the model is multiscale
+            roi_padding: ROI padding ratio (0.0 = no padding, 0.1 = 10% padding)
         """
         # For multiscale models, we need a dummy feature extractor
         if is_multiscale and feature_extractor is None:
@@ -47,7 +49,8 @@ class AdvancedValidationVisualizer(BaseValidationVisualizer):
             coco=coco,
             image_dir=image_dir,
             output_dir=output_dir,
-            device=device
+            device=device,
+            roi_padding=roi_padding
         )
 
         self.is_multiscale = is_multiscale

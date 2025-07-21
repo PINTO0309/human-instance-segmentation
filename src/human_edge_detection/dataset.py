@@ -26,7 +26,7 @@ class COCOInstanceSegmentationDataset(Dataset):
         annotation_file: str,
         image_dir: str,
         transform=None,
-        roi_padding: float = 0.1,
+        roi_padding: float = 0.0,  # Default: no padding
         mask_size: Tuple[int, int] = (56, 56),
         feature_size: Tuple[int, int] = (80, 80),
         image_size: Tuple[int, int] = (640, 640),

@@ -92,6 +92,9 @@ class DataConfig:
     num_workers: int = 8
     pin_memory: bool = True
 
+    # ROI settings
+    roi_padding: float = 0.0  # ROI padding ratio (0.0 = no padding, 0.1 = 10% padding)
+
     # Augmentation
     use_augmentation: bool = True
     augmentation_prob: float = 0.5
@@ -196,7 +199,11 @@ class ConfigManager:
     CONFIGS = {
         'baseline': ExperimentConfig(
             name='baseline',
-            description='Baseline single-scale model'
+            description='Baseline single-scale model',
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'multiscale': ExperimentConfig(
@@ -206,7 +213,11 @@ class ConfigManager:
                 enabled=True,
                 target_layers=['layer_3', 'layer_22', 'layer_34'],
                 fusion_method='adaptive'
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'multiscale_distance': ExperimentConfig(
@@ -222,7 +233,11 @@ class ConfigManager:
                 boundary_width=5,
                 boundary_weight=2.0,
                 instance_sep_weight=3.0
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'multiscale_cascade': ExperimentConfig(
@@ -237,7 +252,11 @@ class ConfigManager:
                 enabled=True,
                 num_stages=3,
                 stage_weights=[0.3, 0.3, 0.4]
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'full': ExperimentConfig(
@@ -259,7 +278,11 @@ class ConfigManager:
                 enabled=True,
                 num_stages=3,
                 stage_weights=[0.3, 0.3, 0.4]
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'efficient': ExperimentConfig(
@@ -275,7 +298,11 @@ class ConfigManager:
                 boundary_width=3,  # Smaller boundary
                 boundary_weight=1.5,
                 instance_sep_weight=2.0
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_hires': ExperimentConfig(
@@ -294,7 +321,11 @@ class ConfigManager:
                 boundary_width=5,
                 boundary_weight=2.0,
                 instance_sep_weight=3.0
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive1': ExperimentConfig(
@@ -313,7 +344,11 @@ class ConfigManager:
                 boundary_width=5,
                 boundary_weight=2.0,
                 instance_sep_weight=3.0
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive2': ExperimentConfig(
@@ -332,7 +367,11 @@ class ConfigManager:
                 boundary_width=5,
                 boundary_weight=2.0,
                 instance_sep_weight=3.0
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive3': ExperimentConfig(
@@ -351,7 +390,11 @@ class ConfigManager:
                 boundary_width=5,
                 boundary_weight=2.0,
                 instance_sep_weight=3.0
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive4': ExperimentConfig(
@@ -370,7 +413,11 @@ class ConfigManager:
                 boundary_width=5,
                 boundary_weight=2.0,
                 instance_sep_weight=3.0
-            )
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive5': ExperimentConfig(
@@ -391,8 +438,9 @@ class ConfigManager:
                 instance_sep_weight=3.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_all1.json"
-            )
+                data_stats="data_analyze_all1.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive6': ExperimentConfig(
@@ -413,8 +461,9 @@ class ConfigManager:
                 instance_sep_weight=3.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_151.json"
-            )
+                data_stats="data_analyze_151.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive7': ExperimentConfig(
@@ -435,8 +484,9 @@ class ConfigManager:
                 instance_sep_weight=3.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_121.json"
-            )
+                data_stats="data_analyze_121.json",
+                roi_padding=0.0  # No padding
+            ),
         ),
 
         'variable_roi_progressive8': ExperimentConfig(
@@ -457,7 +507,8 @@ class ConfigManager:
                 instance_sep_weight=3.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_131.json"
+                data_stats="data_analyze_131.json",
+                roi_padding=0.0  # No padding
             )
         ),
 
@@ -479,7 +530,8 @@ class ConfigManager:
                 instance_sep_weight=3.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_051520.json"
+                data_stats="data_analyze_051520.json",
+                roi_padding=0.0  # No padding
             )
         ),
 
@@ -501,7 +553,8 @@ class ConfigManager:
                 instance_sep_weight=3.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_061512.json"
+                data_stats="data_analyze_061512.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=True,
@@ -527,7 +580,8 @@ class ConfigManager:
                 instance_sep_weight=2.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_081012.json"
+                data_stats="data_analyze_081012.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=True,
@@ -555,7 +609,8 @@ class ConfigManager:
                 instance_sep_weight=2.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_081012.json"
+                data_stats="data_analyze_081012.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=True,
@@ -584,7 +639,8 @@ class ConfigManager:
                 instance_sep_weight=3.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_full.json"
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
             )
         ),
 
@@ -608,7 +664,8 @@ class ConfigManager:
                 instance_sep_weight=2.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_081012.json"
+                data_stats="data_analyze_081012.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=True,
@@ -638,7 +695,8 @@ class ConfigManager:
                 instance_sep_weight=2.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_081012.json"
+                data_stats="data_analyze_081012.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=True,
@@ -664,7 +722,8 @@ class ConfigManager:
                 enabled=False  # Use hierarchical loss instead
             ),
             data=DataConfig(
-                data_stats="data_analyze_no_separation.json"
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=False,  # Hierarchical loss handles class balance
@@ -689,7 +748,8 @@ class ConfigManager:
                 enabled=False  # Use hierarchical loss instead
             ),
             data=DataConfig(
-                data_stats="data_analyze_no_separation.json"
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=False,  # Hierarchical loss handles class balance
@@ -714,7 +774,8 @@ class ConfigManager:
                 enabled=False  # Use hierarchical loss instead
             ),
             data=DataConfig(
-                data_stats="data_analyze_no_separation.json"
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=False,  # Hierarchical loss handles class balance
@@ -739,7 +800,8 @@ class ConfigManager:
                 enabled=False  # Use hierarchical loss instead
             ),
             data=DataConfig(
-                data_stats="data_analyze_no_separation.json"
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=False,  # Hierarchical loss handles class balance
@@ -764,7 +826,8 @@ class ConfigManager:
                 enabled=False  # Use hierarchical loss instead
             ),
             data=DataConfig(
-                data_stats="data_analyze_no_separation.json"
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 num_epochs=100,
@@ -792,7 +855,8 @@ class ConfigManager:
                 instance_sep_weight=2.0
             ),
             data=DataConfig(
-                data_stats="data_analyze_full.json"
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
                 use_focal=True,

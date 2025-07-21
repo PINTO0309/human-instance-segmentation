@@ -192,7 +192,7 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                     y2 = y1 + bbox[3] * 640 / orig_height
                     
                     # Add padding
-                    padding = 0.1
+                    padding = self.roi_padding
                     w, h = x2 - x1, y2 - y1
                     x1 = max(0, x1 - w * padding)
                     y1 = max(0, y1 - h * padding)
