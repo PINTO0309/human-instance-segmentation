@@ -589,122 +589,122 @@ class ConfigManager:
             )
         ),
 
-        'rgb_enhanced_lightweight': ExperimentConfig(
-            name='rgb_enhanced_lightweight',
-            description='RGB enhancement on layer_34 only (lightweight version)',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_rgb_enhancement=True,
-                rgb_enhanced_layers=['layer_34']  # Enhance only the deepest layer
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=True,
-                boundary_width=3,
-                boundary_weight=1.5,
-                instance_sep_weight=2.0
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_081012.json",
-                roi_padding=0.0  # No padding
-            ),
-            training=TrainingConfig(
-                use_focal=True,
-                focal_gamma=2.0,
-                learning_rate=5e-4  # Slightly lower learning rate for stability
-            )
-        ),
+        # 'rgb_enhanced_lightweight': ExperimentConfig(
+        #     name='rgb_enhanced_lightweight',
+        #     description='RGB enhancement on layer_34 only (lightweight version)',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_rgb_enhancement=True,
+        #         rgb_enhanced_layers=['layer_34']  # Enhance only the deepest layer
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=True,
+        #         boundary_width=3,
+        #         boundary_weight=1.5,
+        #         instance_sep_weight=2.0
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_081012.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         use_focal=True,
+        #         focal_gamma=2.0,
+        #         learning_rate=5e-4  # Slightly lower learning rate for stability
+        #     )
+        # ),
 
-        'rgb_enhanced_baseline': ExperimentConfig(
-            name='rgb_enhanced_baseline',
-            description='RGB enhancement baseline without focal loss',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_rgb_enhancement=True,
-                rgb_enhanced_layers=['layer_34']
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=True,
-                boundary_width=5,
-                boundary_weight=2.0,
-                instance_sep_weight=3.0
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_full.json",
-                roi_padding=0.0  # No padding
-            )
-        ),
+        # 'rgb_enhanced_baseline': ExperimentConfig(
+        #     name='rgb_enhanced_baseline',
+        #     description='RGB enhancement baseline without focal loss',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_rgb_enhancement=True,
+        #         rgb_enhanced_layers=['layer_34']
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=True,
+        #         boundary_width=5,
+        #         boundary_weight=2.0,
+        #         instance_sep_weight=3.0
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_full.json",
+        #         roi_padding=0.0  # No padding
+        #     )
+        # ),
 
-        'rgb_enhanced_multi_layer': ExperimentConfig(
-            name='rgb_enhanced_multi_layer',
-            description='RGB enhancement on all layers (layer_3, layer_22, layer_34)',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_rgb_enhancement=True,
-                rgb_enhanced_layers=['layer_3', 'layer_22', 'layer_34']  # Enhance all layers
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=True,
-                boundary_width=3,
-                boundary_weight=1.5,
-                instance_sep_weight=2.0
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_081012.json",
-                roi_padding=0.0  # No padding
-            ),
-            training=TrainingConfig(
-                use_focal=True,
-                focal_gamma=2.0,
-                learning_rate=5e-4,
-                batch_size=2  # Reduced batch size for memory
-            )
-        ),
+        # 'rgb_enhanced_multi_layer': ExperimentConfig(
+        #     name='rgb_enhanced_multi_layer',
+        #     description='RGB enhancement on all layers (layer_3, layer_22, layer_34)',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_rgb_enhancement=True,
+        #         rgb_enhanced_layers=['layer_3', 'layer_22', 'layer_34']  # Enhance all layers
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=True,
+        #         boundary_width=3,
+        #         boundary_weight=1.5,
+        #         instance_sep_weight=2.0
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_081012.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         use_focal=True,
+        #         focal_gamma=2.0,
+        #         learning_rate=5e-4,
+        #         batch_size=2  # Reduced batch size for memory
+        #     )
+        # ),
 
-        'rgb_enhanced_dual_layer': ExperimentConfig(
-            name='rgb_enhanced_dual_layer',
-            description='RGB enhancement on layer_3 and layer_34',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_rgb_enhancement=True,
-                rgb_enhanced_layers=['layer_3', 'layer_34']  # Enhance high-res and deep layers
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=True,
-                boundary_width=3,
-                boundary_weight=1.5,
-                instance_sep_weight=2.0
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_081012.json",
-                roi_padding=0.0  # No padding
-            ),
-            training=TrainingConfig(
-                use_focal=True,
-                focal_gamma=2.0,
-                learning_rate=5e-4,
-                batch_size=2
-            )
-        ),
+        # 'rgb_enhanced_dual_layer': ExperimentConfig(
+        #     name='rgb_enhanced_dual_layer',
+        #     description='RGB enhancement on layer_3 and layer_34',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_rgb_enhancement=True,
+        #         rgb_enhanced_layers=['layer_3', 'layer_34']  # Enhance high-res and deep layers
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=True,
+        #         boundary_width=3,
+        #         boundary_weight=1.5,
+        #         instance_sep_weight=2.0
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_081012.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         use_focal=True,
+        #         focal_gamma=2.0,
+        #         learning_rate=5e-4,
+        #         batch_size=2
+        #     )
+        # ),
 
         'hierarchical_segmentation': ExperimentConfig(
             name='hierarchical_segmentation',
@@ -732,83 +732,83 @@ class ConfigManager:
             )
         ),
 
-        'hierarchical_segmentation2': ExperimentConfig(
-            name='hierarchical_segmentation2',
-            description='Hierarchical segmentation to prevent mode collapse',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_34': 28},
-                use_hierarchical=True
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
-            ),
-            training=TrainingConfig(
-                use_focal=False,  # Hierarchical loss handles class balance
-                learning_rate=5e-4,
-                batch_size=2
-            )
-        ),
+        # 'hierarchical_segmentation2': ExperimentConfig(
+        #     name='hierarchical_segmentation2',
+        #     description='Hierarchical segmentation to prevent mode collapse',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_34': 28},
+        #         use_hierarchical=True
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         use_focal=False,  # Hierarchical loss handles class balance
+        #         learning_rate=5e-4,
+        #         batch_size=2
+        #     )
+        # ),
 
-        'hierarchical_segmentation3': ExperimentConfig(
-            name='hierarchical_segmentation3',
-            description='Hierarchical segmentation to prevent mode collapse',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_22': 42},
-                use_hierarchical=True
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_22'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
-            ),
-            training=TrainingConfig(
-                use_focal=False,  # Hierarchical loss handles class balance
-                learning_rate=5e-4,
-                batch_size=2
-            )
-        ),
+        # 'hierarchical_segmentation3': ExperimentConfig(
+        #     name='hierarchical_segmentation3',
+        #     description='Hierarchical segmentation to prevent mode collapse',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_22': 42},
+        #         use_hierarchical=True
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_22'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         use_focal=False,  # Hierarchical loss handles class balance
+        #         learning_rate=5e-4,
+        #         batch_size=2
+        #     )
+        # ),
 
-        'hierarchical_segmentation4': ExperimentConfig(
-            name='hierarchical_segmentation4',
-            description='Hierarchical segmentation to prevent mode collapse',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_22': 42, 'layer_34': 28},
-                use_hierarchical=True
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
-            ),
-            training=TrainingConfig(
-                use_focal=False,  # Hierarchical loss handles class balance
-                learning_rate=5e-4,
-                batch_size=2
-            )
-        ),
+        # 'hierarchical_segmentation4': ExperimentConfig(
+        #     name='hierarchical_segmentation4',
+        #     description='Hierarchical segmentation to prevent mode collapse',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_22': 42, 'layer_34': 28},
+        #         use_hierarchical=True
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         use_focal=False,  # Hierarchical loss handles class balance
+        #         learning_rate=5e-4,
+        #         batch_size=2
+        #     )
+        # ),
 
         'hierarchical_segmentation_unet': ExperimentConfig(
             name='hierarchical_segmentation_unet',
@@ -841,7 +841,7 @@ class ConfigManager:
             description='Class-specific decoders to prevent interference',
             model=ModelConfig(
                 variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_class_specific_decoder=True  # New flag
+                use_class_specific_decoder=True
             ),
             multiscale=MultiScaleConfig(
                 enabled=True,

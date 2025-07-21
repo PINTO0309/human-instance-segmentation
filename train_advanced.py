@@ -55,7 +55,6 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         # Build base model first
         if config.model.variable_roi_sizes:
             # Variable ROI model as base
-            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
             base_model = create_variable_roi_model(
                 onnx_model_path=config.model.onnx_model,
                 target_layers=config.multiscale.target_layers,
@@ -85,7 +84,6 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         # Build multi-scale model with UNet-based hierarchical architecture
         if config.model.variable_roi_sizes:
             # Create custom variable ROI model
-            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
             base_model = create_variable_roi_model(
                 onnx_model_path=config.model.onnx_model,
                 target_layers=config.multiscale.target_layers,
@@ -96,7 +94,6 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             )
         else:
             # Create standard multi-scale model
-            from src.human_edge_detection.advanced.multiscale_model import create_multiscale_model
             base_model = create_multiscale_model(
                 onnx_model_path=config.model.onnx_model,
                 target_layers=config.multiscale.target_layers,
@@ -116,7 +113,6 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         # Build model with class-specific decoder
         if config.model.variable_roi_sizes:
             # Create custom variable ROI model with class-specific decoder
-            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
             from src.human_edge_detection.advanced.class_specific_decoder import ClassBalancedSegmentationHead
             
             # Create base model

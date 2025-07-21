@@ -1,2 +1,2 @@
 experiment,multiscale,distance_loss,cascade,best_miou,best_epoch
-hierarchical_segmentation_unet,True,False,False,0.4622468703591008,12
+hierarchical_segmentation_unet,True,False,False,0.4669972583890577,6
