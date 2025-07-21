@@ -40,7 +40,44 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         model: The segmentation model
         feature_extractor: Feature extractor (if using base model)
     """
-    if config.multiscale.enabled:
+    # Check for hierarchical models first
+    if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
+        # Build multi-scale model with hierarchical architecture
+        if config.model.variable_roi_sizes:
+            # Create custom variable ROI model
+            from src.human_edge_detection.advanced.variable_roi_model import create_variable_roi_model
+            base_model = create_variable_roi_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                roi_sizes=config.model.variable_roi_sizes,
+                num_classes=config.model.num_classes,
+                mask_size=config.model.mask_size,
+                execution_provider=config.model.execution_provider
+            )
+        else:
+            # Create standard multi-scale model
+            from src.human_edge_detection.advanced.multiscale_model import create_multiscale_model
+            base_model = create_multiscale_model(
+                onnx_model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                num_classes=config.model.num_classes,
+                roi_size=config.model.roi_size,
+                mask_size=config.model.mask_size,
+                fusion_method=config.multiscale.fusion_method,
+                execution_provider=config.model.execution_provider
+            )
+        
+        # Wrap with appropriate hierarchical architecture
+        if hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
+            model = create_hierarchical_model_unet(base_model)
+        else:
+            from src.human_edge_detection.advanced.hierarchical_segmentation import create_hierarchical_model
+            model = create_hierarchical_model(base_model)
+        
+        feature_extractor = None
+        
+    elif config.multiscale.enabled:
         # Check if variable ROI sizes are specified
         if config.model.variable_roi_sizes:
             # Check if RGB enhancement is enabled
@@ -110,6 +147,16 @@ def build_loss_function(
     data_stats: Optional[Dict] = None
 ) -> nn.Module:
     """Build loss function based on configuration."""
+    
+    # Check for hierarchical model first
+    if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
+        from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
+        return HierarchicalLoss(
+            bg_weight=1.0,
+            fg_weight=1.5,
+            target_weight=2.0,
+            consistency_weight=0.1
+        )
 
     if config.distance_loss.enabled:
         # Distance-aware loss
@@ -188,7 +235,7 @@ def validate_advanced_checkpoint(
             d[keys[-1]] = value
 
     # Create config object
-    config = ExperimentConfig(**config_dict)
+    config = ExperimentConfig.from_dict(config_dict)
 
     # Get experiment directory
     checkpoint_path = Path(checkpoint_path)
@@ -230,7 +277,7 @@ def validate_advanced_checkpoint(
     print("\nLoading validation dataset...")
     val_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.val_annotation,
-        img_dir=config.data.val_img_dir,
+        image_dir=config.data.val_img_dir,
         transform=None  # No augmentation for validation
     )
 
@@ -240,7 +287,7 @@ def validate_advanced_checkpoint(
         shuffle=False,
         num_workers=config.data.num_workers,
         pin_memory=config.data.pin_memory,
-        collate_fn=create_collate_fn(pad_value=0)
+        collate_fn=create_collate_fn()
     )
 
     print(f"Validation samples: {len(val_dataset)}")
@@ -272,15 +319,28 @@ def validate_advanced_checkpoint(
         vis_output_dir = exp_dir / 'validation_results'
         vis_output_dir.mkdir(exist_ok=True)
 
-        visualizer = AdvancedValidationVisualizer(
-            model=model,
-            feature_extractor=feature_extractor,
-            coco=val_coco,
-            image_dir=config.data.val_img_dir,
-            output_dir=vis_output_dir,
-            device=device,
-            is_multiscale=config.multiscale.enabled
-        )
+        # Use HierarchicalUNetVisualizer for hierarchical UNet models
+        if hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet:
+            from src.human_edge_detection.advanced.hierarchical_unet_visualizer import HierarchicalUNetVisualizer
+            visualizer = HierarchicalUNetVisualizer(
+                model=model,
+                feature_extractor=feature_extractor,
+                coco=val_coco,
+                image_dir=config.data.val_img_dir,
+                output_dir=vis_output_dir,
+                device=device,
+                is_multiscale=config.multiscale.enabled
+            )
+        else:
+            visualizer = AdvancedValidationVisualizer(
+                model=model,
+                feature_extractor=feature_extractor,
+                coco=val_coco,
+                image_dir=config.data.val_img_dir,
+                output_dir=vis_output_dir,
+                device=device,
+                is_multiscale=config.multiscale.enabled
+            )
 
         # Use epoch from checkpoint or -1 for display
         epoch = checkpoint.get('epoch', -1)
