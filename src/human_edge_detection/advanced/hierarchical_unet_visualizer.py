@@ -169,6 +169,10 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             pred_image = image_np.copy()
             unet_image = image_np.copy()
             
+            # Initialize combined masks for UNet visualization
+            combined_fg_mask = np.zeros((640, 640), dtype=bool)
+            combined_bg_mask = np.zeros((640, 640), dtype=bool)
+            
             with torch.no_grad():
                 # Prepare input
                 img_tensor = torch.from_numpy(image_np).float().permute(2, 0, 1) / 255.0
@@ -247,7 +251,7 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                     target_mask = (full_mask == 1)
                     pred_image = self._apply_mask(pred_image, target_mask, color)
                     
-                    # Process UNet output for current ROI
+                    # Process UNet output for current ROI - collect masks
                     if aux_outputs and 'bg_fg_logits' in aux_outputs:
                         bg_fg_logits = aux_outputs['bg_fg_logits']
                         bg_fg_probs = torch.softmax(bg_fg_logits, dim=1)
@@ -257,20 +261,27 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                         # Resize to ROI size using same dimensions as the mask
                         fg_prob_resized = cv2.resize(fg_prob, (slice_w, slice_h), interpolation=cv2.INTER_LINEAR)
                         
-                        # Create mask visualization in ROI region
-                        roi_region = unet_image[y1_int:y2_int, x1_int:x2_int]
-                        overlay = roi_region.copy()
+                        # Create masks based on probability threshold
+                        fg_mask_roi = fg_prob_resized >= 0.5
+                        bg_mask_roi = fg_prob_resized < 0.5
                         
-                        # Apply colors based on probability threshold
-                        fg_mask = fg_prob_resized >= 0.5
-                        bg_mask = fg_prob_resized < 0.5
-                        
-                        overlay[fg_mask] = [255, 0, 0]  # Red for foreground
-                        overlay[bg_mask] = [128, 128, 128]  # Gray for background
-                        
-                        # Blend with original
-                        alpha = 0.7
-                        roi_region[:] = cv2.addWeighted(overlay, alpha, roi_region, 1 - alpha, 0)
+                        # Add to combined masks
+                        combined_fg_mask[y1_int:y2_int, x1_int:x2_int] |= fg_mask_roi
+                        combined_bg_mask[y1_int:y2_int, x1_int:x2_int] |= bg_mask_roi
+                
+                # After processing all ROIs, render combined UNet masks
+                # Create overlay
+                overlay = unet_image.copy()
+                
+                # First render background (gray)
+                overlay[combined_bg_mask] = [128, 128, 128]  # Gray for background
+                
+                # Then render foreground (red) - this will overwrite any background pixels
+                overlay[combined_fg_mask] = [255, 0, 0]  # Red for foreground
+                
+                # Blend with original
+                alpha = 0.7
+                unet_image = cv2.addWeighted(overlay, alpha, unet_image, 1 - alpha, 0)
             
             # Draw all instance numbers on GT image at the end
             draw = ImageDraw.Draw(gt_pil)
