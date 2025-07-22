@@ -317,6 +317,77 @@ uv run python run_experiments.py --skip_training
 uv run python run_experiments.py --export_onnx --configs baseline
 ```
 
+### チェックポイントからの学習再開 ⭐NEW
+
+任意の.pthファイルから学習を再開し、追加エポック数または最大エポック数を指定できます：
+
+```bash
+# チェックポイントから再開して10エポック追加
+uv run python run_experiments.py \
+  --resume experiments/hierarchical_segmentation_unet/checkpoints/checkpoint_epoch_0005.pth \
+  --additional_epochs 10
+
+# チェックポイントから再開して合計20エポックまで学習
+uv run python run_experiments.py \
+  --resume experiments/hierarchical_segmentation_unet/checkpoints/checkpoint_epoch_0005.pth \
+  --total_epochs 20
+
+# デフォルト動作（元の計画されたエポック数まで継続）
+uv run python run_experiments.py \
+  --resume experiments/hierarchical_segmentation_unet/checkpoints/checkpoint_epoch_0005.pth
+```
+
+**主な機能**:
+- **自動設定検出**: チェックポイントから実験設定を自動的に読み込み
+- **柔軟なエポック指定**:
+  - `--additional_epochs`: 現在のエポックに指定数を追加
+  - `--total_epochs`: 指定した総エポック数まで学習
+  - 指定なし: 元の計画されたエポック数まで継続
+- **検証機能**: チェックポイントファイルの存在確認、引数の整合性チェック
+
+#### ⚠️ 学習率スケジューラに関する重要な注意点
+
+現在の実装では、CosineAnnealingLRスケジューラを使用している場合、resume時に追加エポックを指定すると学習率に問題が発生します：
+
+**問題の詳細**:
+- スケジューラのT_max（総エポック数）は元の設定値のまま変更されない
+- 元の計画エポック数を超えると、学習率は最小値（min_lr）に固定される
+
+**例**:
+```
+元の設定: 50エポック
+30エポックで中断 → --additional_epochs 50 で再開（合計80エポック）
+
+結果:
+- エポック 0-30: 正常なcosine decay
+- エポック 30-50: cosine decayの続き
+- エポック 50-80: 学習率は最小値に固定 ⚠️
+```
+
+**推奨される回避策**:
+
+1. **学習率を手動で調整**:
+```bash
+uv run python run_experiments.py \
+  --resume checkpoint.pth \
+  --additional_epochs 20 \
+  --config_modifications '{"training.learning_rate": 0.0001}'
+```
+
+2. **スケジューラを無効化**:
+```bash
+uv run python run_experiments.py \
+  --resume checkpoint.pth \
+  --additional_epochs 20 \
+  --config_modifications '{"training.scheduler": "none"}'
+```
+
+3. **最初から十分なエポック数を設定**:
+```bash
+# 追加学習が予想される場合は、最初から余裕を持ったエポック数を設定
+uv run python run_experiments.py --configs your_config --epochs 100
+```
+
 ### ONNX Export
 
 Before each experiment starts, if a previous best model exists, it will be automatically exported to ONNX format. You can also export existing models manually:

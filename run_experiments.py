@@ -161,18 +161,21 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
     return success
 
 
-def run_experiment(config_name: str, additional_args: List[str] = None) -> Dict:
+def run_experiment(config_name: str, additional_args: List[str] = None, resume_checkpoint: str = None) -> Dict:
     """Run a single experiment with given configuration.
 
     Args:
         config_name: Configuration name
         additional_args: Additional command line arguments
+        resume_checkpoint: Path to checkpoint to resume from
 
     Returns:
         Dictionary with experiment results
     """
     print(f"\n{'='*60}")
     print(f"Running experiment: {config_name}")
+    if resume_checkpoint:
+        print(f"Resuming from: {resume_checkpoint}")
     print(f"{'='*60}")
 
     # Build command
@@ -180,6 +183,9 @@ def run_experiment(config_name: str, additional_args: List[str] = None) -> Dict:
         'uv', 'run', 'python', 'train_advanced.py',
         '--config', config_name
     ]
+
+    if resume_checkpoint:
+        cmd.extend(['--resume', resume_checkpoint])
 
     if additional_args:
         cmd.extend(additional_args)
@@ -401,8 +407,29 @@ def main():
                         help='Output directory for experiments')
     parser.add_argument('--export_onnx', action='store_true',
                         help='Export ONNX models for existing experiments')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint (.pth) to resume training from')
+    parser.add_argument('--additional_epochs', type=int, default=None,
+                        help='Number of additional epochs to train (adds to checkpoint epoch)')
+    parser.add_argument('--total_epochs', type=int, default=None,
+                        help='Total epochs to train to (overrides --epochs)')
 
     args = parser.parse_args()
+    
+    # Validate arguments
+    if args.resume:
+        if not Path(args.resume).exists():
+            print(f"Error: Checkpoint file not found: {args.resume}")
+            return
+        
+        # When resuming, only run one config
+        if len(args.configs) > 1:
+            print("Warning: When resuming, only the first config will be used")
+            args.configs = [args.configs[0]]
+            
+    if args.additional_epochs and args.total_epochs:
+        print("Error: Cannot specify both --additional_epochs and --total_epochs")
+        return
 
     # Export ONNX models for existing experiments
     if args.export_onnx:
@@ -422,9 +449,39 @@ def main():
         # Run experiments
         results = []
 
+        # Calculate number of epochs and config when resuming
+        if args.resume:
+            # Load checkpoint to get current epoch and config
+            checkpoint = torch.load(args.resume, map_location='cpu')
+            current_epoch = checkpoint.get('epoch', -1) + 1  # +1 because epoch is 0-indexed
+            
+            # Try to get config from checkpoint
+            if 'config' in checkpoint:
+                checkpoint_config = checkpoint['config']
+                config_name = checkpoint_config.get('name', args.configs[0])
+                print(f"\nDetected config from checkpoint: {config_name}")
+                # Override the config if it was found
+                args.configs = [config_name]
+            
+            if args.additional_epochs or args.total_epochs:
+                if args.total_epochs:
+                    # Train to total_epochs
+                    num_epochs = args.total_epochs
+                    print(f"Resuming from epoch {current_epoch}, training to epoch {num_epochs}")
+                elif args.additional_epochs:
+                    # Add additional epochs
+                    num_epochs = current_epoch + args.additional_epochs
+                    print(f"Resuming from epoch {current_epoch}, adding {args.additional_epochs} epochs (total: {num_epochs})")
+            else:
+                # Default: continue to originally planned epochs
+                num_epochs = checkpoint_config.get('training', {}).get('num_epochs', args.epochs) if 'config' in checkpoint else args.epochs
+                print(f"Resuming from epoch {current_epoch}, continuing to epoch {num_epochs}")
+        else:
+            num_epochs = args.total_epochs if args.total_epochs else args.epochs
+
         for config in args.configs:
             # Export untrained model first if specified
-            if args.export_onnx:
+            if args.export_onnx and not args.resume:
                 print(f"\nExporting untrained model for {config}...")
                 export_untrained_model_to_onnx(config, args.output_dir)
             
@@ -432,12 +489,12 @@ def main():
             additional_args = [
                 '--config_modifications',
                 json.dumps({
-                    'training.num_epochs': args.epochs,
+                    'training.num_epochs': num_epochs,
                     'training.batch_size': args.batch_size
                 })
             ]
 
-            result = run_experiment(config, additional_args)
+            result = run_experiment(config, additional_args, resume_checkpoint=args.resume)
             results.append(result)
 
             # Save intermediate results
