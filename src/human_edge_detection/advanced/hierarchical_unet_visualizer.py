@@ -408,13 +408,22 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
 
+            # Increase padding for better visual balance
+            vertical_padding = 15  # Increased from 10
+            horizontal_padding = 20
+            
+            # Calculate box dimensions
+            box_height = text_height + 2 * vertical_padding
+            
             draw.rectangle(
-                [10, y_pos, 10 + text_width + 20, y_pos + text_height + 10],
+                [10, y_pos, 10 + text_width + horizontal_padding, y_pos + box_height],
                 fill=color
             )
 
-            # Draw text
-            draw.text((20, y_pos + 5), text, fill='white', font=font)
+            # Center text vertically within the box
+            # Account for text baseline by using bbox offset
+            text_y = y_pos + vertical_padding - bbox[1]
+            draw.text((20, text_y), text, fill='white', font=font)
 
         # Resize to 60% before saving (matching parent class)
         resized_width = int(combined.width * 0.6)
@@ -491,13 +500,22 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
 
+            # Increase padding for better visual balance
+            vertical_padding = 15  # Increased from 10
+            horizontal_padding = 20
+            
+            # Calculate box dimensions
+            box_height = text_height + 2 * vertical_padding
+            
             draw.rectangle(
-                [10, y_pos, 10 + text_width + 20, y_pos + text_height + 10],
+                [10, y_pos, 10 + text_width + horizontal_padding, y_pos + box_height],
                 fill=color
             )
 
-            # Draw text
-            draw.text((20, y_pos + 5), text, fill='white', font=font)
+            # Center text vertically within the box
+            # Account for text baseline by using bbox offset
+            text_y = y_pos + vertical_padding - bbox[1]
+            draw.text((20, text_y), text, fill='white', font=font)
 
         # Resize to 60% before saving (matching parent class)
         resized_width = int(combined.width * 0.6)
