@@ -82,7 +82,8 @@ def evaluate_model(
             instance_info = batch.get('instance_info') if config and config.distance_loss.enabled else None
             
             # Handle hierarchical model output
-            if config and hasattr(config.model, 'use_hierarchical') and (config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet)):
+            is_hierarchical = config and (config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']))
+            if is_hierarchical:
                 if isinstance(predictions, tuple):
                     logits, aux_outputs = predictions
                     loss, loss_dict = loss_fn(logits, masks, aux_outputs)

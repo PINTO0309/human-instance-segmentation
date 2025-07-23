@@ -13,10 +13,40 @@ from .visualization_adapter import AdvancedValidationVisualizer
 
 class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
     """Extended visualizer that adds UNet foreground/background visualization."""
+    
+    def __init__(self, *args, **kwargs):
+        """Initialize with variant detection."""
+        super().__init__(*args, **kwargs)
+        self._detect_model_variant()
+    
+    def _detect_model_variant(self):
+        """Detect which UNet variant is being used based on model architecture."""
+        self.unet_variant = 'v1'  # Default
+        
+        # Try a dummy forward pass to check aux_outputs structure
+        try:
+            import torch
+            dummy_features = torch.randn(1, 256, 28, 28).to(self.device)
+            
+            if hasattr(self.model, 'hierarchical_head'):
+                with torch.no_grad():
+                    _, aux_outputs = self.model.hierarchical_head(dummy_features)
+                
+                # Check aux_outputs to determine variant
+                if 'attended_features' in aux_outputs:
+                    self.unet_variant = 'v4'
+                elif 'target_logits_low' in aux_outputs:
+                    self.unet_variant = 'v3'
+                elif 'target_nontarget_logits' in aux_outputs:
+                    self.unet_variant = 'v2'
+                    
+            print(f"Detected UNet variant: {self.unet_variant}")
+        except:
+            print("Could not detect UNet variant, defaulting to v1")
 
     def visualize_validation_images(self, epoch: int, validate_all: bool = False):
         """Override to add UNet visualization as third row."""
-        print("HierarchicalUNetVisualizer.visualize_validation_images called")
+        print(f"HierarchicalUNetVisualizer.visualize_validation_images called (variant: {self.unet_variant})")
 
         # First call parent method to generate standard visualization
         super().visualize_validation_images(epoch, validate_all)
@@ -268,6 +298,9 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                         # Add to combined masks
                         combined_fg_mask[y1_int:y2_int, x1_int:x2_int] |= fg_mask_roi
                         combined_bg_mask[y1_int:y2_int, x1_int:x2_int] |= bg_mask_roi
+                        
+                        # For V3 and V4, we could potentially visualize additional features
+                        # but for now we keep the same visualization for consistency
 
                 # After processing all ROIs, render combined UNet masks
                 # Create overlay
@@ -313,8 +346,8 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         if n_images == 0:
             return
 
-        # Calculate dimensions
-        scale_factor = 0.45
+        # Calculate dimensions (matching parent class layout)
+        scale_factor = 1.0
         img_width = int(640 * scale_factor)
         img_height = int(640 * scale_factor)
         padding = int(20 * scale_factor)
@@ -347,16 +380,25 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         # Add labels
         draw = ImageDraw.Draw(combined)
         try:
+            # Match parent class font size
             font_size = int(30 * scale_factor * 1.5)
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
         except:
             font = ImageFont.load_default()
 
         # Calculate label positions
+        # Update label based on variant
+        unet_label = {
+            'v1': "UNet FG/BG",
+            'v2': "Enhanced UNet FG/BG", 
+            'v3': "Enhanced UNet + Shallow UNet",
+            'v4': "Dual Enhanced UNet"
+        }.get(self.unet_variant, "UNet FG/BG")
+        
         labels = [
             ("Ground Truth", (255, 102, 102)),  # Light red
             ("Predictions", (0, 153, 0)),       # Green
-            ("UNet FG/BG", (102, 102, 255))     # Light blue
+            (unet_label, (102, 102, 255))       # Light blue
         ]
 
         for idx, (text, color) in enumerate(labels):
@@ -374,13 +416,9 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             # Draw text
             draw.text((20, y_pos + 5), text, fill='white', font=font)
 
-        # Calculate resize factor to match 2-row image width
-        # 2-row image has width of 1596 pixels after 60% resize
-        # We need to resize to match that width
-        target_width = 1596
-        resize_factor = target_width / combined.width
-        resized_width = target_width
-        resized_height = int(combined.height * resize_factor)
+        # Resize to 60% before saving (matching parent class)
+        resized_width = int(combined.width * 0.6)
+        resized_height = int(combined.height * 0.6)
         combined_resized = combined.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
 
         # Save with same filename as 2-row visualization
@@ -400,8 +438,8 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         filename: str
     ):
         """Save individual validation result with 3 rows for a single image."""
-        # Create combined image for this single validation
-        scale_factor = 0.45
+        # Create combined image for this single validation (matching parent class layout)
+        scale_factor = 1.0
         img_width = int(640 * scale_factor)
         img_height = int(640 * scale_factor)
         padding = int(20 * scale_factor)
@@ -432,10 +470,18 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             font = ImageFont.load_default()
 
         # Calculate label positions
+        # Update label based on variant
+        unet_label = {
+            'v1': "UNet FG/BG",
+            'v2': "Enhanced UNet FG/BG", 
+            'v3': "Enhanced UNet + Shallow UNet",
+            'v4': "Dual Enhanced UNet"
+        }.get(self.unet_variant, "UNet FG/BG")
+        
         labels = [
             ("Ground Truth", (255, 102, 102)),  # Light red
             ("Predictions", (0, 153, 0)),       # Green
-            ("UNet FG/BG", (102, 102, 255))     # Light blue
+            (unet_label, (102, 102, 255))       # Light blue
         ]
 
         for idx, (text, color) in enumerate(labels):
@@ -453,6 +499,11 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             # Draw text
             draw.text((20, y_pos + 5), text, fill='white', font=font)
 
+        # Resize to 60% before saving (matching parent class)
+        resized_width = int(combined.width * 0.6)
+        resized_height = int(combined.height * 0.6)
+        combined_resized = combined.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+        
         # Create subdirectory for epoch
         epoch_dir = self.output_dir / f'epoch_{epoch:04d}'
         epoch_dir.mkdir(exist_ok=True)
@@ -460,7 +511,7 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         # Save with original filename (without extension)
         base_name = filename.rsplit('.', 1)[0]
         output_path = epoch_dir / f'{base_name}_val.png'
-        combined.save(output_path)
+        combined_resized.save(output_path)
 
         # Print progress every 10 images
         if hasattr(self, '_save_count'):

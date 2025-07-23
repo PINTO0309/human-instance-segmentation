@@ -80,7 +80,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         model = create_hierarchical_model(base_model)
         feature_extractor = None
         
-    elif config.model.use_hierarchical_unet:
+    elif config.model.use_hierarchical_unet or config.model.use_hierarchical_unet_v2 or config.model.use_hierarchical_unet_v3 or config.model.use_hierarchical_unet_v4:
         # Build multi-scale model with UNet-based hierarchical architecture
         if config.model.variable_roi_sizes:
             # Create custom variable ROI model
@@ -104,9 +104,20 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                 execution_provider=config.model.execution_provider
             )
         
-        # Wrap with UNet-based hierarchical architecture
-        from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
-        model = create_hierarchical_model_unet(base_model)
+        # Wrap with appropriate UNet-based hierarchical architecture
+        if config.model.use_hierarchical_unet_v4:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet_v4
+            model = create_hierarchical_model_unet_v4(base_model)
+        elif config.model.use_hierarchical_unet_v3:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet_v3
+            model = create_hierarchical_model_unet_v3(base_model)
+        elif config.model.use_hierarchical_unet_v2:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet_v2
+            model = create_hierarchical_model_unet_v2(base_model)
+        else:  # config.model.use_hierarchical_unet (V1)
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
+            model = create_hierarchical_model_unet(base_model)
+        
         feature_extractor = None
         
     elif config.model.use_class_specific_decoder:
@@ -216,7 +227,7 @@ def build_loss_function(
     """Build loss function based on configuration."""
     
     # Check for hierarchical model first
-    if config.model.use_hierarchical or config.model.use_hierarchical_unet:
+    if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
         return HierarchicalLoss(
             bg_weight=1.0,
@@ -326,7 +337,7 @@ def train_epoch(
                 instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
                 # Handle hierarchical model output
-                if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
+                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
                     if isinstance(predictions, tuple):
                         logits, aux_outputs = predictions
                         loss, loss_dict = loss_fn(logits, masks, aux_outputs)
@@ -379,15 +390,16 @@ def train_epoch(
             instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
             # Handle hierarchical model output
-            if config.model.use_hierarchical:
+            if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
                 if isinstance(predictions, tuple):
                     logits, aux_outputs = predictions
                     loss, loss_dict = loss_fn(logits, masks, aux_outputs)
                 else:
                     # Hierarchical model should return tuple, but didn't
-                    # This might happen during the first forward pass
-                    # Treat as regular predictions and pass empty aux_outputs
-                    loss, loss_dict = loss_fn(predictions, masks, {})
+                    print(f"WARNING: Hierarchical model returned {type(predictions)} instead of tuple")
+                    print(f"Predictions shape: {predictions.shape if hasattr(predictions, 'shape') else 'N/A'}")
+                    # This should not happen, raise error for debugging
+                    raise RuntimeError("Hierarchical model must return (logits, aux_outputs) tuple")
             elif config.cascade.enabled and isinstance(predictions, tuple):
                 # Cascade returns multiple stages
                 loss, loss_dict = loss_fn(predictions, masks, instance_info)
@@ -593,15 +605,30 @@ def main():
     from src.human_edge_detection.advanced.visualization_adapter import AdvancedValidationVisualizer
 
     val_coco = COCO(config.data.val_annotation)
-    visualizer = AdvancedValidationVisualizer(
-        model=model,
-        feature_extractor=feature_extractor,
-        coco=val_coco,
-        image_dir=config.data.val_img_dir,
-        output_dir=exp_dirs['visualizations'],
-        device=device,
-        is_multiscale=config.multiscale.enabled
-    )
+    
+    # Use HierarchicalUNetVisualizer for hierarchical UNet models
+    if any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+        from src.human_edge_detection.advanced.hierarchical_unet_visualizer import HierarchicalUNetVisualizer
+        visualizer = HierarchicalUNetVisualizer(
+            model=model,
+            feature_extractor=feature_extractor,
+            coco=val_coco,
+            image_dir=config.data.val_img_dir,
+            output_dir=exp_dirs['visualizations'],
+            device=device,
+            is_multiscale=config.multiscale.enabled,
+            roi_padding=config.data.roi_padding
+        )
+    else:
+        visualizer = AdvancedValidationVisualizer(
+            model=model,
+            feature_extractor=feature_extractor,
+            coco=val_coco,
+            image_dir=config.data.val_img_dir,
+            output_dir=exp_dirs['visualizations'],
+            device=device,
+            is_multiscale=config.multiscale.enabled
+        )
 
     # Resume from checkpoint
     start_epoch = 0
@@ -610,7 +637,26 @@ def main():
     if args.resume:
         print(f"\nResuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Try to load model state dict with better error handling
+        try:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        except RuntimeError as e:
+            print(f"Warning: Failed to load model weights with strict=True, trying strict=False...")
+            print(f"Error: {e}")
+            # Try non-strict loading
+            incompatible_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            if incompatible_keys.missing_keys:
+                print(f"Missing keys: {len(incompatible_keys.missing_keys)}")
+                if len(incompatible_keys.missing_keys) < 10:
+                    for key in incompatible_keys.missing_keys:
+                        print(f"  - {key}")
+            if incompatible_keys.unexpected_keys:
+                print(f"Unexpected keys: {len(incompatible_keys.unexpected_keys)}")
+                if len(incompatible_keys.unexpected_keys) < 10:
+                    for key in incompatible_keys.unexpected_keys:
+                        print(f"  - {key}")
+        
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_miou = checkpoint.get('best_miou', 0)
@@ -653,7 +699,7 @@ def main():
             from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
             untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
             # Determine model type
-            if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
+            if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
                 model_type = 'hierarchical'
             elif config.model.use_class_specific_decoder:
                 model_type = 'class_specific'

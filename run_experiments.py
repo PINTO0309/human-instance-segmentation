@@ -63,7 +63,7 @@ def export_untrained_model_to_onnx(config_name: str, output_dir: str = 'experime
     untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
     
     # Determine model type
-    if config.model.use_hierarchical:
+    if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         model_type = 'hierarchical'
     elif config.model.use_class_specific_decoder:
         model_type = 'class_specific'

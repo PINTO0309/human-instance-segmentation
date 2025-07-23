@@ -41,7 +41,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         feature_extractor: Feature extractor (if using base model)
     """
     # Check for hierarchical models first
-    if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
+    if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         # Build multi-scale model with hierarchical architecture
         if config.model.variable_roi_sizes:
             # Create custom variable ROI model
@@ -66,7 +66,16 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             )
 
         # Wrap with appropriate hierarchical architecture
-        if hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet:
+        if hasattr(config.model, 'use_hierarchical_unet_v4') and config.model.use_hierarchical_unet_v4:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet_v4
+            model = create_hierarchical_model_unet_v4(base_model)
+        elif hasattr(config.model, 'use_hierarchical_unet_v3') and config.model.use_hierarchical_unet_v3:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet_v3
+            model = create_hierarchical_model_unet_v3(base_model)
+        elif hasattr(config.model, 'use_hierarchical_unet_v2') and config.model.use_hierarchical_unet_v2:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet_v2
+            model = create_hierarchical_model_unet_v2(base_model)
+        elif hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet:
             from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
             model = create_hierarchical_model_unet(base_model)
         else:
@@ -148,7 +157,7 @@ def build_loss_function(
     """Build loss function based on configuration."""
 
     # Check for hierarchical model first
-    if config.model.use_hierarchical or (hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet):
+    if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
         return HierarchicalLoss(
             bg_weight=1.0,
@@ -330,7 +339,7 @@ def validate_advanced_checkpoint(
         vis_output_dir.mkdir(exist_ok=True)
 
         # Use HierarchicalUNetVisualizer for hierarchical UNet models
-        if hasattr(config.model, 'use_hierarchical_unet') and config.model.use_hierarchical_unet:
+        if any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
             from src.human_edge_detection.advanced.hierarchical_unet_visualizer import HierarchicalUNetVisualizer
             visualizer = HierarchicalUNetVisualizer(
                 model=model,

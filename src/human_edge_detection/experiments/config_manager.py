@@ -112,7 +112,10 @@ class ModelConfig:
     use_rgb_enhancement: bool = False  # Whether to use RGB enhancement
     rgb_enhanced_layers: List[str] = field(default_factory=lambda: ['layer_34'])  # Which layers to enhance with RGB
     use_hierarchical: bool = False  # Use hierarchical segmentation architecture
-    use_hierarchical_unet: bool = False  # Use UNet-based hierarchical segmentation
+    use_hierarchical_unet: bool = False  # Use UNet-based hierarchical segmentation (V1)
+    use_hierarchical_unet_v2: bool = False  # V2: Enhanced UNet for bg/fg only
+    use_hierarchical_unet_v3: bool = False  # V3: Enhanced UNet for bg/fg, Shallow UNet for target/non-target
+    use_hierarchical_unet_v4: bool = False  # V4: Enhanced UNet for both branches
     use_class_specific_decoder: bool = False  # Use class-specific decoders
 
 
@@ -836,12 +839,42 @@ class ConfigManager:
             )
         ),
 
-        'class_specific_decoder': ExperimentConfig(
-            name='class_specific_decoder',
-            description='Class-specific decoders to prevent interference',
+        # 'class_specific_decoder': ExperimentConfig(
+        #     name='class_specific_decoder',
+        #     description='Class-specific decoders to prevent interference',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_class_specific_decoder=True
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=True,
+        #         boundary_width=3,
+        #         boundary_weight=1.5,
+        #         instance_sep_weight=2.0
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_full.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         use_focal=True,
+        #         focal_gamma=2.0,
+        #         learning_rate=5e-4,
+        #         batch_size=2
+        #     )
+        # ),
+
+        'hierarchical_segmentation_unet_v2': ExperimentConfig(
+            name='hierarchical_segmentation_unet_v2',
+            description='V2: Enhanced UNet for bg/fg only, standard CNN for target/non-target',
             model=ModelConfig(
                 variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_class_specific_decoder=True
+                use_hierarchical_unet_v2=True
             ),
             multiscale=MultiScaleConfig(
                 enabled=True,
@@ -849,20 +882,72 @@ class ConfigManager:
                 fusion_method='adaptive'
             ),
             distance_loss=DistanceLossConfig(
-                enabled=True,
-                boundary_width=3,
-                boundary_weight=1.5,
-                instance_sep_weight=2.0
+                enabled=False  # Use hierarchical loss instead
             ),
             data=DataConfig(
-                data_stats="data_analyze_full.json",
+                data_stats="data_analyze_no_separation.json",
                 roi_padding=0.0  # No padding
             ),
             training=TrainingConfig(
-                use_focal=True,
-                focal_gamma=2.0,
+                num_epochs=100,
                 learning_rate=5e-4,
-                batch_size=2
+                batch_size=2,
+                gradient_clip=10.0  # Increased for deeper UNet
+            )
+        ),
+
+        'hierarchical_segmentation_unet_v3': ExperimentConfig(
+            name='hierarchical_segmentation_unet_v3',
+            description='V3: Enhanced UNet for bg/fg, Shallow UNet for target/non-target',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_hierarchical_unet_v3=True
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=False  # Use hierarchical loss instead
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0  # No padding
+            ),
+            training=TrainingConfig(
+                num_epochs=100,
+                learning_rate=3e-4,  # Lower LR for dual UNet
+                batch_size=2,
+                gradient_clip=10.0
+            )
+        ),
+
+        'hierarchical_segmentation_unet_v4': ExperimentConfig(
+            name='hierarchical_segmentation_unet_v4',
+            description='V4: Enhanced UNet for both branches with cross-attention',
+            model=ModelConfig(
+                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+                use_hierarchical_unet_v4=True
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='adaptive'
+            ),
+            distance_loss=DistanceLossConfig(
+                enabled=False  # Use hierarchical loss instead
+            ),
+            data=DataConfig(
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0  # No padding
+            ),
+            training=TrainingConfig(
+                num_epochs=100,
+                learning_rate=2e-4,  # Even lower LR for complex architecture
+                batch_size=2,
+                gradient_clip=15.0,  # Higher clip for cross-attention
+                mixed_precision=False  # Disable for stability with cross-attention
             )
         )
     }
