@@ -1489,3 +1489,77 @@ uv run python run_experiments.py --configs hierarchical_segmentation_unet_v4 --e
 - **背景処理重視**: V2を選択
 
 各バリアントは特定の用途に最適化されており、要件に応じて適切なものを選択することが重要です。
+
+
+## 16. CosineAnnealingWarmRestarts スケジューラー
+
+### 概要
+
+PyTorchの`CosineAnnealingWarmRestarts`スケジューラーを初期学習時から選択可能になりました。このスケジューラーは、学習率を周期的にリセットすることで、局所最適解から脱出し、より良い解を探索できる可能性があります。
+
+### 設定方法
+
+`config_manager.py`の`TrainingConfig`に以下のパラメータが追加されました：
+
+```python
+scheduler: str = 'cosine_warm_restarts'  # 'cosine', 'cosine_warm_restarts', or None
+T_0: int = 10  # 最初のリスタートまでのエポック数
+T_mult: int = 2  # リスタート後の周期の倍率
+eta_min_restart: float = 1e-6  # リスタート時の最小学習率
+```
+
+### 動作原理
+
+- **T_0 = 10, T_mult = 2**の場合：
+  - 1回目のリスタート: 10エポック後
+  - 2回目のリスタート: 10 + 20 = 30エポック後
+  - 3回目のリスタート: 10 + 20 + 40 = 70エポック後
+  - 4回目のリスタート: 10 + 20 + 40 + 80 = 150エポック後
+
+### 使用例
+
+```python
+# 新しい設定例
+'warm_restarts_example': ExperimentConfig(
+    name='warm_restarts_example',
+    description='Example configuration using CosineAnnealingWarmRestarts scheduler',
+    # ... 他の設定 ...
+    training=TrainingConfig(
+        num_epochs=100,
+        learning_rate=1e-3,
+        batch_size=8,
+        scheduler='cosine_warm_restarts',
+        T_0=10,  # 10エポックごとに最初のリスタート
+        T_mult=2,  # 周期を2倍ずつ増やす
+        eta_min_restart=1e-6
+    )
+)
+```
+
+### コマンドライン使用例
+
+```bash
+# 事前定義された設定を使用
+uv run python run_experiments.py --configs warm_restarts_example --epochs 100
+
+# カスタム設定で使用
+uv run python train_advanced.py \
+  --config multiscale \
+  --config_modifications '{"training.scheduler": "cosine_warm_restarts", "training.T_0": 20, "training.T_mult": 1}'
+```
+
+### 利点と欠点
+
+**利点:**
+- 局所最適解からの脱出が可能
+- 長期間の学習で効果的
+- アンサンブル効果（各リスタート後のモデルを平均化可能）
+
+**欠点:**
+- 短期間の学習では効果が限定的
+- ハイパーパラメータ（T_0, T_mult）の調整が必要
+- resume時の挙動に注意が必要（内部状態の正しい復元）
+
+### resume時の注意点
+
+`CosineAnnealingWarmRestarts`は内部で累積ステップ数を追跡しているため、resumeする際は`scheduler.load_state_dict()`で正しく状態を復元する必要があります。現在の実装では自動的に処理されますが、学習率の挙動を確認することをお勧めします。

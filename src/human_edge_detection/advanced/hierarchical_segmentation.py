@@ -171,10 +171,23 @@ class HierarchicalLoss(nn.Module):
         
         # Loss 1: Background vs Foreground
         bg_fg_targets = fg_mask  # 0 for background, 1 for foreground
+        
+        # Calculate balanced weights based on class frequency
+        bg_count = bg_mask.float().sum()
+        fg_count = fg_mask.float().sum()
+        total_count = bg_count + fg_count
+        
+        # Avoid division by zero and create balanced weights
+        bg_weight = total_count / (2 * bg_count.clamp(min=1))
+        fg_weight = total_count / (2 * fg_count.clamp(min=1))
+        
+        # Apply additional scaling for foreground importance
+        fg_weight = fg_weight * self.target_weight
+        
         bg_fg_loss = F.cross_entropy(
             aux_outputs['bg_fg_logits'], 
             bg_fg_targets,
-            weight=torch.tensor([1.0, self.target_weight]).to(predictions.device)
+            weight=torch.tensor([bg_weight.item(), fg_weight.item()]).to(predictions.device)
         )
         
         # Loss 2: Target vs Non-target (only on foreground pixels)

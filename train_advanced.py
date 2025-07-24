@@ -230,9 +230,9 @@ def build_loss_function(
     if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
         return HierarchicalLoss(
-            bg_weight=1.0,
-            fg_weight=1.5,
-            target_weight=2.0,
+            bg_weight=2.0,  # Increased weight for bg/fg separation
+            fg_weight=1.0,  # Reduced to balance with bg_weight
+            target_weight=1.5,  # Reduced from 2.0 to avoid over-weighting foreground
             consistency_weight=0.1
         )
 
@@ -590,6 +590,13 @@ def main():
             optimizer,
             T_max=config.training.num_epochs,
             eta_min=config.training.min_lr
+        )
+    elif config.training.scheduler == 'cosine_warm_restarts':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            T_0=config.training.T_0,
+            T_mult=config.training.T_mult,
+            eta_min=config.training.eta_min_restart
         )
     else:
         scheduler = None
