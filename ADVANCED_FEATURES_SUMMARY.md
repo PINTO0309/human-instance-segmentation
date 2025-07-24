@@ -1563,3 +1563,119 @@ uv run python train_advanced.py \
 ### resume時の注意点
 
 `CosineAnnealingWarmRestarts`は内部で累積ステップ数を追跡しているため、resumeする際は`scheduler.load_state_dict()`で正しく状態を復元する必要があります。現在の実装では自動的に処理されますが、学習率の挙動を確認することをお勧めします。
+
+## 17. Hierarchical Segmentationの損失関数改善 ⭐NEW
+
+hierarchical_segmentation_unet_v2において前景/背景分離の収束が遅い問題を解決するため、損失関数の設計を改善しました。
+
+### 改善内容
+
+#### 1. 損失関数の重み調整 (train_advanced.py:233-235)
+
+損失関数の各コンポーネントの重みを最適化しました：
+
+**変更前:**
+```python
+HierarchicalLoss(
+    bg_weight=1.0,      # 背景/前景分離の重み
+    fg_weight=1.5,      # ターゲット/非ターゲット分離の重み
+    target_weight=2.0,  # 前景クラスへの追加重み
+    consistency_weight=0.1
+)
+```
+
+**変更後:**
+```python
+HierarchicalLoss(
+    bg_weight=2.0,      # ↑ 前景/背景分離を重視
+    fg_weight=1.0,      # ↓ バランス調整
+    target_weight=1.5,  # ↓ 過剰な前景重視を緩和
+    consistency_weight=0.1
+)
+```
+
+**改善理由:**
+- **bg_weight増加**: 前景/背景分離は階層的セグメンテーションの基礎となるため、より高い重要度を設定
+- **fg_weight減少**: 前景/背景分離とのバランスを改善
+- **target_weight減少**: 2.0は前景クラスに過剰な重みとなり、学習の不安定性を引き起こしていた
+
+#### 2. 動的なクラスバランシング (hierarchical_segmentation.py:175-191)
+
+バッチごとにクラスの出現頻度に基づいて動的に重みを調整する仕組みを実装しました：
+
+**変更前:**
+```python
+# 固定の重み
+bg_fg_loss = F.cross_entropy(
+    aux_outputs['bg_fg_logits'], 
+    bg_fg_targets,
+    weight=torch.tensor([1.0, self.target_weight]).to(predictions.device)
+)
+```
+
+**変更後:**
+```python
+# バッチごとに動的に計算される重み
+bg_count = bg_mask.float().sum()
+fg_count = fg_mask.float().sum()
+total_count = bg_count + fg_count
+
+# 逆頻度ベースの重み計算
+bg_weight = total_count / (2 * bg_count.clamp(min=1))
+fg_weight = total_count / (2 * fg_count.clamp(min=1))
+
+# 前景の重要性を追加で強調
+fg_weight = fg_weight * self.target_weight
+
+bg_fg_loss = F.cross_entropy(
+    aux_outputs['bg_fg_logits'], 
+    bg_fg_targets,
+    weight=torch.tensor([bg_weight.item(), fg_weight.item()]).to(predictions.device)
+)
+```
+
+### 動的バランシングの仕組み
+
+#### 計算例
+
+あるバッチで背景90%、前景10%の場合：
+
+```
+総ピクセル数: 1000
+背景ピクセル: 900
+前景ピクセル: 100
+
+bg_weight = 1000 / (2 * 900) = 0.56
+fg_weight = 1000 / (2 * 100) = 5.0
+fg_weight（調整後） = 5.0 * 1.5 = 7.5
+```
+
+これにより、少数クラス（前景）により大きな重みが自動的に付与されます。
+
+#### 利点
+
+1. **データ分布への適応**: バッチごとに異なるクラス分布に自動対応
+2. **収束の高速化**: クラス不均衡による学習の偏りを防止
+3. **汎化性能の向上**: 様々なシーンに対してロバストな学習
+
+### 効果
+
+これらの改善により、以下の効果が期待されます：
+
+1. **前景/背景分離の収束速度が向上**
+   - より適切な重み付けにより、初期段階から効率的な学習
+   - 動的バランシングによる安定した勾配
+
+2. **全体的な性能向上**
+   - 階層的セグメンテーションの基礎となる前景/背景分離の改善
+   - それに伴うターゲット/非ターゲット分離の精度向上
+
+3. **様々なデータセットへの対応**
+   - 動的重み調整により、異なるクラス分布のデータにも対応可能
+   - COCOデータセット以外でも効果的に動作
+
+### 使用時の注意
+
+- これらの改善は`hierarchical_segmentation`系のすべてのモデル（V1-V4）に自動的に適用されます
+- 既存のチェックポイントからresumeする場合、新しい重みが適用されるため、学習曲線に変化が生じる可能性があります
+- 必要に応じて`train_advanced.py`の重み設定をさらに調整可能です
