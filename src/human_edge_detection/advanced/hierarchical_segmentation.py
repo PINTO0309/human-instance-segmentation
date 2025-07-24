@@ -197,15 +197,30 @@ class HierarchicalLoss(nn.Module):
             target_nontarget_targets[target_mask.bool()] = 0
             target_nontarget_targets[nontarget_mask.bool()] = 1
             
-            # Apply foreground mask and compute loss
-            # Use the foreground mask as weight instead of masking
-            target_nontarget_loss = F.cross_entropy(
-                aux_outputs['target_nontarget_logits'],
-                target_nontarget_targets.long(),
-                reduction='none'
-            )
-            # Apply foreground mask and average
-            target_nontarget_loss = (target_nontarget_loss * fg_mask.float()).sum() / fg_mask.float().sum().clamp(min=1)
+            # Calculate dynamic weights for target vs non-target
+            target_count = (target_mask * fg_mask).float().sum()
+            nontarget_count = (nontarget_mask * fg_mask).float().sum()
+            fg_total = target_count + nontarget_count
+            
+            if fg_total > 0:
+                # Dynamic balancing weights
+                target_weight_dynamic = fg_total / (2 * target_count.clamp(min=1))
+                nontarget_weight_dynamic = fg_total / (2 * nontarget_count.clamp(min=1))
+                
+                # Apply class weights
+                class_weights = torch.tensor([target_weight_dynamic.item(), nontarget_weight_dynamic.item()]).to(predictions.device)
+                
+                # Compute weighted loss with foreground mask
+                target_nontarget_loss = F.cross_entropy(
+                    aux_outputs['target_nontarget_logits'],
+                    target_nontarget_targets.long(),
+                    weight=class_weights,
+                    reduction='none'
+                )
+                # Apply foreground mask and average
+                target_nontarget_loss = (target_nontarget_loss * fg_mask.float()).sum() / fg_mask.float().sum().clamp(min=1)
+            else:
+                target_nontarget_loss = torch.tensor(0.0, device=predictions.device)
         else:
             target_nontarget_loss = torch.tensor(0.0, device=predictions.device)
         

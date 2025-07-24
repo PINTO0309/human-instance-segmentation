@@ -1679,3 +1679,86 @@ fg_weight（調整後） = 5.0 * 1.5 = 7.5
 - これらの改善は`hierarchical_segmentation`系のすべてのモデル（V1-V4）に自動的に適用されます
 - 既存のチェックポイントからresumeする場合、新しい重みが適用されるため、学習曲線に変化が生じる可能性があります
 - 必要に応じて`train_advanced.py`の重み設定をさらに調整可能です
+
+### 3. ターゲット/非ターゲット間の動的バランシング ⭐NEW
+
+前景内でのターゲットクラスと非ターゲットクラス間でも動的バランシングを実装しました。
+
+#### 実装内容
+
+**改善前:**
+```python
+# 固定の重みなし、単純な前景マスクでの平均化
+target_nontarget_loss = F.cross_entropy(
+    aux_outputs['target_nontarget_logits'],
+    target_nontarget_targets.long(),
+    reduction='none'
+)
+target_nontarget_loss = (target_nontarget_loss * fg_mask.float()).sum() / fg_mask.float().sum()
+```
+
+**改善後:**
+```python
+# 前景内でのクラス分布を計算
+target_count = (target_mask * fg_mask).float().sum()
+nontarget_count = (nontarget_mask * fg_mask).float().sum()
+fg_total = target_count + nontarget_count
+
+# 動的バランシング重み
+target_weight_dynamic = fg_total / (2 * target_count.clamp(min=1))
+nontarget_weight_dynamic = fg_total / (2 * nontarget_count.clamp(min=1))
+
+# 重み付きクロスエントロピー
+class_weights = torch.tensor([target_weight_dynamic.item(), nontarget_weight_dynamic.item()])
+target_nontarget_loss = F.cross_entropy(
+    aux_outputs['target_nontarget_logits'],
+    target_nontarget_targets.long(),
+    weight=class_weights,
+    reduction='none'
+)
+```
+
+#### 動作例
+
+**ケース1: 単一人物（重なりなし）**
+```
+前景内分布: ターゲット 95%, 非ターゲット 5%
+動的重み: ターゲット 0.53, 非ターゲット 10.0
+→ 稀少な非ターゲット領域（エッジ部分など）を重視
+```
+
+**ケース2: 2人が部分的に重なる**
+```
+前景内分布: ターゲット 70%, 非ターゲット 30%
+動的重み: ターゲット 0.71, 非ターゲット 1.67
+→ バランスの取れた学習
+```
+
+**ケース3: 群衆（多数の重なり）**
+```
+前景内分布: ターゲット 40%, 非ターゲット 60%
+動的重み: ターゲット 1.25, 非ターゲット 0.83
+→ 主要ターゲットの検出を維持
+```
+
+#### 期待される効果
+
+1. **インスタンス分離の精度向上**
+   - 特に人物が重なる領域での分離性能が改善
+   - エッジ部分の非ターゲット領域がより正確に
+
+2. **シーン適応性の向上**
+   - 単一人物から群衆まで、様々なシーンに自動適応
+   - データセット内の多様性に対してロバスト
+
+3. **学習の安定化**
+   - クラス不均衡による勾配の偏りを防止
+   - より一貫した収束挙動
+
+#### 実装の特徴
+
+- **前景マスク内でのみ計算**: 背景領域は除外して、真のターゲット/非ターゲット比率を計算
+- **ゼロ除算の防止**: `clamp(min=1)`で安全な計算を保証
+- **バッチ適応的**: 各バッチの実際の分布に基づいて重みを調整
+
+この改善により、hierarchical segmentationの全バリアントで、より精密なインスタンスセグメンテーションが可能になります。
