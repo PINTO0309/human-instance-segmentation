@@ -99,7 +99,6 @@ class ValidationVisualizerWithAuxiliary:
 
         # Find fallbacks for each missing image
         for target_num_persons, missing_filename in missing_images.items():
-            print(f"Looking for fallback for {missing_filename} with {target_num_persons} persons")
 
             # First try to find exact match
             candidates = [img for img in available_images if img['num_persons'] == target_num_persons]
@@ -118,7 +117,7 @@ class ValidationVisualizerWithAuxiliary:
                     'is_fallback': True,
                     'original_request': missing_filename
                 }
-                print(f"  Using fallback: {fallback['filename']} ({fallback['num_persons']} persons)")
+                print(f"Looking for fallback for {missing_filename} with {target_num_persons} persons - Using fallback: {fallback['filename']} ({fallback['num_persons']} persons)")
 
         return fallback_map
 
@@ -1060,12 +1059,6 @@ class ValidationVisualizerWithAuxiliary:
 
             # Process batch
             if features is not None:
-                # Debug model type
-                model_type = type(self.model).__name__
-                print(f"Debug: Model type = {model_type}")
-                print(f"Debug: Has main_head = {hasattr(self.model, 'main_head')}")
-                print(f"Debug: Has aux_head = {hasattr(self.model, 'aux_head')}")
-                
                 # External features - need to handle based on model type
                 if hasattr(self.model, 'main_head') and hasattr(self.model.main_head, 'base_model'):
                     # Multi-scale model with auxiliary task
@@ -1121,18 +1114,14 @@ class ValidationVisualizerWithAuxiliary:
                 main_pred, aux_outputs = batch_pred
                 aux_probs = None
                 
-                print(f"Debug: Got tuple output with aux_outputs keys: {aux_outputs.keys() if isinstance(aux_outputs, dict) else 'Not a dict'}")
-                
                 if 'fg_bg_binary' in aux_outputs:
                     aux_probs = torch.sigmoid(aux_outputs['fg_bg_binary']).cpu().numpy()
-                    print(f"Debug: Got fg_bg_binary predictions with shape: {aux_probs.shape}")
                 elif 'bg_fg_logits' in aux_outputs:
                     # Handle hierarchical models that output bg_fg_logits
                     bg_fg_logits = aux_outputs['bg_fg_logits']
                     # Convert to foreground probability
                     fg_probs = torch.softmax(bg_fg_logits, dim=1)[:, 1:2, :, :]  # Take foreground channel
                     aux_probs = fg_probs.cpu().numpy()
-                    print(f"Debug: Got bg_fg_logits predictions with shape: {aux_probs.shape}")
 
                 # Process each auxiliary prediction if we have any
                 if aux_probs is not None:
@@ -1163,7 +1152,6 @@ class ValidationVisualizerWithAuxiliary:
                         unet_outputs['combined_bg_mask'][y1:y2, x1:x2] = current_bg | (bg_mask_roi & ~current_fg)
             else:
                 main_pred = batch_pred
-                print(f"Debug: Got non-tuple output, no auxiliary predictions")
 
             # Get predictions
             try:
@@ -1184,7 +1172,6 @@ class ValidationVisualizerWithAuxiliary:
         # Create a single auxiliary heatmap from all predictions
         auxiliary_pred = None
         if unet_outputs['all_auxiliary_preds']:
-            print(f"Debug: Creating heatmap from {len(unet_outputs['all_auxiliary_preds'])} auxiliary predictions")
             # Create a single heatmap by taking max over all ROIs
             auxiliary_heatmap = np.zeros((640, 640), dtype=np.float32)
             for aux_info in unet_outputs['all_auxiliary_preds']:
@@ -1194,9 +1181,6 @@ class ValidationVisualizerWithAuxiliary:
                     aux_info['pred']
                 )
             auxiliary_pred = auxiliary_heatmap
-            print(f"Debug: Final heatmap max value: {auxiliary_pred.max()}, min value: {auxiliary_pred.min()}")
-        else:
-            print("Debug: No auxiliary predictions collected")
 
         return predictions, auxiliary_pred, unet_outputs
 
