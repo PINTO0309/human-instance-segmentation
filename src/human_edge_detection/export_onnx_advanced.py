@@ -791,7 +791,7 @@ def export_checkpoint_to_onnx_advanced(
         model_config = config.get('model', {})
         
         # Check for new architecture types first
-        if model_config.get('use_hierarchical', False) or any(model_config.get(attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+        if model_config.get('use_hierarchical', False) or any(model_config.get(attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
             model_type = 'hierarchical'
         elif model_config.get('use_class_specific_decoder', False):
             model_type = 'class_specific'

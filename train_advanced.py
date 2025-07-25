@@ -85,6 +85,22 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         model = create_hierarchical_model(base_model)
         feature_extractor = None
         
+    elif config.model.use_rgb_hierarchical:
+        # RGB-based hierarchical model without YOLOv9 features
+        from src.human_edge_detection.advanced.hierarchical_segmentation_rgb import create_rgb_hierarchical_model
+        
+        multi_scale = config.multiscale.enabled and config.model.variable_roi_sizes
+        
+        model = create_rgb_hierarchical_model(
+            roi_size=config.model.roi_size,
+            mask_size=config.model.mask_size,
+            multi_scale=multi_scale,
+            roi_sizes=config.model.variable_roi_sizes if multi_scale else None,
+            fusion_method=config.multiscale.fusion_method if multi_scale else 'concat'
+        )
+        
+        feature_extractor = None  # RGB model doesn't need external feature extractor
+        
     elif config.model.use_hierarchical_unet or config.model.use_hierarchical_unet_v2 or config.model.use_hierarchical_unet_v3 or config.model.use_hierarchical_unet_v4:
         # Build multi-scale model with UNet-based hierarchical architecture
         
@@ -260,7 +276,8 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         is_hierarchical = config.model.use_hierarchical or any(
             getattr(config.model, attr, False) 
             for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 
-                         'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']
+                         'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4',
+                         'use_rgb_hierarchical']
         )
         
         if not is_hierarchical:
@@ -269,7 +286,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             if config.multiscale.enabled:
                 # Multi-scale model feature channels
                 feature_channels = config.multiscale.fusion_channels
-            elif config.model.use_variable_roi_sizes:
+            elif config.model.variable_roi_sizes is not None:
                 # Variable ROI model feature channels
                 if config.model.use_rgb_enhancement:
                     feature_channels = 1024  # RGB enhanced
@@ -410,7 +427,10 @@ def train_epoch(
         if config.training.mixed_precision and scaler is not None:
             with torch.amp.autocast('cuda'):
                 # Forward pass
-                if config.multiscale.enabled:
+                if config.model.use_rgb_hierarchical:
+                    # RGB hierarchical model takes full images and ROIs
+                    predictions = model(images, rois)
+                elif config.multiscale.enabled:
                     # Multi-scale model
                     if config.cascade.enabled:
                         # Check if model supports return_all_stages
@@ -430,7 +450,7 @@ def train_epoch(
                 instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
                 # Handle hierarchical model output
-                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
                     if isinstance(predictions, tuple):
                         logits, aux_outputs = predictions
                         loss, loss_dict = loss_fn(logits, masks, aux_outputs)
@@ -466,7 +486,10 @@ def train_epoch(
 
         else:
             # Standard training
-            if config.multiscale.enabled:
+            if config.model.use_rgb_hierarchical:
+                # RGB hierarchical model takes full images and ROIs
+                predictions = model(images, rois)
+            elif config.multiscale.enabled:
                 if config.cascade.enabled:
                     # Check if model supports return_all_stages
                     if hasattr(model, 'cascade_head'):
@@ -483,7 +506,7 @@ def train_epoch(
             instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
             # Handle hierarchical model output
-            if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+            if config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
                 if isinstance(predictions, tuple):
                     logits, aux_outputs = predictions
                     loss, loss_dict = loss_fn(logits, masks, aux_outputs)
@@ -739,7 +762,7 @@ def main():
             visualize_auxiliary=config.auxiliary_task.visualize
         )
     # Use HierarchicalUNetVisualizer for hierarchical UNet models
-    elif any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+    elif any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
         from src.human_edge_detection.advanced.hierarchical_unet_visualizer import HierarchicalUNetVisualizer
         visualizer = HierarchicalUNetVisualizer(
             model=model,

@@ -71,7 +71,10 @@ def evaluate_model(
                 features = images  # Multi-scale model extracts internally
                 
             # Forward pass
-            if config and config.multiscale.enabled:
+            if config and config.model.use_rgb_hierarchical:
+                # RGB hierarchical model takes full images and ROIs
+                predictions = model(images, rois)
+            elif config and config.multiscale.enabled:
                 # Multi-scale model
                 if config.cascade.enabled and hasattr(model, 'cascade_head'):
                     # Only use return_all_stages if model actually supports cascade
@@ -87,7 +90,7 @@ def evaluate_model(
             instance_info = batch.get('instance_info') if config and config.distance_loss.enabled else None
             
             # Handle hierarchical model output
-            is_hierarchical = config and (config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']))
+            is_hierarchical = config and (config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']))
             if is_hierarchical:
                 if isinstance(predictions, tuple):
                     logits, aux_outputs = predictions

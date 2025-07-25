@@ -124,7 +124,18 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
     is_hierarchical = exp_config.get('model', {}).get('use_hierarchical', False)
     is_class_specific = exp_config.get('model', {}).get('use_class_specific_decoder', False)
     
-    if is_hierarchical:
+    # Check for all hierarchical model variants
+    model_config = exp_config.get('model', {})
+    is_any_hierarchical = (
+        is_hierarchical or
+        model_config.get('use_hierarchical_unet', False) or
+        model_config.get('use_hierarchical_unet_v2', False) or
+        model_config.get('use_hierarchical_unet_v3', False) or
+        model_config.get('use_hierarchical_unet_v4', False) or
+        model_config.get('use_rgb_hierarchical', False)
+    )
+    
+    if is_any_hierarchical:
         model_type = 'hierarchical'
     elif is_class_specific:
         model_type = 'class_specific'

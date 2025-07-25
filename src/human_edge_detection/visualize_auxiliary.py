@@ -397,9 +397,31 @@ class ValidationVisualizerWithAuxiliary:
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
             else:
-                # Integrated model
-                batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
-                batch_pred = self.model(batch_tensor)
+                # Integrated model or RGB hierarchical model
+                # Check if it's an RGB hierarchical or multi-scale RGB model
+                model_name = self.model.__class__.__name__
+                if 'RGB' in model_name and ('Hierarchical' in model_name or 'MultiScale' in model_name):
+                    # RGB hierarchical model needs full image and ROIs
+                    image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
+                    image_tensor = image_tensor.unsqueeze(0).to(self.device)
+                    
+                    # Prepare ROIs in the correct format
+                    roi_tensors = []
+                    for roi in batch_rois:
+                        x1, y1, x2, y2 = roi
+                        # ROIs in image coordinates [batch_idx, x1, y1, x2, y2]
+                        roi_tensor = torch.tensor(
+                            [[0, x1, y1, x2, y2]],
+                            dtype=torch.float32, device=self.device
+                        )
+                        roi_tensors.append(roi_tensor)
+                    rois = torch.cat(roi_tensors, dim=0)
+                    
+                    batch_pred = self.model(image_tensor, rois)
+                else:
+                    # Standard integrated model
+                    batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
+                    batch_pred = self.model(batch_tensor)
                 
                 # Synchronize CUDA after model inference
                 if torch.cuda.is_available():
@@ -1105,9 +1127,31 @@ class ValidationVisualizerWithAuxiliary:
                         else:
                             batch_pred = self.model(roi_features)
             else:
-                # Integrated model
-                batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
-                batch_pred = self.model(batch_tensor)
+                # Integrated model or RGB hierarchical model
+                # Check if it's an RGB hierarchical or multi-scale RGB model
+                model_name = self.model.__class__.__name__
+                if 'RGB' in model_name and ('Hierarchical' in model_name or 'MultiScale' in model_name):
+                    # RGB hierarchical model needs full image and ROIs
+                    image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
+                    image_tensor = image_tensor.unsqueeze(0).to(self.device)
+                    
+                    # Prepare ROIs in the correct format
+                    roi_tensors = []
+                    for roi in batch_rois:
+                        x1, y1, x2, y2 = roi
+                        # ROIs in image coordinates [batch_idx, x1, y1, x2, y2]
+                        roi_tensor = torch.tensor(
+                            [[0, x1, y1, x2, y2]],
+                            dtype=torch.float32, device=self.device
+                        )
+                        roi_tensors.append(roi_tensor)
+                    rois = torch.cat(roi_tensors, dim=0)
+                    
+                    batch_pred = self.model(image_tensor, rois)
+                else:
+                    # Standard integrated model
+                    batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
+                    batch_pred = self.model(batch_tensor)
 
             # Handle auxiliary outputs
             if isinstance(batch_pred, tuple):

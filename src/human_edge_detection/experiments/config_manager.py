@@ -133,6 +133,7 @@ class ModelConfig:
     use_hierarchical_unet_v4: bool = False  # V4: Enhanced UNet for both branches
     use_class_specific_decoder: bool = False  # Use class-specific decoders
     use_external_features: bool = False  # If True, expect pre-extracted features instead of images
+    use_rgb_hierarchical: bool = False  # Use RGB-based hierarchical model without YOLOv9 features
 
 
 @dataclass
@@ -1436,6 +1437,91 @@ class ConfigManager:
                 batch_size=4,
                 gradient_clip=10.0,
                 warmup_epochs=15  # Longer warmup
+            )
+        ),
+
+        'rgb_hierarchical_unet_v2': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2',
+            description='RGB-based Hierarchical UNet V2 without YOLOv9 features',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,  # We use RGB images directly
+                roi_size=28,
+                mask_size=56,
+                onnx_model=None  # No YOLO model needed
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,  # Start with single-scale
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_100.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,  # Add some padding for context
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=50,
+                batch_size=4,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
+        'rgb_hierarchical_unet_v2_multiscale': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_multiscale',
+            description='Multi-scale RGB-based Hierarchical UNet V2',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                roi_size=28,
+                mask_size=56,
+                onnx_model=None,
+                variable_roi_sizes={'scale1': 56, 'scale2': 42, 'scale3': 28}
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=None,  # Not used for RGB model
+                fusion_method='adaptive'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=10,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
             )
         )
     }
