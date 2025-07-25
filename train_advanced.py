@@ -509,10 +509,6 @@ def train_epoch(
         num_batches += 1
         
         # Track auxiliary metrics if available
-        if 'aux_fg_bg_loss' not in locals():
-            aux_fg_bg_loss = 0
-            aux_fg_accuracy = 0
-            aux_fg_iou = 0
         aux_fg_bg_loss += loss_dict.get('aux_fg_bg_loss', 0)
         aux_fg_accuracy += loss_dict.get('aux_fg_accuracy', 0)
         aux_fg_iou += loss_dict.get('aux_fg_iou', 0)
@@ -910,6 +906,12 @@ def main():
                 writer.add_scalar('val/miou', val_metrics['miou'], epoch)
                 for i in range(config.model.num_classes):
                     writer.add_scalar(f'val/iou_class_{i}', val_metrics[f'iou_class_{i}'], epoch)
+                
+                # Log validation auxiliary metrics if available
+                if 'aux_fg_bg_loss' in val_metrics:
+                    writer.add_scalar('val/aux_fg_bg_loss', val_metrics['aux_fg_bg_loss'], epoch)
+                    writer.add_scalar('val/aux_fg_accuracy', val_metrics['aux_fg_accuracy'], epoch)
+                    writer.add_scalar('val/aux_fg_iou', val_metrics['aux_fg_iou'], epoch)
 
                 print(f"\nEpoch {epoch+1} - Validation:")
                 print(f"  Loss: {val_metrics['total_loss']:.4f}")

@@ -45,6 +45,11 @@ def evaluate_model(
     total_ce_loss = 0
     total_dice_loss = 0
     
+    # Auxiliary metrics tracking
+    aux_fg_bg_loss = 0
+    aux_fg_accuracy = 0
+    aux_fg_iou = 0
+    
     # IoU tracking
     class_ious = {i: [] for i in range(3)}  # Assuming 3 classes
     
@@ -109,6 +114,11 @@ def evaluate_model(
             total_ce_loss += loss_dict.get('ce_loss', 0).item() if isinstance(loss_dict.get('ce_loss', 0), torch.Tensor) else loss_dict.get('ce_loss', 0)
             total_dice_loss += loss_dict.get('dice_loss', 0).item() if isinstance(loss_dict.get('dice_loss', 0), torch.Tensor) else loss_dict.get('dice_loss', 0)
             
+            # Track auxiliary metrics if available
+            aux_fg_bg_loss += loss_dict.get('aux_fg_bg_loss', 0)
+            aux_fg_accuracy += loss_dict.get('aux_fg_accuracy', 0)
+            aux_fg_iou += loss_dict.get('aux_fg_iou', 0)
+            
             # Calculate IoU metrics
             pred_classes = pred_for_metrics.argmax(dim=1)  # (N, H, W)
             
@@ -134,6 +144,12 @@ def evaluate_model(
         'ce_loss': total_ce_loss / num_batches,
         'dice_loss': total_dice_loss / num_batches
     }
+    
+    # Add auxiliary metrics if available
+    if aux_fg_bg_loss > 0:
+        metrics['aux_fg_bg_loss'] = aux_fg_bg_loss / num_batches
+        metrics['aux_fg_accuracy'] = aux_fg_accuracy / num_batches
+        metrics['aux_fg_iou'] = aux_fg_iou / num_batches
     
     # Calculate mean IoU for each class
     for cls in range(3):

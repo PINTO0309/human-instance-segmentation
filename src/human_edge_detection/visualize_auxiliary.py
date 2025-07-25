@@ -611,9 +611,14 @@ class ValidationVisualizerWithAuxiliary:
         return img
 
     def _create_panel_heatmap(self, image_np: np.ndarray, auxiliary_pred: Optional[np.ndarray]) -> Image.Image:
-        """Create auxiliary heatmap panel."""
+        """Create auxiliary heatmap panel with colorbar."""
         img = image_np.copy()
-
+        
+        # Create wider canvas to accommodate colorbar
+        colorbar_width = 60
+        canvas_width = img.shape[1] + colorbar_width
+        canvas = np.ones((img.shape[0], canvas_width, 3), dtype=np.uint8) * 255
+        
         if self.has_auxiliary and auxiliary_pred is not None:
             # Create heatmap overlay
             cmap = cm.get_cmap('hot')
@@ -623,8 +628,44 @@ class ValidationVisualizerWithAuxiliary:
             # Blend with original image
             alpha = 0.6
             img = cv2.addWeighted(heatmap, alpha, img, 1 - alpha, 0)
-
-        return Image.fromarray(img)
+            
+            # Place the blended image on canvas
+            canvas[:, :img.shape[1]] = img
+            
+            # Create colorbar
+            colorbar_height = int(img.shape[0] * 0.8)  # 80% of image height
+            colorbar_y_start = int((img.shape[0] - colorbar_height) / 2)
+            
+            # Generate colorbar gradient
+            gradient = np.linspace(1, 0, colorbar_height).reshape(-1, 1)
+            gradient = np.repeat(gradient, 20, axis=1)  # Width of colorbar
+            colorbar_img = cmap(gradient)[:, :, :3]
+            colorbar_img = (colorbar_img * 255).astype(np.uint8)
+            
+            # Place colorbar on canvas
+            colorbar_x_start = img.shape[1] + 15
+            canvas[colorbar_y_start:colorbar_y_start + colorbar_height, 
+                   colorbar_x_start:colorbar_x_start + 20] = colorbar_img
+            
+            # Add colorbar labels
+            pil_canvas = Image.fromarray(canvas)
+            draw = ImageDraw.Draw(pil_canvas)
+            
+            try:
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+            except:
+                font = ImageFont.load_default()
+            
+            # Add text labels
+            draw.text((colorbar_x_start + 25, colorbar_y_start - 5), "1.0", fill='black', font=font)
+            draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height - 15), "0.0", fill='black', font=font)
+            draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height // 2 - 8), "0.5", fill='black', font=font)
+            
+            return pil_canvas
+        else:
+            # No auxiliary prediction, just return original image
+            canvas[:, :img.shape[1]] = img
+            return Image.fromarray(canvas)
 
     def _create_panel_unet_fg_bg(self, image_np: np.ndarray, unet_outputs: Dict[str, np.ndarray]) -> Image.Image:
         """Create UNet FG/BG panel."""
@@ -719,6 +760,7 @@ class ValidationVisualizerWithAuxiliary:
         # Fixed dimensions
         img_width = 640
         img_height = 640
+        heatmap_width = 700  # Heatmap panel is wider due to colorbar
         padding = 20
 
         # Add extra space for title at the top
@@ -729,7 +771,8 @@ class ValidationVisualizerWithAuxiliary:
         label_padding = 30  # Changed to 30px as requested
         right_margin = 30   # Right margin
         bottom_margin = 30  # New bottom margin
-        combined_width = label_padding + n_images * img_width + (n_images - 1) * padding + right_margin
+        # Account for wider heatmap panels
+        combined_width = label_padding + n_images * heatmap_width + (n_images - 1) * padding + right_margin
         combined_height = title_height + 4 * img_height + 3 * padding + bottom_margin
         combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
 
@@ -746,18 +789,19 @@ class ValidationVisualizerWithAuxiliary:
 
         # Paste images in grid first
         for col in range(n_images):
-            x_offset = label_padding + col * (img_width + padding)
+            # Use wider spacing to accommodate heatmap panels
+            x_offset = label_padding + col * (heatmap_width + padding)
 
-            # Row 1: Ground Truth
+            # Row 1: Ground Truth (standard width)
             combined_img.paste(panel1_images[col], (x_offset, title_height))
 
-            # Row 2: Enhanced Heatmap
+            # Row 2: Binary Mask Heatmap (wider due to colorbar)
             combined_img.paste(panel2_images[col], (x_offset, title_height + img_height + padding))
 
-            # Row 3: Enhanced UNet FG/BG
+            # Row 3: Enhanced UNet FG/BG (standard width)
             combined_img.paste(panel3_images[col], (x_offset, title_height + 2 * (img_height + padding)))
 
-            # Row 4: Predictions
+            # Row 4: Predictions (standard width)
             combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
 
         # Draw main title
