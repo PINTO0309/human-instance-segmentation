@@ -504,14 +504,21 @@ def create_hierarchical_model_unet(base_model: nn.Module) -> nn.Module:
         def forward(self, features, rois, rgb_features=None):
             # Handle both tensor (from base model) and dict (from multiscale) inputs
             if isinstance(features, torch.Tensor):
+                # Check if this is a model with integrated feature extractor
+                if hasattr(self.base_model, 'feature_extractor'):
+                    # This is actually images, not features
+                    images = features  # Rename for clarity
+                    # Extract features using the model's feature extractor
+                    features = self.base_model.feature_extractor.extract_features(images)
+                    # Now continue with the regular flow using extracted features
+                    
                 # Images passed in - need to extract features first
-                # Call base model's feature extraction
-                if hasattr(self.base_model, 'extractor'):
+                elif hasattr(self.base_model, 'extractor'):
                     # Variable ROI model has integrated extractor
                     features = self.base_model.extractor.extract_features(features)
-                else:
+                elif not isinstance(features, dict):
                     # For other models, features should already be extracted
-                    raise RuntimeError("Hierarchical model needs feature extractor")
+                    raise RuntimeError("Hierarchical model needs feature extractor or pre-extracted features")
 
             # Now features is a dict
             # Extract ROI features using original logic
@@ -541,10 +548,33 @@ def create_hierarchical_model_unet(base_model: nn.Module) -> nn.Module:
                     fused_features = self.feature_fusion(roi_features)
                 else:
                     fused_features = list(roi_features.values())[0]
+            elif hasattr(self.base_model, 'segmentation_head') and hasattr(self.base_model.segmentation_head, 'ms_roi_align'):
+                # For MultiScaleSegmentationModel, use its segmentation head's ROI align and fusion
+                seg_head = self.base_model.segmentation_head
+                roi_features = seg_head.ms_roi_align(features, rois)
+                fused_features = seg_head.feature_fusion(roi_features)
             else:
                 # Fallback for simpler models
-                output = self.base_model(features=features, rois=rois)
-                fused_features = output['features'] if isinstance(output, dict) else features
+                # Check if this is a head-only model which expects dict features
+                if hasattr(self.base_model, 'segmentation_head') and (
+                    self.base_model.__class__.__name__ == 'MultiScaleSegmentationHeadOnly' or
+                    self.base_model.__class__.__name__ == 'VariableROISegmentationHeadOnly'
+                ):
+                    # Direct call with features dict
+                    output = self.base_model(features, rois)
+                    # For head-only models, we need to extract intermediate features
+                    # This is a simplified approach - in production you'd extract from decoder
+                    fused_features = output  # Use output as features (not ideal but works for ONNX export)
+                elif hasattr(self.base_model, '__class__') and (
+                    self.base_model.__class__.__name__ == 'MultiScaleHeadWithFeatures' or
+                    self.base_model.__class__.__name__ == 'VariableROIHeadWithFeatures'
+                ):
+                    # These wrappers return features dict
+                    output = self.base_model(features, rois)
+                    fused_features = output['features']
+                else:
+                    output = self.base_model(features=features, rois=rois)
+                    fused_features = output['features'] if isinstance(output, dict) else features
 
             # Apply hierarchical head
             logits, aux_outputs = self.hierarchical_head(fused_features)
@@ -563,7 +593,8 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         in_channels: int,
         mid_channels: int = 256,
         num_classes: int = 3,
-        mask_size: int = 56
+        mask_size: int = 56,
+        dropout_rate: float = 0.1
     ):
         """Initialize hierarchical segmentation head V2.
 
@@ -572,6 +603,7 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
             mid_channels: Intermediate channel count
             num_classes: Total number of classes (should be 3)
             mask_size: Output mask size
+            dropout_rate: Dropout rate for regularization
         """
         super().__init__()
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
@@ -579,12 +611,14 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         self.num_classes = num_classes
         self.mask_size = mask_size
 
-        # Shared feature processing
+        # Shared feature processing with dropout
         self.shared_features = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
             LayerNorm2d(mid_channels),
             nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout_rate),
             ResidualBlock(mid_channels),
+            nn.Dropout2d(dropout_rate),
             ResidualBlock(mid_channels),
         )
 
@@ -599,20 +633,23 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
             nn.Conv2d(32, 2, 1)
         )
 
-        # Branch 2: Target vs Non-target (standard CNN)
+        # Branch 2: Target vs Non-target (standard CNN) with dropout
         self.target_vs_nontarget_branch = nn.Sequential(
             ResidualBlock(mid_channels),
+            nn.Dropout2d(dropout_rate),
             nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
             LayerNorm2d(mid_channels // 2),
             nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout_rate),
             ResidualBlock(mid_channels // 2),
             nn.Conv2d(mid_channels // 2, 2, 1)
         )
 
-        # Enhanced gating with multi-scale attention
+        # Enhanced gating with multi-scale attention and dropout
         self.fg_gate = nn.Sequential(
             nn.Conv2d(2, mid_channels // 4, 1),
             nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout_rate * 0.5),  # Lower dropout for gate
             nn.Conv2d(mid_channels // 4, mid_channels // 2, 1),
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_channels // 2, mid_channels, 1),
@@ -1289,10 +1326,21 @@ def create_hierarchical_model_unet_v2(base_model: nn.Module) -> nn.Module:
         def forward(self, features, rois, rgb_features=None):
             # Same forward logic as V1
             if isinstance(features, torch.Tensor):
-                if hasattr(self.base_model, 'extractor'):
+                # Check if this is a model with integrated feature extractor
+                if hasattr(self.base_model, 'feature_extractor'):
+                    # This is actually images, not features
+                    images = features  # Rename for clarity
+                    # Extract features using the model's feature extractor
+                    features = self.base_model.feature_extractor.extract_features(images)
+                    # Now continue with the regular flow using extracted features
+                    
+                # Images passed in - need to extract features first
+                elif hasattr(self.base_model, 'extractor'):
+                    # Variable ROI model has integrated extractor
                     features = self.base_model.extractor.extract_features(features)
-                else:
-                    raise RuntimeError("Hierarchical model needs feature extractor")
+                elif not isinstance(features, dict):
+                    # For other models, features should already be extracted
+                    raise RuntimeError("Hierarchical model needs feature extractor or pre-extracted features")
 
             if hasattr(self, 'roi_align'):
                 roi_features = self.roi_align(features, rois)
@@ -1317,9 +1365,33 @@ def create_hierarchical_model_unet_v2(base_model: nn.Module) -> nn.Module:
                     fused_features = self.feature_fusion(roi_features)
                 else:
                     fused_features = list(roi_features.values())[0]
+            elif hasattr(self.base_model, 'segmentation_head') and hasattr(self.base_model.segmentation_head, 'ms_roi_align'):
+                # For MultiScaleSegmentationModel, use its segmentation head's ROI align and fusion
+                seg_head = self.base_model.segmentation_head
+                roi_features = seg_head.ms_roi_align(features, rois)
+                fused_features = seg_head.feature_fusion(roi_features)
             else:
-                output = self.base_model(features=features, rois=rois)
-                fused_features = output['features'] if isinstance(output, dict) else features
+                # For other models, call with appropriate arguments
+                # Check if this is a head-only model which expects dict features
+                if hasattr(self.base_model, 'segmentation_head') and (
+                    self.base_model.__class__.__name__ == 'MultiScaleSegmentationHeadOnly' or
+                    self.base_model.__class__.__name__ == 'VariableROISegmentationHeadOnly'
+                ):
+                    # Direct call with features dict
+                    output = self.base_model(features, rois)
+                    # For head-only models, we need to extract intermediate features
+                    # This is a simplified approach - in production you'd extract from decoder
+                    fused_features = output  # Use output as features (not ideal but works for ONNX export)
+                elif hasattr(self.base_model, '__class__') and (
+                    self.base_model.__class__.__name__ == 'MultiScaleHeadWithFeatures' or
+                    self.base_model.__class__.__name__ == 'VariableROIHeadWithFeatures'
+                ):
+                    # These wrappers return features dict
+                    output = self.base_model(features, rois)
+                    fused_features = output['features']
+                else:
+                    output = self.base_model(features=features, rois=rois)
+                    fused_features = output['features'] if isinstance(output, dict) else features
 
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
@@ -1389,8 +1461,9 @@ def create_hierarchical_model_unet_v3(base_model: nn.Module) -> nn.Module:
                 else:
                     fused_features = list(roi_features.values())[0]
             else:
-                output = self.base_model(features=features, rois=rois)
-                fused_features = output['features'] if isinstance(output, dict) else features
+                # For MultiScaleSegmentationModel, pass images and rois as positional args
+                output = self.base_model(features, rois)
+                fused_features = output['features'] if isinstance(output, dict) else output
 
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
@@ -1460,8 +1533,9 @@ def create_hierarchical_model_unet_v4(base_model: nn.Module) -> nn.Module:
                 else:
                     fused_features = list(roi_features.values())[0]
             else:
-                output = self.base_model(features=features, rois=rois)
-                fused_features = output['features'] if isinstance(output, dict) else features
+                # For MultiScaleSegmentationModel, pass images and rois as positional args
+                output = self.base_model(features, rois)
+                fused_features = output['features'] if isinstance(output, dict) else output
 
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs

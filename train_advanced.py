@@ -36,11 +36,13 @@ from src.human_edge_detection.advanced.variable_roi_model import (
 )
 from src.human_edge_detection.advanced.distance_aware_loss import create_distance_aware_loss
 from src.human_edge_detection.advanced.cascade_segmentation import create_cascade_model, CascadeLoss
+from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
 
 # Import experiment management
 from src.human_edge_detection.experiments.config_manager import (
     ExperimentConfig, ConfigManager, create_experiment_dirs
 )
+from src.human_edge_detection.text_logger import TextLogger
 
 
 def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optional[object]]:
@@ -82,7 +84,32 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         
     elif config.model.use_hierarchical_unet or config.model.use_hierarchical_unet_v2 or config.model.use_hierarchical_unet_v3 or config.model.use_hierarchical_unet_v4:
         # Build multi-scale model with UNet-based hierarchical architecture
-        if config.model.variable_roi_sizes:
+        
+        # Check if we should use external features (no integrated feature extractor)
+        if config.model.use_external_features:
+            # Check if variable ROI sizes are specified
+            if config.model.variable_roi_sizes:
+                # Create variable ROI model that accepts pre-extracted features
+                from src.human_edge_detection.advanced.variable_roi_head_only import create_variable_roi_head_only
+                base_model = create_variable_roi_head_only(
+                    target_layers=config.multiscale.target_layers,
+                    roi_sizes=config.model.variable_roi_sizes,
+                    num_classes=config.model.num_classes,
+                    mask_size=config.model.mask_size,
+                    return_features=True  # Need features for hierarchical head
+                )
+            else:
+                # Create fixed ROI model that accepts pre-extracted features
+                from src.human_edge_detection.advanced.multi_scale_head_only import create_multiscale_head_only
+                base_model = create_multiscale_head_only(
+                    target_layers=config.multiscale.target_layers,
+                    num_classes=config.model.num_classes,
+                    roi_size=config.model.roi_size,
+                    mask_size=config.model.mask_size,
+                    fusion_method=config.multiscale.fusion_method,
+                    return_features=True  # Need features for hierarchical head
+                )
+        elif config.model.variable_roi_sizes:
             # Create custom variable ROI model
             base_model = create_variable_roi_model(
                 onnx_model_path=config.model.onnx_model,
@@ -118,7 +145,16 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
             model = create_hierarchical_model_unet(base_model)
         
-        feature_extractor = None
+        # If using external features, create a separate feature extractor
+        if config.model.use_external_features:
+            from src.human_edge_detection.advanced.multi_scale_extractor import MultiScaleYOLOFeatureExtractor
+            feature_extractor = MultiScaleYOLOFeatureExtractor(
+                model_path=config.model.onnx_model,
+                target_layers=config.multiscale.target_layers,
+                execution_provider=config.model.execution_provider
+            )
+        else:
+            feature_extractor = None
         
     elif config.model.use_class_specific_decoder:
         # Build model with class-specific decoder
@@ -229,11 +265,18 @@ def build_loss_function(
     # Check for hierarchical model first
     if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
+        
+        # Check if this is the fixed weights config
+        use_dynamic_weights = config.name != 'hierarchical_unet_v2_fixed_weights'
+        
         return HierarchicalLoss(
-            bg_weight=2.0,  # Increased weight for bg/fg separation
-            fg_weight=1.0,  # Reduced to balance with bg_weight
-            target_weight=1.5,  # Reduced from 2.0 to avoid over-weighting foreground
-            consistency_weight=0.1
+            bg_weight=1.5,  # Balanced weight for stable bg/fg separation
+            fg_weight=1.5,  # Equal importance to bg_weight for stability
+            target_weight=1.2,  # Slight emphasis on target class
+            consistency_weight=0.3,  # Increased for better branch consistency
+            use_dynamic_weights=use_dynamic_weights,
+            dice_weight=config.training.dice_weight,
+            ce_weight=config.training.ce_weight
         )
 
     if config.distance_loss.enabled:
@@ -286,7 +329,8 @@ def train_epoch(
     config: ExperimentConfig,
     feature_extractor: Optional[object] = None,
     scaler: Optional[GradScaler] = None,
-    writer: Optional[SummaryWriter] = None
+    writer: Optional[SummaryWriter] = None,
+    text_logger: Optional[TextLogger] = None
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -606,6 +650,10 @@ def main():
 
     # Setup tensorboard
     writer = SummaryWriter(exp_dirs['logs'])
+    
+    # Setup text logger
+    text_logger = TextLogger(exp_dirs['logs'])
+    text_logger.log_config(config.to_dict())
 
     # Create validation visualizer
     from pycocotools.coco import COCO
@@ -746,46 +794,83 @@ def main():
 
     # Training loop
     print(f"\nStarting training for {config.training.num_epochs} epochs...")
-
-    for epoch in range(start_epoch, config.training.num_epochs):
-        # Train
-        train_metrics = train_epoch(
-            model, train_loader, loss_fn, optimizer, device,
-            epoch, config, feature_extractor, scaler, writer
-        )
-
-        # Log training metrics
-        writer.add_scalar('train/total_loss', train_metrics['total_loss'], epoch)
-        writer.add_scalar('train/ce_loss', train_metrics['ce_loss'], epoch)
-        writer.add_scalar('train/dice_loss', train_metrics['dice_loss'], epoch)
-        writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], epoch)
-
-        # Validation
-        if epoch % config.training.validate_every == 0:
-            val_metrics = evaluate_model(
-                model, val_loader, loss_fn, device,
-                feature_extractor=feature_extractor,
-                config=config
+    
+    try:
+        for epoch in range(start_epoch, config.training.num_epochs):
+            # Train
+            train_metrics = train_epoch(
+                model, train_loader, loss_fn, optimizer, device,
+                epoch, config, feature_extractor, scaler, writer, text_logger
             )
 
-            # Log validation metrics
-            writer.add_scalar('val/total_loss', val_metrics['total_loss'], epoch)
-            writer.add_scalar('val/miou', val_metrics['miou'], epoch)
-            for i in range(config.model.num_classes):
-                writer.add_scalar(f'val/iou_class_{i}', val_metrics[f'iou_class_{i}'], epoch)
+            # Log training metrics
+            writer.add_scalar('train/total_loss', train_metrics['total_loss'], epoch)
+            writer.add_scalar('train/ce_loss', train_metrics['ce_loss'], epoch)
+            writer.add_scalar('train/dice_loss', train_metrics['dice_loss'], epoch)
+            writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
-            print(f"\nEpoch {epoch+1} - Validation:")
-            print(f"  Loss: {val_metrics['total_loss']:.4f}")
-            print(f"  mIoU: {val_metrics['miou']:.4f}")
+            # Validation
+            if epoch % config.training.validate_every == 0:
+                val_metrics = evaluate_model(
+                    model, val_loader, loss_fn, device,
+                    feature_extractor=feature_extractor,
+                    config=config
+                )
 
-            # Generate validation visualization
-            print("Generating validation visualization...")
-            visualizer.visualize_validation_images(epoch)
+                # Log validation metrics
+                writer.add_scalar('val/total_loss', val_metrics['total_loss'], epoch)
+                writer.add_scalar('val/miou', val_metrics['miou'], epoch)
+                for i in range(config.model.num_classes):
+                    writer.add_scalar(f'val/iou_class_{i}', val_metrics[f'iou_class_{i}'], epoch)
 
-            # Save best model
-            if val_metrics['miou'] > best_miou:
-                best_miou = val_metrics['miou']
-                checkpoint_path = exp_dirs['checkpoints'] / 'best_model.pth'
+                print(f"\nEpoch {epoch+1} - Validation:")
+                print(f"  Loss: {val_metrics['total_loss']:.4f}")
+                print(f"  mIoU: {val_metrics['miou']:.4f}")
+                
+                # Log epoch summary to text file
+                text_logger.log_epoch_summary(
+                    epoch=epoch,
+                    train_metrics=train_metrics,
+                    val_metrics=val_metrics,
+                    learning_rate=optimizer.param_groups[0]['lr']
+                )
+
+                # Generate validation visualization
+                print("Generating validation visualization...")
+                visualizer.visualize_validation_images(epoch)
+
+                # Save best model
+                if val_metrics['miou'] > best_miou:
+                    best_miou = val_metrics['miou']
+                    checkpoint_path = exp_dirs['checkpoints'] / 'best_model.pth'
+                    torch.save({
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
+                        'best_miou': best_miou,
+                        'config': config.to_dict()
+                    }, checkpoint_path)
+                    print(f"  Saved best model (mIoU: {best_miou:.4f})")
+                    
+                    # Log best model save
+                    text_logger.log_best_model(
+                        epoch=epoch,
+                        miou=best_miou,
+                        checkpoint_path=str(checkpoint_path)
+                    )
+            else:
+                # No validation this epoch, but still log training summary
+                text_logger.log_epoch_summary(
+                    epoch=epoch,
+                    train_metrics=train_metrics,
+                    val_metrics=None,
+                    learning_rate=optimizer.param_groups[0]['lr']
+                )
+
+            # Save checkpoint
+            if epoch % config.training.save_every == 0:
+                checkpoint_path = exp_dirs['checkpoints'] / f'checkpoint_epoch_{epoch+1:04d}.pth'
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
@@ -794,25 +879,19 @@ def main():
                     'best_miou': best_miou,
                     'config': config.to_dict()
                 }, checkpoint_path)
-                print(f"  Saved best model (mIoU: {best_miou:.4f})")
 
-        # Save checkpoint
-        if epoch % config.training.save_every == 0:
-            checkpoint_path = exp_dirs['checkpoints'] / f'checkpoint_epoch_{epoch+1:04d}.pth'
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
-                'best_miou': best_miou,
-                'config': config.to_dict()
-            }, checkpoint_path)
+            # Update scheduler
+            if scheduler:
+                scheduler.step()
 
-        # Update scheduler
-        if scheduler:
-            scheduler.step()
-
-    writer.close()
+    except Exception as e:
+        print(f"\nTraining error occurred: {e}")
+        text_logger.log_error(str(e))
+        raise
+    finally:
+        writer.close()
+        text_logger.close()
+        
     print(f"\nTraining completed! Best mIoU: {best_miou:.4f}")
 
 

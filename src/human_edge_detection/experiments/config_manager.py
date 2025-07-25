@@ -122,6 +122,7 @@ class ModelConfig:
     use_hierarchical_unet_v3: bool = False  # V3: Enhanced UNet for bg/fg, Shallow UNet for target/non-target
     use_hierarchical_unet_v4: bool = False  # V4: Enhanced UNet for both branches
     use_class_specific_decoder: bool = False  # Use class-specific decoders
+    use_external_features: bool = False  # If True, expect pre-extracted features instead of images
 
 
 @dataclass
@@ -956,157 +957,429 @@ class ConfigManager:
             )
         ),
 
-        'hierarchical_segmentation_warm_restarts': ExperimentConfig(
-            name='hierarchical_segmentation_warm_restarts',
-            description='Hierarchical segmentation with CosineAnnealingWarmRestarts scheduler',
+
+        # External features versions - these accept pre-extracted YOLO features
+        'hierarchical_unet_v1_external_adaptive': ExperimentConfig(
+            name='hierarchical_unet_v1_external_adaptive',
+            description='Hierarchical UNet V1 with external features and adaptive fusion',
             model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_hierarchical=True  # Enable hierarchical architecture
+                use_hierarchical_unet=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
             ),
             multiscale=MultiScaleConfig(
                 enabled=True,
                 target_layers=['layer_3', 'layer_22', 'layer_34'],
                 fusion_method='adaptive'
             ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
-            ),
             data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
                 data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
+                roi_padding=0.0
             ),
             training=TrainingConfig(
-                num_epochs=150,
+                num_epochs=100,
                 learning_rate=5e-4,
-                batch_size=2,
-                scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-                T_0=10,  # First restart after 10 epochs
-                T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-                eta_min_restart=1e-6
+                batch_size=4,
+                gradient_clip=10.0
             )
         ),
-
-        'hierarchical_segmentation_unet_warm_restarts': ExperimentConfig(
-            name='hierarchical_segmentation_unet_warm_restarts',
-            description='Hierarchical UNet v1 with CosineAnnealingWarmRestarts scheduler',
+        'hierarchical_unet_v1_external_concat': ExperimentConfig(
+            name='hierarchical_unet_v1_external_concat',
+            description='Hierarchical UNet V1 with external features and concat fusion',
             model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_hierarchical_unet=True  # Enable hierarchical UNet v1 architecture
+                use_hierarchical_unet=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
             ),
             multiscale=MultiScaleConfig(
                 enabled=True,
                 target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
+                fusion_method='concat'
             ),
             data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
                 data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
+                roi_padding=0.0
             ),
             training=TrainingConfig(
-                num_epochs=150,
+                num_epochs=100,
                 learning_rate=5e-4,
-                batch_size=2,
-                scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-                T_0=10,  # First restart after 10 epochs
-                T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-                eta_min_restart=1e-6
+                batch_size=4,
+                gradient_clip=10.0
             )
         ),
-
-        'hierarchical_segmentation_unet_v2_warm_restarts': ExperimentConfig(
-            name='hierarchical_segmentation_unet_v2_warm_restarts',
-            description='Hierarchical UNet v2 with CosineAnnealingWarmRestarts scheduler',
+        'hierarchical_unet_v1_external_sum': ExperimentConfig(
+            name='hierarchical_unet_v1_external_sum',
+            description='Hierarchical UNet V1 with external features and sum fusion',
             model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_hierarchical_unet_v2=True  # Enable hierarchical UNet v2 architecture
+                use_hierarchical_unet=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
             ),
             multiscale=MultiScaleConfig(
                 enabled=True,
                 target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
+                fusion_method='sum'
             ),
             data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
                 data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
+                roi_padding=0.0
             ),
             training=TrainingConfig(
-                num_epochs=150,
+                num_epochs=100,
                 learning_rate=5e-4,
-                batch_size=2,
-                scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-                T_0=10,  # First restart after 10 epochs
-                T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-                eta_min_restart=1e-6,
-                gradient_clip=10.0  # Increased for deeper UNet
-            )
-        ),
-
-        'hierarchical_segmentation_unet_v3_warm_restarts': ExperimentConfig(
-            name='hierarchical_segmentation_unet_v3_warm_restarts',
-            description='Hierarchical UNet v3 with CosineAnnealingWarmRestarts scheduler',
-            model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_hierarchical_unet_v3=True  # Enable hierarchical UNet v3 architecture
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
-            ),
-            training=TrainingConfig(
-                num_epochs=150,
-                learning_rate=3e-4,  # Lower LR for dual UNet
-                batch_size=2,
-                scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-                T_0=10,  # First restart after 10 epochs
-                T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-                eta_min_restart=1e-6,
+                batch_size=4,
                 gradient_clip=10.0
             )
         ),
 
-        'hierarchical_segmentation_unet_v4_warm_restarts': ExperimentConfig(
-            name='hierarchical_segmentation_unet_v4_warm_restarts',
-            description='Hierarchical UNet v4 with CosineAnnealingWarmRestarts scheduler',
+        # Hierarchical UNet V2 - Low learning rate test
+        'hierarchical_unet_v2_external_concat_low_lr': ExperimentConfig(
+            name='hierarchical_unet_v2_external_concat_low_lr',
+            description='Hierarchical UNet V2 with external features, concat fusion, and lower learning rate',
             model=ModelConfig(
-                variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-                use_hierarchical_unet_v4=True  # Enable hierarchical UNet v4 architecture
+                use_hierarchical_unet_v2=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='concat'
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,  # Reduced for stability
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,  # Reduced for stability
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,  # Increased 10x to reduce overfitting
+                min_lr=1e-6,
+                T_0=20,  # Increased for longer cycles
+                early_stopping_patience=15  # Increased patience
+            )
+        ),
+
+        # Improved version with stability fixes
+        'hierarchical_unet_v2_external_concat_stabilized': ExperimentConfig(
+            name='hierarchical_unet_v2_external_concat_stabilized',
+            description='Hierarchical UNet V2 with stability improvements (dropout, EMA weights, better regularization)',
+            model=ModelConfig(
+                use_hierarchical_unet_v2=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='concat'
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,  # Moderate learning rate
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,  # Reduced for stability
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,  # Strong regularization
+                min_lr=1e-6,
+                T_0=20,  # Longer cosine cycles
+                early_stopping_patience=15,
+                mixed_precision=True
+            )
+        ),
+
+        'hierarchical_unet_v2_external_adaptive': ExperimentConfig(
+            name='hierarchical_unet_v2_external_adaptive',
+            description='Hierarchical UNet V2 with external features and adaptive fusion',
+            model=ModelConfig(
+                use_hierarchical_unet_v2=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
             ),
             multiscale=MultiScaleConfig(
                 enabled=True,
                 target_layers=['layer_3', 'layer_22', 'layer_34'],
                 fusion_method='adaptive'
             ),
-            distance_loss=DistanceLossConfig(
-                enabled=False  # Use hierarchical loss instead
-            ),
             data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
                 data_stats="data_analyze_no_separation.json",
-                roi_padding=0.0  # No padding
+                roi_padding=0.0
             ),
             training=TrainingConfig(
-                num_epochs=150,
-                learning_rate=2e-4,  # Even lower LR for complex architecture
-                batch_size=2,
-                scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-                T_0=10,  # First restart after 10 epochs
-                T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-                eta_min_restart=1e-6,
-                gradient_clip=15.0,  # Higher clip for cross-attention
-                mixed_precision=False  # Disable for stability with cross-attention
+                num_epochs=100,
+                learning_rate=5e-4,
+                batch_size=4,
+                gradient_clip=10.0
+            )
+        ),
+        'hierarchical_unet_v2_external_concat': ExperimentConfig(
+            name='hierarchical_unet_v2_external_concat',
+            description='Hierarchical UNet V2 with external features and concat fusion',
+            model=ModelConfig(
+                use_hierarchical_unet_v2=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='concat'
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0
+            ),
+            training=TrainingConfig(
+                num_epochs=100,
+                learning_rate=1e-4,
+                batch_size=4,
+                gradient_clip=10.0,
+                warmup_epochs=10  # Increased from default 5
+            )
+        ),
+        'hierarchical_unet_v2_external_sum': ExperimentConfig(
+            name='hierarchical_unet_v2_external_sum',
+            description='Hierarchical UNet V2 with external features and sum fusion',
+            model=ModelConfig(
+                use_hierarchical_unet_v2=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='sum'
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0
+            ),
+            training=TrainingConfig(
+                num_epochs=100,
+                learning_rate=5e-4,
+                batch_size=4,
+                gradient_clip=10.0
+            )
+        ),
+
+        # 'hierarchical_segmentation_warm_restarts': ExperimentConfig(
+        #     name='hierarchical_segmentation_warm_restarts',
+        #     description='Hierarchical segmentation with CosineAnnealingWarmRestarts scheduler',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_hierarchical=True  # Enable hierarchical architecture
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         num_epochs=150,
+        #         learning_rate=5e-4,
+        #         batch_size=2,
+        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
+        #         T_0=10,  # First restart after 10 epochs
+        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
+        #         eta_min_restart=1e-6
+        #     )
+        # ),
+
+        # 'hierarchical_segmentation_unet_warm_restarts': ExperimentConfig(
+        #     name='hierarchical_segmentation_unet_warm_restarts',
+        #     description='Hierarchical UNet v1 with CosineAnnealingWarmRestarts scheduler',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_hierarchical_unet=True  # Enable hierarchical UNet v1 architecture
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         num_epochs=150,
+        #         learning_rate=5e-4,
+        #         batch_size=2,
+        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
+        #         T_0=10,  # First restart after 10 epochs
+        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
+        #         eta_min_restart=1e-6
+        #     )
+        # ),
+
+        # 'hierarchical_segmentation_unet_v2_warm_restarts': ExperimentConfig(
+        #     name='hierarchical_segmentation_unet_v2_warm_restarts',
+        #     description='Hierarchical UNet v2 with CosineAnnealingWarmRestarts scheduler',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_hierarchical_unet_v2=True  # Enable hierarchical UNet v2 architecture
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         num_epochs=150,
+        #         learning_rate=5e-4,
+        #         batch_size=2,
+        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
+        #         T_0=10,  # First restart after 10 epochs
+        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
+        #         eta_min_restart=1e-6,
+        #         gradient_clip=10.0  # Increased for deeper UNet
+        #     )
+        # ),
+
+        # 'hierarchical_segmentation_unet_v3_warm_restarts': ExperimentConfig(
+        #     name='hierarchical_segmentation_unet_v3_warm_restarts',
+        #     description='Hierarchical UNet v3 with CosineAnnealingWarmRestarts scheduler',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_hierarchical_unet_v3=True  # Enable hierarchical UNet v3 architecture
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         num_epochs=150,
+        #         learning_rate=3e-4,  # Lower LR for dual UNet
+        #         batch_size=2,
+        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
+        #         T_0=10,  # First restart after 10 epochs
+        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
+        #         eta_min_restart=1e-6,
+        #         gradient_clip=10.0
+        #     )
+        # ),
+
+        # 'hierarchical_segmentation_unet_v4_warm_restarts': ExperimentConfig(
+        #     name='hierarchical_segmentation_unet_v4_warm_restarts',
+        #     description='Hierarchical UNet v4 with CosineAnnealingWarmRestarts scheduler',
+        #     model=ModelConfig(
+        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
+        #         use_hierarchical_unet_v4=True  # Enable hierarchical UNet v4 architecture
+        #     ),
+        #     multiscale=MultiScaleConfig(
+        #         enabled=True,
+        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
+        #         fusion_method='adaptive'
+        #     ),
+        #     distance_loss=DistanceLossConfig(
+        #         enabled=False  # Use hierarchical loss instead
+        #     ),
+        #     data=DataConfig(
+        #         data_stats="data_analyze_no_separation.json",
+        #         roi_padding=0.0  # No padding
+        #     ),
+        #     training=TrainingConfig(
+        #         num_epochs=150,
+        #         learning_rate=2e-4,  # Even lower LR for complex architecture
+        #         batch_size=2,
+        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
+        #         T_0=10,  # First restart after 10 epochs
+        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
+        #         eta_min_restart=1e-6,
+        #         gradient_clip=15.0,  # Higher clip for cross-attention
+        #         mixed_precision=False  # Disable for stability with cross-attention
+        #     )
+        # ),
+
+        # Test configurations with fixed weights
+        'hierarchical_unet_v2_fixed_weights': ExperimentConfig(
+            name='hierarchical_unet_v2_fixed_weights',
+            description='Hierarchical UNet V2 with fixed class weights (no dynamic balancing)',
+            model=ModelConfig(
+                use_hierarchical_unet_v2=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='concat'
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0
+            ),
+            training=TrainingConfig(
+                num_epochs=100,
+                learning_rate=5e-5,  # Even lower learning rate
+                batch_size=4,
+                gradient_clip=10.0,
+                warmup_epochs=15  # Longer warmup
             )
         )
     }

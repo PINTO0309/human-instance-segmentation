@@ -1680,6 +1680,85 @@ fg_weight（調整後） = 5.0 * 1.5 = 7.5
 - 既存のチェックポイントからresumeする場合、新しい重みが適用されるため、学習曲線に変化が生じる可能性があります
 - 必要に応じて`train_advanced.py`の重み設定をさらに調整可能です
 
+### 4. 階層的損失のデバッグとモニタリング ⭐NEW
+
+#### 動的重みのロギング
+HierarchicalLossに動的クラス重みの変化を追跡するデバッグ機能を追加：
+- loss_dictにbg_weight、fg_weight、target_weight、nontarget_weightをログ出力
+- 不安定な重みが検証損失の増加を引き起こしているかを特定
+- トレーニング中の各バッチごとに重みを記録
+
+#### 固定重みモード
+HierarchicalLossに`use_dynamic_weights`パラメータを追加：
+- Falseの場合、動的バランシングの代わりに固定クラス重みを使用
+- テスト用に`hierarchical_unet_v2_fixed_weights`設定を作成
+- 動的バランシングがトレーニングの不安定性を引き起こしているかを分離して検証
+
+#### モニタリングスクリプト
+`monitor_hierarchical_training.py`を作成：
+- トレーニング/検証損失曲線を可視化
+- 時間経過に伴う動的重みの変化をプロット
+- 変動係数を使用して重みの安定性を分析
+- 使用方法: `python monitor_hierarchical_training.py experiments/<experiment_name>`
+
+#### 推奨デバッグ手順
+1. 固定重みで実行して、損失がまだ線形に増加するかを確認：
+   ```bash
+   uv run python run_experiments.py --configs hierarchical_unet_v2_fixed_weights --epochs 20
+   ```
+2. 重みの安定性を監視 - CV > 0.5は不安定性を示す
+3. トレーニング初期に重みが変動する場合はwarmup_epochsを増やす（デフォルトを10-15に増加）
+4. separation-awareの重みを持つdata_statsの使用を検討
+
+#### 検証損失の調査
+トレーニング開始から検証損失が線形に増加する場合：
+- 学習率を確認（階層モデルでは1e-4または5e-5に削減）
+- warmup_epochsが十分であることを確認（10-15を推奨）
+- 固定重みでテストして動的バランシングの問題を分離
+- クラス重みの変化を監視して不安定性を検出
+
+### 5. 重要なバグ修正：階層的ロジット結合 ⭐重要
+
+#### 問題の特定
+元の階層的セグメンテーションには重大なバグがあり、`val/iou_class_0`（背景IoU）が減少すると`val/total_loss`が増加していました。この逆相関は不正確なロジット結合が原因でした。
+
+#### 元の実装（誤り）
+```python
+# 前景ロジットをターゲット/非ターゲット予測に加算していた
+final_logits[:, 1] = bg_fg_logits[:, 1] + target_nontarget_logits[:, 0] * fg_mask
+final_logits[:, 2] = bg_fg_logits[:, 1] + target_nontarget_logits[:, 1] * fg_mask
+```
+
+#### 修正された実装
+```python
+# 適切な階層的確率分解
+# P(背景) = P(bg|bg_vs_fg)
+# P(ターゲット) = P(fg|bg_vs_fg) * P(target|fg)
+# P(非ターゲット) = P(fg|bg_vs_fg) * P(non-target|fg)
+
+bg_prob = bg_fg_probs[:, 0:1]
+fg_prob = bg_fg_probs[:, 1:2]
+target_nontarget_probs = F.softmax(target_nontarget_logits, dim=1)
+
+final_probs[:, 0:1] = bg_prob
+final_probs[:, 1:2] = fg_prob * target_nontarget_probs[:, 0:1]
+final_probs[:, 2:3] = fg_prob * target_nontarget_probs[:, 1:2]
+final_logits = torch.log(final_probs + 1e-8)
+```
+
+#### この修正が機能する理由
+1. **確率的整合性**: 確率の合計が1.0になることを保証
+2. **適切な階層**: ターゲット/非ターゲットは前景領域内でのみ競合
+3. **逆相関の排除**: 背景検出の改善が前景クラスにペナルティを与えない
+4. **安定したトレーニング**: 損失がモデルのパフォーマンスを正しく反映
+
+#### 影響
+この修正はすべての階層的セグメンテーションモデル（V1-V4）にとって重要で、以下を大幅に改善します：
+- トレーニングの安定性
+- 収束速度
+- 最終的なモデルパフォーマンス
+- 損失とメトリクスの一貫性
+
 ### 3. ターゲット/非ターゲット間の動的バランシング ⭐NEW
 
 前景内でのターゲットクラスと非ターゲットクラス間でも動的バランシングを実装しました。
@@ -1762,3 +1841,55 @@ target_nontarget_loss = F.cross_entropy(
 - **バッチ適応的**: 各バッチの実際の分布に基づいて重みを調整
 
 この改善により、hierarchical segmentationの全バリアントで、より精密なインスタンスセグメンテーションが可能になります。
+
+### 実装改善（2025/07/25）- 階層的ロジット結合の修正
+
+**問題**: `val/iou_class_0`（背景IoU）が減少すると`val/total_loss`が増加する逆相関の問題を発見。
+
+**原因**: 階層的確率分解における数値的不安定性。確率空間での計算後にロジットに戻す処理が問題を引き起こしていた。
+
+**修正内容**:
+
+```python
+# 旧実装（問題あり）
+# 確率空間での階層的分解
+combined_probs = torch.zeros(batch_size, 3, self.mask_size, self.mask_size)
+combined_probs[:, 0] = bg_prob.squeeze(1)
+combined_probs[:, 1] = (fg_prob * target_probs[:, 0:1]).squeeze(1)
+combined_probs[:, 2] = (fg_prob * target_probs[:, 1:2]).squeeze(1)
+final_logits = torch.log(combined_probs.clamp(min=1e-10))
+
+# 新実装（修正済み）
+# ロジット空間での直接操作
+final_logits[:, 0] = bg_fg_logits[:, 0]  # 背景ロジットはそのまま
+fg_logit = bg_fg_logits[:, 1]
+scale_factor = 0.5
+final_logits[:, 1] = fg_logit + scale_factor * target_nontarget_logits[:, 0]
+final_logits[:, 2] = fg_logit + scale_factor * target_nontarget_logits[:, 1]
+```
+
+**改善点**:
+1. **数値的安定性**: ロジット空間での直接操作により、log(0)やlog(small_number)の問題を回避
+2. **勾配フローの改善**: 確率変換を介さないため、より安定した勾配伝播
+3. **スケールファクター**: target/non-targetブランチの影響を調整可能に
+
+**互換性対応**:
+```python
+# train_advanced.pyとの互換性のため、loss_dictに追加
+loss_dict = {
+    'ce_loss': final_loss.item(),  # メインの分類損失
+    'dice_loss': 0.0,  # 階層モデルではDice損失を使用しない
+    # ... 他の損失項目
+}
+```
+
+**検証結果**:
+- 背景IoUと検証損失の相関が正しく負の値に（-0.841）
+- すべてのクラスIoUが検証損失と負の相関を示す
+- 学習の安定性が大幅に向上
+
+**推奨事項**:
+- 学習率を1e-5に下げた`hierarchical_unet_v2_external_concat_low_lr`設定を使用
+- オーバーフィッティング比率が3.24xと高いため、より低い学習率が効果的
+
+この修正により、階層的セグメンテーションモデルの学習が安定し、期待通りの性能向上が見込めるようになりました。

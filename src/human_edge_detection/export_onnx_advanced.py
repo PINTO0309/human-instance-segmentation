@@ -287,6 +287,65 @@ class AdvancedONNXExporter:
         print(f"Exporting to {output_path}")
         print(f"Feature layers: {list(dummy_features.keys())}")
         
+        # Check if this model has integrated feature extractor (MultiScaleSegmentationModel)
+        has_integrated_extractor = (
+            hasattr(self.model, 'base_model') and 
+            hasattr(self.model.base_model, 'feature_extractor') and
+            not hasattr(self.model.base_model, 'extractor')  # Variable ROI has 'extractor'
+        )
+        
+        if has_integrated_extractor:
+            # For models with integrated feature extractor, use image input
+            print("Model has integrated feature extractor - using image input")
+            dummy_image = torch.randn(batch_size, 3, 640, 640).to(self.device)
+            
+            class HierarchicalImageWrapper(nn.Module):
+                def __init__(self, model):
+                    super().__init__()
+                    self.model = model
+                    
+                def forward(self, images, rois):
+                    output = self.model(images, rois)
+                    if isinstance(output, tuple):
+                        return output[0]  # Return only logits for ONNX
+                    return output
+            
+            wrapper = HierarchicalImageWrapper(self.model)
+            wrapper.eval()
+            
+            export_inputs = (dummy_image, dummy_rois)
+            input_names = ['images', 'rois']
+            
+            try:
+                torch.onnx.export(
+                    wrapper,
+                    export_inputs,
+                    output_path,
+                    input_names=input_names,
+                    output_names=['masks'],
+                    dynamic_axes={
+                        'images': {0: 'batch_size'},
+                        'rois': {0: 'num_rois'},
+                        'masks': {0: 'num_rois'}
+                    },
+                    opset_version=opset_version,
+                    do_constant_folding=True,
+                    verbose=False
+                )
+                
+                print("Export successful!")
+                
+                if ONNXSIM_AVAILABLE:
+                    self._simplify_model(output_path)
+                    
+                return True
+                
+            except Exception as e:
+                print(f"Export failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+        
         # Check if this is a V3 model and if we should use static version for ONNX
         use_static_v3 = False
         if hasattr(self.model, 'hierarchical_head'):
