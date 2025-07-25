@@ -233,6 +233,10 @@ class ValidationVisualizerWithAuxiliary:
         all_panel4_images = []  # Predictions
 
         with torch.no_grad():
+            # Synchronize CUDA to ensure clean state
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                
             for img_info in images_to_visualize:
                 filename = img_info['filename']
                 image_path = self.image_dir / filename
@@ -261,7 +265,7 @@ class ValidationVisualizerWithAuxiliary:
                 ann_ids = self.coco.getAnnIds(imgIds=img_id, catIds=[1])  # Person category
                 anns = self.coco.loadAnns(ann_ids)
 
-                # Get predictions
+                # Get predictions with UNet outputs
                 predictions, auxiliary_pred, unet_outputs = self._get_predictions_with_unet(
                     image_np, anns, orig_width, orig_height, img_info.get('target_index', 0)
                 )
@@ -352,11 +356,55 @@ class ValidationVisualizerWithAuxiliary:
             if features is not None:
                 # External features
                 roi_features = self._extract_roi_features(features, batch_rois)
-                batch_pred = self.model(roi_features)
+                
+                # Check if this is an auxiliary wrapped model
+                if hasattr(self.model, 'aux_head'):
+                    # Need to prepare ROIs for auxiliary model
+                    roi_tensors = []
+                    for j, roi in enumerate(batch_rois):
+                        x1, y1, x2, y2 = roi
+                        # Use batch index 0 since we're processing one image at a time
+                        roi_norm = torch.tensor(
+                            [[0, x1/640, y1/640, x2/640, y2/640]],
+                            dtype=torch.float32, device=self.device
+                        )
+                        roi_tensors.append(roi_norm)
+                    rois = torch.cat(roi_tensors, dim=0)
+                    batch_pred = self.model(features, rois)
+                    # Synchronize CUDA after model inference
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                else:
+                    # Check if this is a hierarchical model that needs both features and rois
+                    model_name = type(self.model).__name__
+                    if 'Hierarchical' in model_name:
+                        # Hierarchical models need the original features and ROIs
+                        roi_tensors = []
+                        for j, roi in enumerate(batch_rois):
+                            x1, y1, x2, y2 = roi
+                            # Use batch index 0 since we're processing one image at a time
+                            roi_norm = torch.tensor(
+                                [[0, x1/640, y1/640, x2/640, y2/640]],
+                                dtype=torch.float32, device=self.device
+                            )
+                            roi_tensors.append(roi_norm)
+                        rois = torch.cat(roi_tensors, dim=0)
+                        batch_pred = self.model(features, rois)
+                    else:
+                        # Direct model call with ROI features
+                        batch_pred = self.model(roi_features)
+                    
+                    # Synchronize CUDA after model inference
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
             else:
                 # Integrated model
                 batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
                 batch_pred = self.model(batch_tensor)
+                
+                # Synchronize CUDA after model inference
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
 
             # Handle auxiliary outputs
             if isinstance(batch_pred, tuple):
@@ -367,16 +415,46 @@ class ValidationVisualizerWithAuxiliary:
                 main_pred = batch_pred
 
             # Get predictions
-            batch_masks = torch.argmax(main_pred, dim=1).cpu().numpy()
+            try:
+                # Move to CPU first to avoid CUDA errors
+                if main_pred.is_cuda:
+                    main_pred = main_pred.cpu()
+                batch_masks = torch.argmax(main_pred, dim=1).numpy()
+                
+                # Store predictions
+                for j, idx in enumerate(batch_indices):
+                    if j < len(batch_masks):
+                        predictions[idx] = batch_masks[j]
+            except Exception as e:
+                print(f"Warning: Error getting predictions: {e}")
+                # Continue without storing predictions for this batch
+                pass
 
-            # Store predictions
-            for j, idx in enumerate(batch_indices):
-                predictions[idx] = batch_masks[j]
-
-        # Combine auxiliary predictions if available
+        # Combine auxiliary predictions into a heatmap
         auxiliary_pred = None
         if auxiliary_preds:
-            auxiliary_pred = torch.cat(auxiliary_preds, dim=0).cpu().numpy()
+            # Create a single heatmap by placing each prediction in its ROI location
+            auxiliary_heatmap = np.zeros((640, 640), dtype=np.float32)
+            
+            for i, (roi, aux_pred) in enumerate(zip(roi_list, auxiliary_preds)):
+                x1, y1, x2, y2 = roi
+                # Resize auxiliary prediction to ROI size
+                if isinstance(aux_pred, torch.Tensor):
+                    aux_pred = aux_pred.cpu().numpy()
+                
+                aux_resized = cv2.resize(
+                    aux_pred.squeeze(),
+                    (x2 - x1, y2 - y1),
+                    interpolation=cv2.INTER_LINEAR
+                )
+                
+                # Place in heatmap
+                auxiliary_heatmap[y1:y2, x1:x2] = np.maximum(
+                    auxiliary_heatmap[y1:y2, x1:x2],
+                    aux_resized
+                )
+            
+            auxiliary_pred = auxiliary_heatmap
 
         return predictions, auxiliary_pred
 
@@ -619,9 +697,11 @@ class ValidationVisualizerWithAuxiliary:
         canvas_width = img.shape[1] + colorbar_width
         canvas = np.ones((img.shape[0], canvas_width, 3), dtype=np.uint8) * 255
         
-        if self.has_auxiliary and auxiliary_pred is not None:
+        # Always create the colorbar for consistency
+        cmap = plt.colormaps['hot']
+        
+        if auxiliary_pred is not None and auxiliary_pred.max() > 0:
             # Create heatmap overlay
-            cmap = cm.get_cmap('hot')
             heatmap = cmap(auxiliary_pred)[:, :, :3]  # Remove alpha channel
             heatmap = (heatmap * 255).astype(np.uint8)
 
@@ -629,43 +709,44 @@ class ValidationVisualizerWithAuxiliary:
             alpha = 0.6
             img = cv2.addWeighted(heatmap, alpha, img, 1 - alpha, 0)
             
-            # Place the blended image on canvas
-            canvas[:, :img.shape[1]] = img
-            
-            # Create colorbar
-            colorbar_height = int(img.shape[0] * 0.8)  # 80% of image height
-            colorbar_y_start = int((img.shape[0] - colorbar_height) / 2)
-            
-            # Generate colorbar gradient
-            gradient = np.linspace(1, 0, colorbar_height).reshape(-1, 1)
-            gradient = np.repeat(gradient, 20, axis=1)  # Width of colorbar
-            colorbar_img = cmap(gradient)[:, :, :3]
-            colorbar_img = (colorbar_img * 255).astype(np.uint8)
-            
-            # Place colorbar on canvas
-            colorbar_x_start = img.shape[1] + 15
-            canvas[colorbar_y_start:colorbar_y_start + colorbar_height, 
-                   colorbar_x_start:colorbar_x_start + 20] = colorbar_img
-            
-            # Add colorbar labels
-            pil_canvas = Image.fromarray(canvas)
-            draw = ImageDraw.Draw(pil_canvas)
-            
-            try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
-            except:
-                font = ImageFont.load_default()
-            
-            # Add text labels
-            draw.text((colorbar_x_start + 25, colorbar_y_start - 5), "1.0", fill='black', font=font)
-            draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height - 15), "0.0", fill='black', font=font)
-            draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height // 2 - 8), "0.5", fill='black', font=font)
-            
-            return pil_canvas
-        else:
-            # No auxiliary prediction, just return original image
-            canvas[:, :img.shape[1]] = img
-            return Image.fromarray(canvas)
+        # Place the image (with or without heatmap) on canvas
+        canvas[:, :img.shape[1]] = img
+        
+        # Always create colorbar for consistency
+        colorbar_height = int(img.shape[0] * 0.8)  # 80% of image height
+        colorbar_y_start = int((img.shape[0] - colorbar_height) / 2)
+        
+        # Generate colorbar gradient
+        gradient = np.linspace(1, 0, colorbar_height).reshape(-1, 1)
+        gradient = np.repeat(gradient, 20, axis=1)  # Width of colorbar
+        colorbar_img = cmap(gradient)[:, :, :3]
+        colorbar_img = (colorbar_img * 255).astype(np.uint8)
+        
+        # Place colorbar on canvas
+        colorbar_x_start = img.shape[1] + 15
+        canvas[colorbar_y_start:colorbar_y_start + colorbar_height, 
+               colorbar_x_start:colorbar_x_start + 20] = colorbar_img
+        
+        # Add colorbar labels
+        pil_canvas = Image.fromarray(canvas)
+        draw = ImageDraw.Draw(pil_canvas)
+        
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+        except:
+            font = ImageFont.load_default()
+        
+        # Add text labels
+        draw.text((colorbar_x_start + 25, colorbar_y_start - 5), "1.0", fill='black', font=font)
+        draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height - 15), "0.0", fill='black', font=font)
+        draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height // 2 - 8), "0.5", fill='black', font=font)
+        
+        # Add border around colorbar
+        draw.rectangle([colorbar_x_start-1, colorbar_y_start-1, 
+                       colorbar_x_start + 20, colorbar_y_start + colorbar_height], 
+                      outline='black', width=1)
+        
+        return pil_canvas
 
     def _create_panel_unet_fg_bg(self, image_np: np.ndarray, unet_outputs: Dict[str, np.ndarray]) -> Image.Image:
         """Create UNet FG/BG panel."""
@@ -979,6 +1060,12 @@ class ValidationVisualizerWithAuxiliary:
 
             # Process batch
             if features is not None:
+                # Debug model type
+                model_type = type(self.model).__name__
+                print(f"Debug: Model type = {model_type}")
+                print(f"Debug: Has main_head = {hasattr(self.model, 'main_head')}")
+                print(f"Debug: Has aux_head = {hasattr(self.model, 'aux_head')}")
+                
                 # External features - need to handle based on model type
                 if hasattr(self.model, 'main_head') and hasattr(self.model.main_head, 'base_model'):
                     # Multi-scale model with auxiliary task
@@ -1012,7 +1099,18 @@ class ValidationVisualizerWithAuxiliary:
                     else:
                         # Standard model with tensor features
                         roi_features = self._extract_roi_features(features, batch_rois)
-                        batch_pred = self.model(roi_features)
+                        # For auxiliary wrapped models, we need to pass both features and rois
+                        if hasattr(self.model, 'aux_head'):
+                            # Prepare dummy ROIs for the auxiliary model
+                            roi_tensors = []
+                            for i in range(len(batch_rois)):
+                                # Create dummy ROI since we already have ROI features
+                                roi_norm = torch.tensor([[i, 0, 0, 1, 1]], dtype=torch.float32, device=self.device)
+                                roi_tensors.append(roi_norm)
+                            rois = torch.cat(roi_tensors, dim=0)
+                            batch_pred = self.model(roi_features, rois)
+                        else:
+                            batch_pred = self.model(roi_features)
             else:
                 # Integrated model
                 batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
@@ -1021,16 +1119,23 @@ class ValidationVisualizerWithAuxiliary:
             # Handle auxiliary outputs
             if isinstance(batch_pred, tuple):
                 main_pred, aux_outputs = batch_pred
+                aux_probs = None
+                
+                print(f"Debug: Got tuple output with aux_outputs keys: {aux_outputs.keys() if isinstance(aux_outputs, dict) else 'Not a dict'}")
+                
                 if 'fg_bg_binary' in aux_outputs:
                     aux_probs = torch.sigmoid(aux_outputs['fg_bg_binary']).cpu().numpy()
+                    print(f"Debug: Got fg_bg_binary predictions with shape: {aux_probs.shape}")
                 elif 'bg_fg_logits' in aux_outputs:
                     # Handle hierarchical models that output bg_fg_logits
                     bg_fg_logits = aux_outputs['bg_fg_logits']
                     # Convert to foreground probability
                     fg_probs = torch.softmax(bg_fg_logits, dim=1)[:, 1:2, :, :]  # Take foreground channel
                     aux_probs = fg_probs.cpu().numpy()
+                    print(f"Debug: Got bg_fg_logits predictions with shape: {aux_probs.shape}")
 
-                    # Process each auxiliary prediction
+                # Process each auxiliary prediction if we have any
+                if aux_probs is not None:
                     for j, (roi_coord, aux_pred) in enumerate(zip(batch_coords, aux_probs)):
                         x1, y1, x2, y2 = roi_coord
 
@@ -1058,17 +1163,28 @@ class ValidationVisualizerWithAuxiliary:
                         unet_outputs['combined_bg_mask'][y1:y2, x1:x2] = current_bg | (bg_mask_roi & ~current_fg)
             else:
                 main_pred = batch_pred
+                print(f"Debug: Got non-tuple output, no auxiliary predictions")
 
             # Get predictions
-            batch_masks = torch.argmax(main_pred, dim=1).cpu().numpy()
-
-            # Store predictions
-            for j, idx in enumerate(batch_indices):
-                predictions[idx] = batch_masks[j]
+            try:
+                # Move to CPU first to avoid CUDA errors
+                if main_pred.is_cuda:
+                    main_pred = main_pred.cpu()
+                batch_masks = torch.argmax(main_pred, dim=1).numpy()
+                
+                # Store predictions
+                for j, idx in enumerate(batch_indices):
+                    if j < len(batch_masks):
+                        predictions[idx] = batch_masks[j]
+            except Exception as e:
+                print(f"Warning: Error getting predictions: {e}")
+                # Continue without storing predictions for this batch
+                pass
 
         # Create a single auxiliary heatmap from all predictions
         auxiliary_pred = None
         if unet_outputs['all_auxiliary_preds']:
+            print(f"Debug: Creating heatmap from {len(unet_outputs['all_auxiliary_preds'])} auxiliary predictions")
             # Create a single heatmap by taking max over all ROIs
             auxiliary_heatmap = np.zeros((640, 640), dtype=np.float32)
             for aux_info in unet_outputs['all_auxiliary_preds']:
@@ -1078,6 +1194,9 @@ class ValidationVisualizerWithAuxiliary:
                     aux_info['pred']
                 )
             auxiliary_pred = auxiliary_heatmap
+            print(f"Debug: Final heatmap max value: {auxiliary_pred.max()}, min value: {auxiliary_pred.min()}")
+        else:
+            print("Debug: No auxiliary predictions collected")
 
         return predictions, auxiliary_pred, unet_outputs
 
