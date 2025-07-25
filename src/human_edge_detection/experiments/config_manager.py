@@ -83,7 +83,7 @@ class TrainingConfig:
 
     # Validation
     validate_every: int = 1
-    save_every: int = 10
+    save_every: int = 1
     early_stopping_patience: int = 10
 
     # Loss weights
