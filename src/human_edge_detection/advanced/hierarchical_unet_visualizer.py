@@ -13,25 +13,25 @@ from .visualization_adapter import AdvancedValidationVisualizer
 
 class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
     """Extended visualizer that adds UNet foreground/background visualization."""
-    
+
     def __init__(self, *args, **kwargs):
         """Initialize with variant detection."""
         super().__init__(*args, **kwargs)
         self._detect_model_variant()
-    
+
     def _detect_model_variant(self):
         """Detect which UNet variant is being used based on model architecture."""
         self.unet_variant = 'v1'  # Default
-        
+
         # Try a dummy forward pass to check aux_outputs structure
         try:
             import torch
             dummy_features = torch.randn(1, 256, 28, 28).to(self.device)
-            
+
             if hasattr(self.model, 'hierarchical_head'):
                 with torch.no_grad():
                     _, aux_outputs = self.model.hierarchical_head(dummy_features)
-                
+
                 # Check aux_outputs to determine variant
                 if 'attended_features' in aux_outputs:
                     self.unet_variant = 'v4'
@@ -39,7 +39,7 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                     self.unet_variant = 'v3'
                 elif 'target_nontarget_logits' in aux_outputs:
                     self.unet_variant = 'v2'
-                    
+
             print(f"Detected UNet variant: {self.unet_variant}")
         except:
             print("Could not detect UNet variant, defaulting to v1")
@@ -298,7 +298,7 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
                         # Add to combined masks
                         combined_fg_mask[y1_int:y2_int, x1_int:x2_int] |= fg_mask_roi
                         combined_bg_mask[y1_int:y2_int, x1_int:x2_int] |= bg_mask_roi
-                        
+
                         # For V3 and V4, we could potentially visualize additional features
                         # but for now we keep the same visualization for consistency
 
@@ -390,11 +390,11 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         # Update label based on variant
         unet_label = {
             'v1': "UNet FG/BG",
-            'v2': "Enhanced UNet FG/BG", 
+            'v2': "Enhanced UNet FG/BG",
             'v3': "Enhanced UNet + Shallow UNet",
             'v4': "Dual Enhanced UNet"
         }.get(self.unet_variant, "UNet FG/BG")
-        
+
         labels = [
             ("Ground Truth", (255, 102, 102)),  # Light red
             ("Predictions", (0, 153, 0)),       # Green
@@ -411,10 +411,10 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             # Increase padding for better visual balance
             vertical_padding = 15  # Increased from 10
             horizontal_padding = 20
-            
+
             # Calculate box dimensions
             box_height = text_height + 2 * vertical_padding
-            
+
             draw.rectangle(
                 [10, y_pos, 10 + text_width + horizontal_padding, y_pos + box_height],
                 fill=color
@@ -482,11 +482,11 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         # Update label based on variant
         unet_label = {
             'v1': "UNet FG/BG",
-            'v2': "Enhanced UNet FG/BG", 
+            'v2': "Enhanced UNet FG/BG",
             'v3': "Enhanced UNet + Shallow UNet",
             'v4': "Dual Enhanced UNet"
         }.get(self.unet_variant, "UNet FG/BG")
-        
+
         labels = [
             ("Ground Truth", (255, 102, 102)),  # Light red
             ("Predictions", (0, 153, 0)),       # Green
@@ -503,10 +503,10 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
             # Increase padding for better visual balance
             vertical_padding = 15  # Increased from 10
             horizontal_padding = 20
-            
+
             # Calculate box dimensions
             box_height = text_height + 2 * vertical_padding
-            
+
             draw.rectangle(
                 [10, y_pos, 10 + text_width + horizontal_padding, y_pos + box_height],
                 fill=color
@@ -521,7 +521,7 @@ class HierarchicalUNetVisualizer(AdvancedValidationVisualizer):
         resized_width = int(combined.width * 0.6)
         resized_height = int(combined.height * 0.6)
         combined_resized = combined.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
-        
+
         # Create subdirectory for epoch
         epoch_dir = self.output_dir / f'epoch_{epoch:04d}'
         epoch_dir.mkdir(exist_ok=True)

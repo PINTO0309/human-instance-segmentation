@@ -1,0 +1,1190 @@
+"""Visualization tools for validation results with auxiliary task support."""
+
+import numpy as np
+import torch
+import torch.nn as nn
+from PIL import Image, ImageDraw, ImageFont
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib import cm
+import cv2
+from pathlib import Path
+from typing import List, Dict, Tuple, Optional, Union
+from pycocotools.coco import COCO
+
+from .feature_extractor import YOLOv9FeatureExtractor
+from .model import ROISegmentationModel, ROIBatchProcessor
+
+
+class ValidationVisualizerWithAuxiliary:
+    """Visualizer for validation results with auxiliary task support."""
+
+    # Default validation images as per requirements
+    DEFAULT_VALIDATION_IMAGES = [
+        {'filename': '000000020992.jpg', 'num_persons': 1},
+        {'filename': '000000413552.jpg', 'num_persons': 2},
+        {'filename': '000000109118.jpg', 'num_persons': 3},
+        {'filename': '000000162732.jpg', 'num_persons': 5}
+    ]
+
+    def __init__(
+        self,
+        model: nn.Module,
+        feature_extractor: Optional[YOLOv9FeatureExtractor],
+        coco: COCO,
+        image_dir: str,
+        output_dir: str = 'validation_results',
+        device: str = 'cuda',
+        roi_padding: float = 0.0,
+        visualize_auxiliary: bool = True
+    ):
+        """Initialize visualizer with auxiliary task support.
+
+        Args:
+            model: Trained segmentation model (may include auxiliary task)
+            feature_extractor: YOLO feature extractor (optional for integrated models)
+            coco: COCO dataset object
+            image_dir: Directory containing images
+            output_dir: Directory to save visualization results
+            device: Device to run inference on
+            roi_padding: ROI padding ratio (0.0 = no padding, 0.1 = 10% padding)
+            visualize_auxiliary: Whether to visualize auxiliary predictions
+        """
+        self.model = model
+        self.feature_extractor = feature_extractor
+        self.coco = coco
+        self.image_dir = Path(image_dir)
+        self.output_dir = Path(output_dir)
+        self.device = device
+        self.roi_padding = roi_padding
+        self.visualize_auxiliary = visualize_auxiliary
+
+        # Create output directory
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check if model has auxiliary task
+        self.has_auxiliary = hasattr(model, 'aux_head') or (
+            hasattr(model, 'model') and hasattr(model.model, 'aux_head')
+        )
+
+        # ROI batch processor (static class, no constructor args)
+        self.roi_processor = ROIBatchProcessor
+
+    def _find_fallback_images(self, missing_images: Dict[int, str]) -> Dict[int, Dict]:
+        """Find fallback images with the same number of persons.
+
+        Args:
+            missing_images: Dictionary mapping num_persons to missing filename
+
+        Returns:
+            Dictionary mapping num_persons to fallback image info
+        """
+        fallback_map = {}
+
+        # Get all available images with their person counts
+        available_images = []
+        img_ids = self.coco.getImgIds()
+
+        for img_id in img_ids:
+            img_info = self.coco.loadImgs(img_id)[0]
+            ann_ids = self.coco.getAnnIds(imgIds=img_id, catIds=[1])  # Person category
+            num_persons = len(ann_ids)
+
+            if num_persons > 0:  # Only consider images with people
+                available_images.append({
+                    'filename': img_info['file_name'],
+                    'num_persons': num_persons,
+                    'img_id': img_id
+                })
+
+        # Find fallbacks for each missing image
+        for target_num_persons, missing_filename in missing_images.items():
+            print(f"Looking for fallback for {missing_filename} with {target_num_persons} persons")
+
+            # First try to find exact match
+            candidates = [img for img in available_images if img['num_persons'] == target_num_persons]
+
+            # If no exact match, find closest
+            if not candidates:
+                candidates = sorted(available_images,
+                                  key=lambda x: abs(x['num_persons'] - target_num_persons))[:5]
+
+            if candidates:
+                # Pick the first suitable candidate
+                fallback = candidates[0]
+                fallback_map[target_num_persons] = {
+                    'filename': fallback['filename'],
+                    'num_persons': fallback['num_persons'],
+                    'is_fallback': True,
+                    'original_request': missing_filename
+                }
+                print(f"  Using fallback: {fallback['filename']} ({fallback['num_persons']} persons)")
+
+        return fallback_map
+
+    def _draw_instance_number(self, draw: ImageDraw.Draw, bbox: List[float], instance_id: int, color: Tuple[int, int, int]):
+        """Draw instance number near bounding box."""
+        x, y, w, h = bbox
+        text = f"#{instance_id}"
+
+        # Try to load a font, fall back to default if not available
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+        except:
+            font = ImageFont.load_default()
+
+        # Get text size
+        text_bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+
+        # Draw background rectangle for text
+        padding = 5
+        draw.rectangle([x, y - text_height - 2 * padding, x + text_width + 2 * padding, y], fill=color)
+
+        # Draw text
+        draw.text((x + padding, y - text_height - padding), text, fill='white', font=font)
+
+    def extract_roi_from_bbox(
+        self,
+        bbox: List[float],
+        image_shape: Tuple[int, int]
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """Extract ROI coordinates from bounding box with padding.
+
+        Args:
+            bbox: [x1, y1, x2, y2] format
+            image_shape: (height, width) of image
+
+        Returns:
+            ROI coordinates (x1, y1, x2, y2) or None if invalid
+        """
+        x1, y1, x2, y2 = bbox
+        w, h = x2 - x1, y2 - y1
+
+        # Add padding
+        pad_x = w * self.roi_padding
+        pad_y = h * self.roi_padding
+
+        x1 = max(0, int(x1 - pad_x))
+        y1 = max(0, int(y1 - pad_y))
+        x2 = min(image_shape[1], int(x2 + pad_x))
+        y2 = min(image_shape[0], int(y2 + pad_y))
+
+        # Check if ROI is valid
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        return (x1, y1, x2, y2)
+
+    def visualize_validation_images(
+        self,
+        epoch: int,
+        specific_images: Optional[List[Dict]] = None
+    ):
+        """Visualize predictions on validation images with auxiliary results.
+
+        Args:
+            epoch: Current epoch number
+            specific_images: List of specific images to visualize
+        """
+        # Check which default images exist and find fallbacks if needed
+        if specific_images:
+            images_to_visualize = specific_images
+        else:
+            missing_images = {}
+            images_to_visualize = []
+
+            for val_img_info in self.DEFAULT_VALIDATION_IMAGES:
+                filename = val_img_info['filename']
+                img_ids = self.coco.getImgIds()
+                img_id = None
+
+                # Try to find the image
+                for iid in img_ids:
+                    img_info = self.coco.loadImgs(iid)[0]
+                    if img_info['file_name'] == filename:
+                        img_id = iid
+                        break
+
+                if img_id is None:
+                    # Image not found, mark for fallback
+                    missing_images[val_img_info['num_persons']] = filename
+                else:
+                    # Image found, use it
+                    images_to_visualize.append(val_img_info)
+
+            # Find fallback images if needed
+            if missing_images:
+                fallback_map = self._find_fallback_images(missing_images)
+                # Add fallback images to validation list
+                for fallback_info in fallback_map.values():
+                    images_to_visualize.append(fallback_info)
+
+            # Sort by number of persons for consistent ordering
+            images_to_visualize.sort(key=lambda x: x['num_persons'])
+
+        self.model.eval()
+
+        # Collect all panel images for combined visualization
+        all_panel1_images = []  # Ground Truth
+        all_panel2_images = []  # Enhanced Heatmap
+        all_panel3_images = []  # Enhanced UNet FG/BG
+        all_panel4_images = []  # Predictions
+
+        with torch.no_grad():
+            for img_info in images_to_visualize:
+                filename = img_info['filename']
+                image_path = self.image_dir / filename
+
+                if not image_path.exists():
+                    print(f"Warning: Image {filename} not found")
+                    continue
+
+                # Load image and resize to 640x640
+                image = Image.open(image_path).convert('RGB')
+                orig_width, orig_height = image.size
+                image = image.resize((640, 640), Image.BILINEAR)
+                image_np = np.array(image)
+
+                # Get annotations
+                img_id = None
+                for img_data in self.coco.imgs.values():
+                    if img_data['file_name'] == filename:
+                        img_id = img_data['id']
+                        break
+
+                if img_id is None:
+                    print(f"Warning: No annotations found for {filename}")
+                    continue
+
+                ann_ids = self.coco.getAnnIds(imgIds=img_id, catIds=[1])  # Person category
+                anns = self.coco.loadAnns(ann_ids)
+
+                # Get predictions
+                predictions, auxiliary_pred, unet_outputs = self._get_predictions_with_unet(
+                    image_np, anns, orig_width, orig_height, img_info.get('target_index', 0)
+                )
+
+                # Create individual panel images
+                # Panel 1: Ground Truth
+                panel1_img = self._create_panel_ground_truth(image_np, anns, orig_width, orig_height)
+
+                # Panel 2: Enhanced Heatmap
+                panel2_img = self._create_panel_heatmap(image_np, auxiliary_pred)
+
+                # Panel 3: Enhanced UNet FG/BG
+                panel3_img = self._create_panel_unet_fg_bg(image_np, unet_outputs)
+
+                # Panel 4: Predictions
+                panel4_img = self._create_panel_predictions(image_np, anns, predictions, orig_width, orig_height)
+
+                # Add to lists
+                all_panel1_images.append(panel1_img)
+                all_panel2_images.append(panel2_img)
+                all_panel3_images.append(panel3_img)
+                all_panel4_images.append(panel4_img)
+
+        # Create combined 4x4 grid image
+        if all_panel1_images:
+            self._create_combined_4x4_image(
+                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, epoch
+            )
+
+    def _get_predictions(
+        self,
+        image_np: np.ndarray,
+        annotations: List[Dict],
+        target_index: int = 0
+    ) -> Tuple[Dict[int, np.ndarray], Optional[np.ndarray]]:
+        """Get model predictions with auxiliary outputs.
+
+        Returns:
+            predictions: Dictionary mapping annotation index to predicted mask
+            auxiliary_pred: Auxiliary foreground/background prediction (if available)
+        """
+        # Extract features
+        if self.feature_extractor is not None:
+            # External feature extraction
+            image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
+            image_tensor = image_tensor.unsqueeze(0).to(self.device)
+
+            with torch.no_grad():
+                if hasattr(self.feature_extractor, 'extract_features'):
+                    features = self.feature_extractor.extract_features(image_tensor)
+                else:
+                    features = self.feature_extractor(image_tensor)
+        else:
+            # Integrated feature extraction
+            features = None
+
+        # Extract ROIs
+        roi_list = []
+        valid_indices = []
+
+        for idx, ann in enumerate(annotations):
+            if 'bbox' not in ann:
+                continue
+
+            x, y, w, h = ann['bbox']
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                image_np.shape[:2]
+            )
+
+            if roi is not None:
+                roi_list.append(roi)
+                valid_indices.append(idx)
+
+        if not roi_list:
+            return {}, None
+
+        # Batch process ROIs
+        predictions = {}
+        auxiliary_preds = []
+
+        batch_size = 16
+        for i in range(0, len(roi_list), batch_size):
+            batch_rois = roi_list[i:i+batch_size]
+            batch_indices = valid_indices[i:i+batch_size]
+
+            # Process batch
+            if features is not None:
+                # External features
+                roi_features = self._extract_roi_features(features, batch_rois)
+                batch_pred = self.model(roi_features)
+            else:
+                # Integrated model
+                batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
+                batch_pred = self.model(batch_tensor)
+
+            # Handle auxiliary outputs
+            if isinstance(batch_pred, tuple):
+                main_pred, aux_outputs = batch_pred
+                if 'fg_bg_binary' in aux_outputs:
+                    auxiliary_preds.append(torch.sigmoid(aux_outputs['fg_bg_binary']))
+            else:
+                main_pred = batch_pred
+
+            # Get predictions
+            batch_masks = torch.argmax(main_pred, dim=1).cpu().numpy()
+
+            # Store predictions
+            for j, idx in enumerate(batch_indices):
+                predictions[idx] = batch_masks[j]
+
+        # Combine auxiliary predictions if available
+        auxiliary_pred = None
+        if auxiliary_preds:
+            auxiliary_pred = torch.cat(auxiliary_preds, dim=0).cpu().numpy()
+
+        return predictions, auxiliary_pred
+
+    def _plot_auxiliary(
+        self,
+        ax: plt.Axes,
+        image_np: np.ndarray,
+        annotations: List[Dict],
+        auxiliary_pred: np.ndarray
+    ):
+        """Plot auxiliary foreground/background predictions."""
+        ax.imshow(image_np)
+        ax.set_title('Auxiliary FG/BG Prediction')
+        ax.axis('off')
+
+        # Create overlay for auxiliary predictions
+        overlay = np.zeros(image_np.shape[:2])
+
+        for idx, (ann, aux_mask) in enumerate(zip(annotations, auxiliary_pred)):
+            if 'bbox' not in ann:
+                continue
+
+            x, y, w, h = ann['bbox']
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                image_np.shape[:2]
+            )
+
+            if roi is None:
+                continue
+
+            # Resize auxiliary prediction to ROI size
+            aux_resized = cv2.resize(
+                aux_mask.squeeze(),
+                (roi[2] - roi[0], roi[3] - roi[1]),
+                interpolation=cv2.INTER_LINEAR
+            )
+
+            # Apply to overlay
+            overlay[roi[1]:roi[3], roi[0]:roi[2]] = np.maximum(
+                overlay[roi[1]:roi[3], roi[0]:roi[2]],
+                aux_resized
+            )
+
+        # Show as heatmap
+        masked_overlay = np.ma.masked_where(overlay < 0.1, overlay)
+        im = ax.imshow(masked_overlay, cmap='hot', alpha=0.6, vmin=0, vmax=1)
+
+        # Add colorbar
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    def _plot_original_with_boxes(self, ax: plt.Axes, image_np: np.ndarray, annotations: List[Dict]):
+        """Plot original image with bounding boxes."""
+        ax.imshow(image_np)
+        ax.set_title('Original Image with Boxes')
+        ax.axis('off')
+
+        # Draw bounding boxes
+        for idx, ann in enumerate(annotations):
+            if 'bbox' not in ann:
+                continue
+
+            x, y, w, h = ann['bbox']
+            rect = patches.Rectangle(
+                (x, y), w, h,
+                linewidth=2,
+                edgecolor='red' if idx == 0 else 'yellow',
+                facecolor='none'
+            )
+            ax.add_patch(rect)
+            ax.text(x, y-5, f'Person {idx+1}', color='white', fontsize=10,
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='red' if idx == 0 else 'yellow', alpha=0.7))
+
+    def _plot_ground_truth(self, ax: plt.Axes, image_np: np.ndarray, annotations: List[Dict], target_index: int):
+        """Plot ground truth masks."""
+        ax.imshow(image_np)
+        ax.set_title('Ground Truth Masks')
+        ax.axis('off')
+
+        # Create mask overlay
+        mask_overlay = np.zeros((*image_np.shape[:2], 4))
+        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+
+        for idx, ann in enumerate(annotations):
+            if 'segmentation' not in ann:
+                continue
+
+            mask = self.coco.annToMask(ann)
+            color = colors[idx % 10]
+            mask_overlay[mask > 0] = [*color[:3], 0.6]
+
+        ax.imshow(mask_overlay)
+
+    def _plot_predictions(self, ax: plt.Axes, image_np: np.ndarray, annotations: List[Dict], predictions: Dict[int, np.ndarray]):
+        """Plot predicted masks."""
+        ax.imshow(image_np)
+        ax.set_title('Predicted Masks')
+        ax.axis('off')
+
+        # Create prediction overlay
+        pred_overlay = np.zeros((*image_np.shape[:2], 4))
+        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+
+        for idx, ann in enumerate(annotations):
+            if idx not in predictions:
+                continue
+
+            pred_mask = predictions[idx]
+            x, y, w, h = ann['bbox']
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                image_np.shape[:2]
+            )
+
+            if roi is None:
+                continue
+
+            # Resize prediction to ROI size
+            pred_resized = cv2.resize(
+                pred_mask.astype(np.uint8),
+                (roi[2] - roi[0], roi[3] - roi[1]),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+            # Apply colors
+            color = colors[idx % 10]
+            roi_overlay = pred_overlay[roi[1]:roi[3], roi[0]:roi[2]]
+
+            # Class 1: Target (full opacity)
+            roi_overlay[pred_resized == 1] = [*color[:3], 0.8]
+
+            # Class 2: Non-target (lighter)
+            roi_overlay[pred_resized == 2] = [*color[:3], 0.4]
+
+        ax.imshow(pred_overlay)
+
+    def _plot_overlay(self, ax: plt.Axes, image_np: np.ndarray, annotations: List[Dict],
+                     predictions: Dict[int, np.ndarray], target_index: int):
+        """Plot overlay comparison of GT and predictions."""
+        ax.imshow(image_np)
+        ax.set_title('GT (Green) vs Pred (Red) Overlay')
+        ax.axis('off')
+
+        # Create overlay
+        overlay = np.zeros((*image_np.shape[:2], 4))
+
+        # Ground truth in green
+        for idx, ann in enumerate(annotations):
+            if 'segmentation' not in ann:
+                continue
+
+            if idx == target_index:
+                mask = self.coco.annToMask(ann)
+                overlay[mask > 0, 1] = 1.0  # Green channel
+                overlay[mask > 0, 3] = 0.5  # Alpha
+
+        # Predictions in red
+        if target_index in predictions:
+            ann = annotations[target_index]
+            pred_mask = predictions[target_index]
+            x, y, w, h = ann['bbox']
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                image_np.shape[:2]
+            )
+
+            if roi is not None:
+                pred_resized = cv2.resize(
+                    (pred_mask == 1).astype(np.uint8),
+                    (roi[2] - roi[0], roi[3] - roi[1]),
+                    interpolation=cv2.INTER_NEAREST
+                )
+
+                roi_overlay = overlay[roi[1]:roi[3], roi[0]:roi[2]]
+                roi_overlay[pred_resized > 0, 0] = 1.0  # Red channel
+                roi_overlay[pred_resized > 0, 3] = 0.5  # Alpha
+
+        ax.imshow(overlay)
+
+    def _create_panel_ground_truth(self, image_np: np.ndarray, annotations: List[Dict],
+                                  orig_width: int, orig_height: int) -> Image.Image:
+        """Create ground truth panel image."""
+        # Create a copy to draw on
+        img = Image.fromarray(image_np.copy())
+
+        # Create mask overlay
+        mask_overlay = np.zeros((*image_np.shape[:2], 4))
+        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+
+        # First draw masks
+        for idx, ann in enumerate(annotations):
+            # Draw segmentation mask
+            if 'segmentation' in ann:
+                mask = self.coco.annToMask(ann)
+                # Resize mask to 640x640
+                mask_resized = cv2.resize(mask, (640, 640), interpolation=cv2.INTER_NEAREST)
+                color = colors[idx % 10]
+                mask_overlay[mask_resized > 0] = [*color[:3], 0.6]
+
+        # Apply mask overlay
+        img_np = np.array(img)
+        mask_rgb = (mask_overlay[:, :, :3] * 255).astype(np.uint8)
+        mask_alpha = mask_overlay[:, :, 3]
+
+        for c in range(3):
+            img_np[:, :, c] = img_np[:, :, c] * (1 - mask_alpha) + mask_rgb[:, :, c] * mask_alpha
+
+        # Convert back to PIL for drawing
+        img = Image.fromarray(img_np.astype(np.uint8))
+        draw = ImageDraw.Draw(img)
+
+        # Then draw bounding boxes and instance numbers
+        for idx, ann in enumerate(annotations):
+            # Draw bounding box
+            if 'bbox' in ann:
+                x, y, w, h = ann['bbox']
+                # Scale bbox to resized image
+                x = x * 640 / orig_width
+                y = y * 640 / orig_height
+                w = w * 640 / orig_width
+                h = h * 640 / orig_height
+
+                color = colors[idx % 10]
+                color_rgb = tuple(int(c * 255) for c in color[:3])
+
+                # Draw red box
+                draw.rectangle([x, y, x+w, y+h], outline=(255, 0, 0), width=3)
+
+                # Draw instance number outside box
+                self._draw_instance_number(draw, [x, y, w, h], idx + 1, color_rgb)
+
+        return img
+
+    def _create_panel_heatmap(self, image_np: np.ndarray, auxiliary_pred: Optional[np.ndarray]) -> Image.Image:
+        """Create auxiliary heatmap panel."""
+        img = image_np.copy()
+
+        if self.has_auxiliary and auxiliary_pred is not None:
+            # Create heatmap overlay
+            cmap = cm.get_cmap('hot')
+            heatmap = cmap(auxiliary_pred)[:, :, :3]  # Remove alpha channel
+            heatmap = (heatmap * 255).astype(np.uint8)
+
+            # Blend with original image
+            alpha = 0.6
+            img = cv2.addWeighted(heatmap, alpha, img, 1 - alpha, 0)
+
+        return Image.fromarray(img)
+
+    def _create_panel_unet_fg_bg(self, image_np: np.ndarray, unet_outputs: Dict[str, np.ndarray]) -> Image.Image:
+        """Create UNet FG/BG panel."""
+        img = image_np.copy()
+
+        # Get masks from unet_outputs
+        combined_fg_mask = unet_outputs.get('combined_fg_mask', np.zeros((640, 640), dtype=bool))
+        combined_bg_mask = unet_outputs.get('combined_bg_mask', np.zeros((640, 640), dtype=bool))
+
+        if combined_fg_mask.any() or combined_bg_mask.any():
+            # Create overlay
+            overlay = img.copy()
+
+            # Background in gray
+            overlay[combined_bg_mask] = [128, 128, 128]
+
+            # Foreground in red (overwrites background)
+            overlay[combined_fg_mask] = [255, 0, 0]
+
+            # Blend with original
+            alpha = 0.7
+            img = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
+
+        return Image.fromarray(img)
+
+    def _create_panel_predictions(self, image_np: np.ndarray, annotations: List[Dict],
+                                 predictions: Dict[int, np.ndarray], orig_width: int, orig_height: int) -> Image.Image:
+        """Create predictions panel."""
+        img = image_np.copy()
+
+        # Create prediction overlay
+        pred_overlay = np.zeros((*image_np.shape[:2], 4))
+        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+
+        for idx, ann in enumerate(annotations):
+            if idx not in predictions:
+                continue
+
+            pred_mask = predictions[idx]
+            x, y, w, h = ann['bbox']
+
+            # Scale bbox to resized image
+            x = x * 640 / orig_width
+            y = y * 640 / orig_height
+            w = w * 640 / orig_width
+            h = h * 640 / orig_height
+
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                (640, 640)
+            )
+
+            if roi is None:
+                continue
+
+            x1, y1, x2, y2 = roi
+
+            # Resize prediction to ROI size
+            pred_resized = cv2.resize(
+                pred_mask.astype(np.uint8),
+                (x2 - x1, y2 - y1),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+            # Apply colors
+            color = colors[idx % 10]
+
+            # Class 1: Target (full opacity)
+            target_mask = pred_resized == 1
+            pred_overlay[y1:y2, x1:x2][target_mask] = [*color[:3], 0.8]
+
+            # Class 2: Non-target (lighter)
+            nontarget_mask = pred_resized == 2
+            pred_overlay[y1:y2, x1:x2][nontarget_mask] = [*color[:3], 0.4]
+
+        # Apply overlay
+        mask_rgb = (pred_overlay[:, :, :3] * 255).astype(np.uint8)
+        mask_alpha = pred_overlay[:, :, 3]
+
+        for c in range(3):
+            img[:, :, c] = img[:, :, c] * (1 - mask_alpha) + mask_rgb[:, :, c] * mask_alpha
+
+        return Image.fromarray(img.astype(np.uint8))
+
+    def _create_combined_4x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
+                                  panel3_images: List[Image.Image], panel4_images: List[Image.Image], epoch: int):
+        """Create combined 4x4 grid visualization."""
+        n_images = len(panel1_images)
+        if n_images == 0:
+            return
+
+        # Fixed dimensions
+        img_width = 640
+        img_height = 640
+        padding = 20
+
+        # Add extra space for title at the top
+        title_height = 80
+
+        # Create combined image (4 rows x n_images columns)
+        # Set margins
+        label_padding = 30  # Changed to 30px as requested
+        right_margin = 30   # Right margin
+        bottom_margin = 30  # New bottom margin
+        combined_width = label_padding + n_images * img_width + (n_images - 1) * padding + right_margin
+        combined_height = title_height + 4 * img_height + 3 * padding + bottom_margin
+        combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
+
+        # Add title text
+        draw = ImageDraw.Draw(combined_img)
+
+        # Try to load fonts
+        try:
+            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+            label_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)  # Increased from 30 to 45 (1.5x)
+        except:
+            title_font = ImageFont.load_default()
+            label_font = ImageFont.load_default()
+
+        # Paste images in grid first
+        for col in range(n_images):
+            x_offset = label_padding + col * (img_width + padding)
+
+            # Row 1: Ground Truth
+            combined_img.paste(panel1_images[col], (x_offset, title_height))
+
+            # Row 2: Enhanced Heatmap
+            combined_img.paste(panel2_images[col], (x_offset, title_height + img_height + padding))
+
+            # Row 3: Enhanced UNet FG/BG
+            combined_img.paste(panel3_images[col], (x_offset, title_height + 2 * (img_height + padding)))
+
+            # Row 4: Predictions
+            combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
+
+        # Draw main title
+        title_text = f"Validation Results with Auxiliary Task - Epoch {epoch+1:04d}"
+        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+        title_width = title_bbox[2] - title_bbox[0]
+        title_x = (combined_width - title_width) // 2
+        draw.text((title_x, 20), title_text, fill='black', font=title_font)
+
+        # Row labels with colors matching hierarchical UNet visualizer
+        labels = [
+            ("Ground Truth", (255, 102, 102)),  # Light red
+            ("Binary Mask Heatmap", (102, 178, 255)),  # Light blue
+            ("Enhanced UNet FG/BG", (102, 102, 255)),  # Light blue (matching UNet)
+            ("Predictions", (0, 153, 0))  # Green
+        ]
+
+        # Draw row labels on top of images
+        for idx, (text, color) in enumerate(labels):
+            y_pos = title_height + idx * (img_height + padding) + 5
+            # Draw background rectangle
+            bbox = draw.textbbox((0, 0), text, font=label_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+            # Increase padding for better visual balance (1.5x increase to match font)
+            vertical_padding = 23  # Increased from 15 to 23 (1.5x)
+            horizontal_padding = 30  # Increased from 20 to 30 (1.5x)
+
+            # Calculate box dimensions
+            box_height = text_height + 2 * vertical_padding
+
+            draw.rectangle(
+                [10, y_pos, 10 + text_width + 2 * horizontal_padding, y_pos + box_height],
+                fill=color
+            )
+
+            # Center text vertically within the box
+            # Account for text baseline by using bbox offset
+            text_y = y_pos + vertical_padding - bbox[1]
+            draw.text((10 + horizontal_padding, text_y), text, fill='white', font=label_font)
+
+        # Resize to 45% of original size
+        scale_factor = 0.45
+        new_width = int(combined_img.width * scale_factor)
+        new_height = int(combined_img.height * scale_factor)
+        combined_img_resized = combined_img.resize((new_width, new_height), Image.LANCZOS)
+
+        # Save combined image
+        output_path = self.output_dir / f'validation_all_images_epoch_{epoch+1:04d}.png'
+        combined_img_resized.save(output_path)
+        print(f"  Saved combined visualization: {output_path}")
+
+    def _extract_roi_features(self, features: torch.Tensor, rois: List[Tuple[int, int, int, int]]) -> torch.Tensor:
+        """Extract ROI features from feature map."""
+        # This is a simplified version - in practice, you'd use ROIAlign
+        roi_features = []
+
+        for roi in rois:
+            x1, y1, x2, y2 = roi
+            # Map ROI to feature coordinates
+            # Assuming 8x downsampling from 640x640 to 80x80
+            fx1 = int(x1 * 80 / 640)
+            fy1 = int(y1 * 80 / 640)
+            fx2 = int(x2 * 80 / 640)
+            fy2 = int(y2 * 80 / 640)
+
+            # Extract and resize
+            roi_feat = features[:, :, fy1:fy2, fx1:fx2]
+            roi_feat = torch.nn.functional.interpolate(
+                roi_feat, size=(7, 7), mode='bilinear', align_corners=False
+            )
+            roi_features.append(roi_feat)
+
+        return torch.cat(roi_features, dim=0)
+
+    def _prepare_batch_tensor(self, image_np: np.ndarray, rois: List[Tuple[int, int, int, int]]) -> torch.Tensor:
+        """Prepare batch tensor for integrated models."""
+        batch_images = []
+
+        for roi in rois:
+            x1, y1, x2, y2 = roi
+            roi_image = image_np[y1:y2, x1:x2]
+
+            # Resize to model input size
+            roi_image = cv2.resize(roi_image, (640, 640))
+
+            # Convert to tensor
+            roi_tensor = torch.from_numpy(roi_image).permute(2, 0, 1).float() / 255.0
+            batch_images.append(roi_tensor)
+
+        return torch.stack(batch_images).to(self.device)
+
+    def _get_predictions_with_unet(
+        self,
+        image_np: np.ndarray,
+        annotations: List[Dict],
+        orig_width: int,
+        orig_height: int,
+        target_index: int = 0
+    ) -> Tuple[Dict[int, np.ndarray], Optional[np.ndarray], Dict[str, np.ndarray]]:
+        """Get model predictions with auxiliary outputs and UNet-style outputs.
+
+        Returns:
+            predictions: Dictionary mapping annotation index to predicted mask
+            auxiliary_pred: Auxiliary foreground/background prediction (if available)
+            unet_outputs: Dictionary containing UNet-style FG/BG masks
+        """
+        # Initialize UNet outputs
+        unet_outputs = {
+            'combined_fg_mask': np.zeros((640, 640), dtype=bool),
+            'combined_bg_mask': np.zeros((640, 640), dtype=bool),
+            'all_auxiliary_preds': []  # Store all auxiliary predictions
+        }
+
+        # Extract features once for all ROIs
+        if self.feature_extractor is not None:
+            # External feature extraction
+            image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
+            image_tensor = image_tensor.unsqueeze(0).to(self.device)
+
+            with torch.no_grad():
+                if hasattr(self.feature_extractor, 'extract_features'):
+                    features = self.feature_extractor.extract_features(image_tensor)
+                else:
+                    features = self.feature_extractor(image_tensor)
+        else:
+            # Integrated feature extraction
+            features = None
+
+        # Process all ROIs at once for better batching
+        roi_list = []
+        valid_indices = []
+        roi_coordinates = []  # Store ROI coordinates for later use
+
+        for idx, ann in enumerate(annotations):
+            if 'bbox' not in ann:
+                continue
+
+            x, y, w, h = ann['bbox']
+            # Scale bbox to resized image
+            x = x * 640 / orig_width
+            y = y * 640 / orig_height
+            w = w * 640 / orig_width
+            h = h * 640 / orig_height
+
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                (640, 640)
+            )
+
+            if roi is not None:
+                roi_list.append(roi)
+                valid_indices.append(idx)
+                roi_coordinates.append(roi)
+
+        if not roi_list:
+            return {}, None, unet_outputs
+
+        # Batch process ROIs
+        predictions = {}
+        all_auxiliary_preds = []
+
+        batch_size = 16
+        for i in range(0, len(roi_list), batch_size):
+            batch_rois = roi_list[i:i+batch_size]
+            batch_indices = valid_indices[i:i+batch_size]
+            batch_coords = roi_coordinates[i:i+batch_size]
+
+            # Process batch
+            if features is not None:
+                # External features - need to handle based on model type
+                if hasattr(self.model, 'main_head') and hasattr(self.model.main_head, 'base_model'):
+                    # Multi-scale model with auxiliary task
+                    # Prepare ROIs for the model
+                    roi_tensors = []
+                    for roi in batch_rois:
+                        x1, y1, x2, y2 = roi
+                        roi_norm = torch.tensor(
+                            [[0, x1/640, y1/640, x2/640, y2/640]],
+                            dtype=torch.float32, device=self.device
+                        )
+                        roi_tensors.append(roi_norm)
+                    rois = torch.cat(roi_tensors, dim=0)
+
+                    batch_pred = self.model(features, rois)
+                else:
+                    # Standard model
+                    roi_features = self._extract_roi_features(features, batch_rois)
+                    batch_pred = self.model(roi_features)
+            else:
+                # Integrated model
+                batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
+                batch_pred = self.model(batch_tensor)
+
+            # Handle auxiliary outputs
+            if isinstance(batch_pred, tuple):
+                main_pred, aux_outputs = batch_pred
+                if 'fg_bg_binary' in aux_outputs:
+                    aux_probs = torch.sigmoid(aux_outputs['fg_bg_binary']).cpu().numpy()
+
+                    # Process each auxiliary prediction
+                    for j, (roi_coord, aux_pred) in enumerate(zip(batch_coords, aux_probs)):
+                        x1, y1, x2, y2 = roi_coord
+
+                        # Resize auxiliary prediction to ROI size
+                        aux_resized = cv2.resize(
+                            aux_pred.squeeze(),
+                            (x2 - x1, y2 - y1),
+                            interpolation=cv2.INTER_LINEAR
+                        )
+
+                        # Store for heatmap visualization
+                        unet_outputs['all_auxiliary_preds'].append({
+                            'roi': roi_coord,
+                            'pred': aux_resized
+                        })
+
+                        # Update combined masks
+                        fg_mask_roi = aux_resized >= 0.5
+                        bg_mask_roi = aux_resized < 0.5
+
+                        unet_outputs['combined_fg_mask'][y1:y2, x1:x2] |= fg_mask_roi
+                        # Only update background where there's no foreground
+                        current_bg = unet_outputs['combined_bg_mask'][y1:y2, x1:x2]
+                        current_fg = unet_outputs['combined_fg_mask'][y1:y2, x1:x2]
+                        unet_outputs['combined_bg_mask'][y1:y2, x1:x2] = current_bg | (bg_mask_roi & ~current_fg)
+            else:
+                main_pred = batch_pred
+
+            # Get predictions
+            batch_masks = torch.argmax(main_pred, dim=1).cpu().numpy()
+
+            # Store predictions
+            for j, idx in enumerate(batch_indices):
+                predictions[idx] = batch_masks[j]
+
+        # Create a single auxiliary heatmap from all predictions
+        auxiliary_pred = None
+        if unet_outputs['all_auxiliary_preds']:
+            # Create a single heatmap by taking max over all ROIs
+            auxiliary_heatmap = np.zeros((640, 640), dtype=np.float32)
+            for aux_info in unet_outputs['all_auxiliary_preds']:
+                x1, y1, x2, y2 = aux_info['roi']
+                auxiliary_heatmap[y1:y2, x1:x2] = np.maximum(
+                    auxiliary_heatmap[y1:y2, x1:x2],
+                    aux_info['pred']
+                )
+            auxiliary_pred = auxiliary_heatmap
+
+        return predictions, auxiliary_pred, unet_outputs
+
+    def _plot_ground_truth_combined(
+        self,
+        ax: plt.Axes,
+        image_np: np.ndarray,
+        annotations: List[Dict],
+        orig_width: int,
+        orig_height: int
+    ):
+        """Plot ground truth with boxes and masks combined."""
+        ax.imshow(image_np)
+        ax.set_title('Ground Truth')
+        ax.axis('off')
+
+        # Create mask overlay
+        mask_overlay = np.zeros((*image_np.shape[:2], 4))
+        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+
+        for idx, ann in enumerate(annotations):
+            # Draw bounding box
+            if 'bbox' in ann:
+                x, y, w, h = ann['bbox']
+                # Scale bbox to resized image
+                x = x * 640 / orig_width
+                y = y * 640 / orig_height
+                w = w * 640 / orig_width
+                h = h * 640 / orig_height
+
+                rect = patches.Rectangle(
+                    (x, y), w, h,
+                    linewidth=2,
+                    edgecolor='red',
+                    facecolor='none'
+                )
+                ax.add_patch(rect)
+                ax.text(x, y-5, f'Person {idx+1}', color='white', fontsize=10,
+                       bbox=dict(boxstyle='round,pad=0.3', facecolor='red', alpha=0.7))
+
+            # Draw segmentation mask
+            if 'segmentation' in ann:
+                mask = self.coco.annToMask(ann)
+                # Resize mask to 640x640
+                mask_resized = cv2.resize(mask, (640, 640), interpolation=cv2.INTER_NEAREST)
+                color = colors[idx % 10]
+                mask_overlay[mask_resized > 0] = [*color[:3], 0.6]
+
+        ax.imshow(mask_overlay)
+
+    def _plot_unet_fg_bg(
+        self,
+        ax: plt.Axes,
+        image_np: np.ndarray,
+        annotations: List[Dict],
+        unet_outputs: Dict[str, np.ndarray]
+    ):
+        """Plot UNet-style foreground/background masks."""
+        # Create overlay
+        overlay = image_np.copy()
+
+        # Get masks from unet_outputs
+        combined_fg_mask = unet_outputs.get('combined_fg_mask', np.zeros((640, 640), dtype=bool))
+        combined_bg_mask = unet_outputs.get('combined_bg_mask', np.zeros((640, 640), dtype=bool))
+
+        # Create visualization
+        mask_overlay = np.zeros((*image_np.shape[:2], 4))
+
+        # If we have masks, visualize them
+        if combined_fg_mask.any() or combined_bg_mask.any():
+            # Background in gray
+            mask_overlay[combined_bg_mask] = [0.5, 0.5, 0.5, 0.7]  # Gray with alpha
+
+            # Foreground in red (overwrites background)
+            mask_overlay[combined_fg_mask] = [1.0, 0.0, 0.0, 0.7]  # Red with alpha
+
+            ax.imshow(image_np)
+            ax.imshow(mask_overlay)
+        else:
+            # No auxiliary predictions available - show placeholder
+            ax.imshow(image_np)
+            ax.text(0.5, 0.5, 'No FG/BG predictions available',
+                   transform=ax.transAxes,
+                   horizontalalignment='center',
+                   verticalalignment='center',
+                   fontsize=12,
+                   bbox=dict(boxstyle='round,pad=0.5', facecolor='yellow', alpha=0.7))
+
+        ax.set_title('Enhanced UNet FG/BG')
+        ax.axis('off')
+
+    def _plot_auxiliary_heatmap(
+        self,
+        ax: plt.Axes,
+        image_np: np.ndarray,
+        auxiliary_pred: np.ndarray
+    ):
+        """Plot auxiliary foreground/background prediction as heatmap."""
+        ax.imshow(image_np)
+        ax.set_title('Binary Mask Heatmap')
+        ax.axis('off')
+
+        # auxiliary_pred is already a 640x640 heatmap
+        if auxiliary_pred.ndim == 2:
+            overlay = auxiliary_pred
+        else:
+            # If it's still in the old format, handle it
+            overlay = np.zeros(image_np.shape[:2])
+            for aux_mask in auxiliary_pred:
+                overlay = np.maximum(overlay, cv2.resize(
+                    aux_mask.squeeze(),
+                    (640, 640),
+                    interpolation=cv2.INTER_LINEAR
+                ))
+
+        # Show as heatmap
+        masked_overlay = np.ma.masked_where(overlay < 0.1, overlay)
+        im = ax.imshow(masked_overlay, cmap='hot', alpha=0.6, vmin=0, vmax=1)
+
+        # Add colorbar
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    def _plot_final_predictions(
+        self,
+        ax: plt.Axes,
+        image_np: np.ndarray,
+        annotations: List[Dict],
+        predictions: Dict[int, np.ndarray],
+        orig_width: int,
+        orig_height: int
+    ):
+        """Plot final predicted masks."""
+        ax.imshow(image_np)
+        ax.set_title('Predictions')
+        ax.axis('off')
+
+        # Create prediction overlay
+        pred_overlay = np.zeros((*image_np.shape[:2], 4))
+        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+
+        for idx, ann in enumerate(annotations):
+            if idx not in predictions:
+                continue
+
+            pred_mask = predictions[idx]
+            x, y, w, h = ann['bbox']
+
+            # Scale bbox to resized image
+            x = x * 640 / orig_width
+            y = y * 640 / orig_height
+            w = w * 640 / orig_width
+            h = h * 640 / orig_height
+
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                (640, 640)
+            )
+
+            if roi is None:
+                continue
+
+            x1, y1, x2, y2 = roi
+
+            # Resize prediction to ROI size
+            pred_resized = cv2.resize(
+                pred_mask.astype(np.uint8),
+                (x2 - x1, y2 - y1),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+            # Apply colors
+            color = colors[idx % 10]
+            roi_overlay = pred_overlay[y1:y2, x1:x2]
+
+            # Class 1: Target (full opacity)
+            roi_overlay[pred_resized == 1] = [*color[:3], 0.8]
+
+            # Class 2: Non-target (lighter)
+            roi_overlay[pred_resized == 2] = [*color[:3], 0.4]
+
+        ax.imshow(pred_overlay)

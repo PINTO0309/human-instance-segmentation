@@ -65,24 +65,64 @@ class MultiTaskSegmentationModel(nn.Module):
         
     def forward(
         self, 
-        features: torch.Tensor
+        features: torch.Tensor,
+        rois: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """Forward pass with main and auxiliary predictions."""
+        """Forward pass with main and auxiliary predictions.
+        
+        Args:
+            features: Feature tensor or dict of features
+            rois: Optional ROI tensor for models that need it
+        """
+        
+        # For multi-scale models, we need to handle the case where the model
+        # internally extracts ROI features
+        roi_features = None
         
         # Main 3-class segmentation
         if hasattr(self.main_head, 'forward'):
-            main_output = self.main_head(features)
+            # Check if main head expects rois
+            import inspect
+            sig = inspect.signature(self.main_head.forward)
+            params = list(sig.parameters.keys())
+            
+            if len(params) > 1 and rois is not None:
+                # Model expects both features and rois
+                main_output = self.main_head(features, rois)
+            else:
+                # Model only expects features
+                main_output = self.main_head(features)
+                
             if isinstance(main_output, tuple):
                 main_logits, main_aux = main_output
             else:
                 main_logits = main_output
                 main_aux = {}
+                
+            # Check if model has exposed ROI features for auxiliary task
+            if hasattr(self.main_head, 'last_roi_features'):
+                roi_features = self.main_head.last_roi_features
         else:
-            main_logits = self.main_head(features)
+            # Fallback for non-standard models
+            if rois is not None:
+                main_logits = self.main_head(features, rois)
+            else:
+                main_logits = self.main_head(features)
             main_aux = {}
         
         # Auxiliary binary fg/bg prediction
-        aux_logits = self.aux_head(features)
+        # We need ROI-aligned features for the auxiliary head
+        if roi_features is not None:
+            # Use the ROI features from the main model
+            aux_logits = self.aux_head(roi_features)
+        else:
+            # Fallback: assume features are already ROI-aligned
+            # This works for models that output ROI features directly
+            if isinstance(features, dict):
+                # Should not happen if model is properly integrated
+                raise ValueError("Auxiliary task requires ROI-aligned features, but received feature dict. "
+                               "The model needs to expose ROI features for auxiliary task.")
+            aux_logits = self.aux_head(features)
         
         # Add auxiliary output
         aux_outputs = {

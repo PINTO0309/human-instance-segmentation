@@ -288,6 +288,9 @@ class MultiScaleROISegmentationHead(nn.Module):
 
         # Fuse features
         fused_features = self.feature_fusion(roi_features)
+        
+        # Store ROI features for auxiliary tasks
+        self.last_roi_features = fused_features
 
         # Decode to masks
         masks = self.decoder(fused_features)
@@ -359,6 +362,10 @@ class MultiScaleSegmentationModel(nn.Module):
 
         # Generate masks
         masks = self.segmentation_head(features, rois)
+        
+        # Propagate last_roi_features from segmentation head
+        if hasattr(self.segmentation_head, 'last_roi_features'):
+            self.last_roi_features = self.segmentation_head.last_roi_features
 
         return masks
 

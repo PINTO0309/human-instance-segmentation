@@ -330,8 +330,9 @@ class EnhancedUNet(nn.Module):
             skip = encoder_features[self.depth - 2 - i]
 
             # Ensure sizes match - ConvTranspose2d might not produce exact size
-            if x.shape[2:] != skip.shape[2:]:
-                x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
+            # Always interpolate to avoid TracerWarning during ONNX export
+            # This ensures consistent behavior whether sizes match or not
+            x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
 
             # Concatenate and decode
             x = torch.cat([x, skip], dim=1)
@@ -548,11 +549,15 @@ def create_hierarchical_model_unet(base_model: nn.Module) -> nn.Module:
                     fused_features = self.feature_fusion(roi_features)
                 else:
                     fused_features = list(roi_features.values())[0]
+                # Store fused features for auxiliary task
+                self.last_roi_features = fused_features
             elif hasattr(self.base_model, 'segmentation_head') and hasattr(self.base_model.segmentation_head, 'ms_roi_align'):
                 # For MultiScaleSegmentationModel, use its segmentation head's ROI align and fusion
                 seg_head = self.base_model.segmentation_head
                 roi_features = seg_head.ms_roi_align(features, rois)
                 fused_features = seg_head.feature_fusion(roi_features)
+                # Store fused features for auxiliary task
+                self.last_roi_features = fused_features
             else:
                 # Fallback for simpler models
                 # Check if this is a head-only model which expects dict features
@@ -576,6 +581,8 @@ def create_hierarchical_model_unet(base_model: nn.Module) -> nn.Module:
                     output = self.base_model(features=features, rois=rois)
                     fused_features = output['features'] if isinstance(output, dict) else features
 
+            # Store fused features for auxiliary task
+            self.last_roi_features = fused_features
             # Apply hierarchical head
             logits, aux_outputs = self.hierarchical_head(fused_features)
 
@@ -1365,11 +1372,15 @@ def create_hierarchical_model_unet_v2(base_model: nn.Module) -> nn.Module:
                     fused_features = self.feature_fusion(roi_features)
                 else:
                     fused_features = list(roi_features.values())[0]
+                # Store fused features for auxiliary task
+                self.last_roi_features = fused_features
             elif hasattr(self.base_model, 'segmentation_head') and hasattr(self.base_model.segmentation_head, 'ms_roi_align'):
                 # For MultiScaleSegmentationModel, use its segmentation head's ROI align and fusion
                 seg_head = self.base_model.segmentation_head
                 roi_features = seg_head.ms_roi_align(features, rois)
                 fused_features = seg_head.feature_fusion(roi_features)
+                # Store fused features for auxiliary task
+                self.last_roi_features = fused_features
             else:
                 # For other models, call with appropriate arguments
                 # Check if this is a head-only model which expects dict features
@@ -1393,6 +1404,8 @@ def create_hierarchical_model_unet_v2(base_model: nn.Module) -> nn.Module:
                     output = self.base_model(features=features, rois=rois)
                     fused_features = output['features'] if isinstance(output, dict) else features
 
+            # Store fused features for auxiliary task  
+            self.last_roi_features = fused_features
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
 
@@ -1465,6 +1478,8 @@ def create_hierarchical_model_unet_v3(base_model: nn.Module) -> nn.Module:
                 output = self.base_model(features, rois)
                 fused_features = output['features'] if isinstance(output, dict) else output
 
+            # Store fused features for auxiliary task  
+            self.last_roi_features = fused_features
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
 
@@ -1537,6 +1552,8 @@ def create_hierarchical_model_unet_v4(base_model: nn.Module) -> nn.Module:
                 output = self.base_model(features, rois)
                 fused_features = output['features'] if isinstance(output, dict) else output
 
+            # Store fused features for auxiliary task  
+            self.last_roi_features = fused_features
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
 

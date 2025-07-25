@@ -46,6 +46,16 @@ class RelationalConfig:
 
 
 @dataclass
+class AuxiliaryTaskConfig:
+    """Configuration for auxiliary foreground/background task."""
+    enabled: bool = False
+    weight: float = 0.3  # Weight for auxiliary loss
+    mid_channels: int = 128  # Channels for auxiliary head
+    pos_weight: Optional[float] = None  # Positive class weight for binary loss
+    visualize: bool = True  # Whether to visualize auxiliary predictions
+
+
+@dataclass
 class TrainingConfig:
     """Training configuration."""
     # Basic settings
@@ -139,6 +149,7 @@ class ExperimentConfig:
     distance_loss: DistanceLossConfig = field(default_factory=DistanceLossConfig)
     cascade: CascadeConfig = field(default_factory=CascadeConfig)
     relational: RelationalConfig = field(default_factory=RelationalConfig)
+    auxiliary_task: AuxiliaryTaskConfig = field(default_factory=AuxiliaryTaskConfig)
 
     # Output settings
     output_dir: str = 'experiments'
@@ -167,6 +178,8 @@ class ExperimentConfig:
             data['cascade'] = CascadeConfig(**data['cascade'])
         if 'relational' in data and isinstance(data['relational'], dict):
             data['relational'] = RelationalConfig(**data['relational'])
+        if 'auxiliary_task' in data and isinstance(data['auxiliary_task'], dict):
+            data['auxiliary_task'] = AuxiliaryTaskConfig(**data['auxiliary_task'])
 
         return cls(**data)
 
@@ -1113,6 +1126,49 @@ class ConfigManager:
                 T_0=20,  # Longer cosine cycles
                 early_stopping_patience=15,
                 mixed_precision=True
+            )
+        ),
+
+        # Hierarchical UNet V2 with auxiliary fg/bg task
+        'hierarchical_unet_v2_auxiliary': ExperimentConfig(
+            name='hierarchical_unet_v2_auxiliary',
+            description='Hierarchical UNet V2 with auxiliary foreground/background task',
+            model=ModelConfig(
+                use_hierarchical_unet_v2=True,
+                use_external_features=True,
+                roi_size=28,
+                mask_size=56
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=['layer_3', 'layer_22', 'layer_34'],
+                fusion_method='concat'
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=0,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6,
+                mixed_precision=True
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                pos_weight=2.0,  # Foreground is less frequent
+                visualize=True
             )
         ),
 

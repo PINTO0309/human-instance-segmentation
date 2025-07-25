@@ -3,7 +3,7 @@
 ## 実装完了項目
 
 ### 1. マルチスケール特徴抽出 ✅
-**ファイル**: 
+**ファイル**:
 - `src/human_edge_detection/advanced/multi_scale_extractor.py`
 - `src/human_edge_detection/advanced/multi_scale_model.py`
 
@@ -15,7 +15,7 @@
 **使用可能な特徴マップ**:
 ```python
 - layer_3: 256ch, 160x160 (高解像度、浅い層)
-- layer_19: 256ch, 160x160 (高解像度、中間層)  
+- layer_19: 256ch, 160x160 (高解像度、中間層)
 - layer_5: 512ch, 80x80 (中解像度、浅い層)
 - layer_22: 512ch, 80x80 (中解像度、中間層)
 - layer_34: 1024ch, 80x80 (低解像度、深い層)
@@ -80,11 +80,11 @@
    ```python
    # 基本重み = 1.0
    weights = ones_like(mask)
-   
+
    # 境界付近は重みを増加（最大2.0倍）
    if distance < 5:
        weights *= 2.0 - (distance / 5)
-   
+
    # 他インスタンスが近い場合はさらに増加（3.0倍）
    if near_other_instance:
        weights *= 3.0
@@ -144,7 +144,7 @@
 - 各段階で異なる重み付け可能
 
 ### 4. 統合トレーニングパイプライン ✅
-**ファイル**: 
+**ファイル**:
 - `train_advanced.py`
 - `src/human_edge_detection/experiments/config_manager.py`
 - `src/human_edge_detection/experiments/progressive_training.py`
@@ -771,7 +771,7 @@ config = ConfigManager.get_config('hierarchical_segmentation')
 uv run python run_experiments.py --configs hierarchical_segmentation --epochs 20
 ```
 
-## 13. クラス特化デコーダ (Class-Specific Decoder) ⭐NEW  
+## 13. クラス特化デコーダ (Class-Specific Decoder) ⭐NEW
 **ファイル**: `src/human_edge_detection/advanced/class_specific_decoder.py`
 
 **概要**: 各クラスに独立したデコーダパスを持たせることで、クラス間の勾配干渉を防止
@@ -812,7 +812,7 @@ uv run python run_experiments.py --configs hierarchical_segmentation --export_on
 
 ## 14. バイラテラルフィルタ（後処理） ⭐NEW
 
-**ファイル**: 
+**ファイル**:
 - `src/human_edge_detection/bilateral_filter.py`
 - `export_bilateral_filter.py`
 
@@ -1022,7 +1022,7 @@ num_iterations: 3
 # 1. セグメンテーションモデルで推論
 with torch.no_grad():
     segmentation_output = model(input_image)  # 学習済みモデルの出力
-    
+
 # 2. バイラテラルフィルタで後処理（学習不要）
 filter = BinaryMaskBilateralFilter(
     kernel_size=7,
@@ -1296,7 +1296,7 @@ Hierarchical Segmentation UNetには4つのバリアント（V1-V4）があり�
 #### V1: 基本階層構造
 ```
 入力特徴 (1024ch)
-     < /dev/null | 
+     < /dev/null |
     ├─→ [ShallowUNet] → 背景/前景 (2ch)
     │        ↓
     └─→ [標準CNN] ──→ ターゲット/非ターゲット (2ch)
@@ -1607,7 +1607,7 @@ HierarchicalLoss(
 ```python
 # 固定の重み
 bg_fg_loss = F.cross_entropy(
-    aux_outputs['bg_fg_logits'], 
+    aux_outputs['bg_fg_logits'],
     bg_fg_targets,
     weight=torch.tensor([1.0, self.target_weight]).to(predictions.device)
 )
@@ -1628,7 +1628,7 @@ fg_weight = total_count / (2 * fg_count.clamp(min=1))
 fg_weight = fg_weight * self.target_weight
 
 bg_fg_loss = F.cross_entropy(
-    aux_outputs['bg_fg_logits'], 
+    aux_outputs['bg_fg_logits'],
     bg_fg_targets,
     weight=torch.tensor([bg_weight.item(), fg_weight.item()]).to(predictions.device)
 )
@@ -1893,3 +1893,219 @@ loss_dict = {
 - オーバーフィッティング比率が3.24xと高いため、より低い学習率が効果的
 
 この修正により、階層的セグメンテーションモデルの学習が安定し、期待通りの性能向上が見込めるようになりました。
+
+## 補助タスクによる前景/背景分離の強化（2025/07/25）✨NEW
+
+### 概要
+3クラスセグメンテーションに加えて、前景/背景のバイナリマスク予測を補助タスクとして追加。マルチタスク学習により、前景/背景分離の明示的な学習と全体的な性能向上を実現。
+
+### 実装内容
+
+#### 1. 補助タスク設定（`config_manager.py`）
+```python
+@dataclass
+class AuxiliaryTaskConfig:
+    enabled: bool = False          # 補助タスクの有効/無効
+    weight: float = 0.3            # 補助タスク損失の重み
+    mid_channels: int = 128        # 補助ヘッドの中間チャンネル数
+    pos_weight: Optional[float] = 2.0  # 前景クラスの重み（クラス不均衡対策）
+    visualize: bool = True         # 補助予測の可視化
+```
+
+#### 2. マルチタスクモデル（`auxiliary_fg_bg_task.py`）
+```python
+class MultiTaskSegmentationModel(nn.Module):
+    """メインタスクと補助タスクを統合するモデル"""
+
+    def __init__(self, base_segmentation_head, in_channels, mask_size, aux_weight):
+        # メインヘッド：3クラスセグメンテーション
+        self.main_head = base_segmentation_head
+
+        # 補助ヘッド：バイナリ前景/背景分類
+        self.aux_head = AuxiliaryFgBgHead(in_channels, mask_size)
+
+    def forward(self, features):
+        # メイン出力（3クラス）
+        main_logits, main_aux = self.main_head(features)
+
+        # 補助出力（バイナリ）
+        aux_logits = self.aux_head(features)
+
+        return main_logits, {'fg_bg_binary': aux_logits, **main_aux}
+```
+
+#### 3. マルチタスク損失（`auxiliary_fg_bg_task.py`）
+```python
+class MultiTaskLoss(nn.Module):
+    """メイン損失と補助損失を組み合わせる"""
+
+    def forward(self, predictions, targets, aux_outputs):
+        # メイン損失（3クラス分類）
+        main_loss, main_dict = self.main_loss_fn(predictions, targets)
+
+        # 補助損失（バイナリ分類）
+        fg_targets = (targets > 0).float()  # 0=背景, 1,2=前景
+        aux_loss = self.aux_loss_fn(aux_outputs['fg_bg_binary'], fg_targets)
+
+        # 総損失
+        total_loss = main_loss + self.aux_weight * aux_loss
+
+        # メトリクス計算
+        aux_accuracy = (aux_preds == fg_targets).float().mean()
+        aux_iou = compute_iou(aux_preds, fg_targets)
+
+        return total_loss, {
+            **main_dict,
+            'aux_fg_bg_loss': aux_loss.item(),
+            'aux_fg_accuracy': aux_accuracy.item(),
+            'aux_fg_iou': aux_iou
+        }
+```
+
+#### 4. ONNXエクスポート対応（`export_onnx_advanced_auxiliary.py`）
+- **学習前**: 未学習モデルを`model_untrained.onnx`として自動エクスポート
+- **学習後**: 最良モデルを`best_model.onnx`として自動エクスポート
+- **複数出力**: メイン出力（3クラス）と補助出力（バイナリ）の両方を含む
+
+```python
+# ONNXモデルの出力
+outputs = {
+    'main_output': (batch, 3, 56, 56),      # 3クラスセグメンテーション
+    'aux_fg_bg_output': (batch, 1, 56, 56)  # バイナリ前景/背景
+}
+```
+
+#### 5. 可視化の拡張（`visualize_auxiliary.py`）
+- パネル1: [Ground Truth] 元画像＋バウンディングボックス+Ground Truthマスク
+- パネル2: [Binary Mask Heatmap] 補助タスクの前景/背景予測（ヒートマップ）
+- パネル3: [Enhanced UNet FG/BG] UNet の出力マスク
+- パネル4: [Predictions] 予測マスク
+
+### 使用方法
+
+#### 設定例
+```python
+# experiments/config_manager.py
+'hierarchical_unet_v2_auxiliary': ExperimentConfig(
+    name='hierarchical_unet_v2_auxiliary',
+    description='Hierarchical UNet V2 with auxiliary foreground/background task',
+    model=ModelConfig(
+        use_hierarchical_unet_v2=True,
+        use_external_features=True
+    ),
+    auxiliary_task=AuxiliaryTaskConfig(
+        enabled=True,
+        weight=0.3,
+        mid_channels=128,
+        pos_weight=2.0,
+        visualize=True
+    )
+)
+```
+
+#### 学習実行
+```bash
+# 補助タスク付きで学習
+python run_experiments.py --configs hierarchical_unet_v2_auxiliary --epochs 50
+
+# または直接実行
+python train_advanced.py --config hierarchical_unet_v2_auxiliary
+```
+
+### 期待される効果
+
+1. **性能向上**
+   - mIoU: 5-10%の改善（特に境界領域）
+   - 収束速度: 10-20%高速化
+
+2. **表現学習の強化**
+   - メインタスクと補助タスクが相互に強化
+   - 前景/背景の境界がより明確に
+
+3. **正則化効果**
+   - 過学習の抑制
+   - より汎化性の高いモデル
+
+4. **推論時の活用**
+   ```python
+   # 補助タスクの信頼度を利用した予測の補正
+   fg_confidence = torch.sigmoid(aux_outputs['fg_bg_binary'])
+   corrected_probs[:, 0] *= (1 - fg_confidence)    # 背景
+   corrected_probs[:, 1:] *= fg_confidence         # 前景クラス
+   ```
+
+### 実装の特徴
+
+- **完全な後方互換性**: 既存のパイプラインをそのまま使用可能
+- **プラグイン方式**: `auxiliary_task.enabled=True`で有効化
+- **柔軟な統合**: あらゆるモデルアーキテクチャに適用可能
+- **包括的なロギング**: TensorBoardとテキストログに補助メトリクスを記録
+
+この補助タスクアプローチにより、4クラス化の複雑さを避けながら、前景/背景分離の明示的な学習という利点を得られます。
+
+### 推論時のAuxiliary Branchの扱い
+
+#### **重要: 推論時にはAuxiliary Branchは不要です**
+
+##### なぜ不要なのか
+
+1. **学習時のみの役割**：
+   - Auxiliary branchは主に学習時の特徴表現を改善するため
+   - 学習済みモデルの重みには既にその効果が反映されている
+
+2. **メインタスクの出力で十分**：
+   - 最終的に必要なのは3クラスセグメンテーション（メインタスク）の結果
+   - バイナリ前景/背景の情報は3クラス出力から導出可能
+
+3. **計算効率**：
+   - 推論時にauxiliary branchを無効化することで高速化
+   - メモリ使用量も削減
+
+##### Auxiliary BranchとUNet部のLoss計算の違い
+
+| 項目 | Auxiliary Branch | UNet部（メインタスク） |
+|------|-----------------|---------------------|
+| **タスク** | バイナリ分類（前景/背景） | 3クラスセグメンテーション |
+| **出力サイズ** | 56×56×1 | 56×56×3 |
+| **Loss関数** | BCEWithLogitsLoss | CrossEntropy + Dice |
+| **重み** | aux_weight (0.3) | 1.0（メイン） |
+| **学習の焦点** | 大まかな領域判定 | 詳細な境界線 |
+| **計算コスト** | 低い | 高い |
+
+##### 推奨される使い分け
+
+| 用途 | Auxiliary Branch | 理由 |
+|-----|-----------------|------|
+| **学習時** | ✅ 必要 | 特徴学習の改善、正則化効果 |
+| **検証時** | ✅ 有用 | 学習状況の確認、デバッグ |
+| **本番推論** | ❌ 不要 | 計算効率、メインタスクで十分 |
+| **ONNX出力** | ❌ 除外 | 推論効率化のため |
+
+##### ONNXエクスポートの最適化
+
+`export_onnx_advanced_auxiliary.py`は推論用に最適化されており、auxiliary branchを自動的に除外します：
+
+```python
+class InferenceOnlyWrapper(nn.Module):
+    """推論専用ラッパー（auxiliary branchを除外）"""
+    
+    def __init__(self, model):
+        if isinstance(model, MultiTaskSegmentationModel):
+            self.model = model.main_head  # メインタスクのみ抽出
+```
+
+```bash
+# エクスポート実行（auxiliary branchは自動的に除外される）
+python -m src.human_edge_detection.export_onnx_advanced_auxiliary \
+    experiments/hierarchical_unet_v2_auxiliary/checkpoints/best_model.pth \
+    -o model_inference_only.onnx
+```
+
+エクスポートされたONNXモデル：
+- 入力: features, rois
+- 出力: main_output のみ（auxiliary出力は含まれない）
+- メタデータ: `auxiliary_included_in_export: false`
+
+##### まとめ
+
+Auxiliary branchは**学習を改善するための仕組み**であり、推論時には不要です。学習時に得られた改善効果は既にメインモデルの重みに反映されているため、推論時は計算効率を優先してauxiliary branchを除外することを推奨します。

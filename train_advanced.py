@@ -37,6 +37,9 @@ from src.human_edge_detection.advanced.variable_roi_model import (
 from src.human_edge_detection.advanced.distance_aware_loss import create_distance_aware_loss
 from src.human_edge_detection.advanced.cascade_segmentation import create_cascade_model, CascadeLoss
 from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
+from src.human_edge_detection.advanced.auxiliary_fg_bg_task import (
+    MultiTaskSegmentationModel, MultiTaskLoss, AuxiliaryFgBgHead
+)
 
 # Import experiment management
 from src.human_edge_detection.experiments.config_manager import (
@@ -251,6 +254,30 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             mask_size=config.model.mask_size
         )
 
+    # Apply auxiliary task wrapper if enabled
+    if config.auxiliary_task.enabled:
+        # Get feature channels based on model type
+        if config.multiscale.enabled:
+            # Multi-scale model feature channels
+            feature_channels = config.multiscale.fusion_channels
+        elif config.model.use_variable_roi_sizes:
+            # Variable ROI model feature channels
+            if config.model.use_rgb_enhancement:
+                feature_channels = 1024  # RGB enhanced
+            else:
+                feature_channels = 1024  # Standard variable ROI
+        else:
+            # Standard model feature channels
+            feature_channels = 1024  # From YOLO extractor
+        
+        # Wrap model with auxiliary task
+        model = MultiTaskSegmentationModel(
+            base_segmentation_head=model,
+            in_channels=feature_channels,
+            mask_size=config.model.mask_size,
+            aux_weight=config.auxiliary_task.weight
+        )
+
     return model.to(device), feature_extractor
 
 
@@ -316,6 +343,14 @@ def build_loss_function(
             focal_gamma=config.training.focal_gamma
         )
 
+    # Wrap with multi-task loss if auxiliary task is enabled
+    if config.auxiliary_task.enabled:
+        loss_fn = MultiTaskLoss(
+            main_loss_fn=loss_fn,
+            aux_weight=config.auxiliary_task.weight,
+            aux_pos_weight=config.auxiliary_task.pos_weight
+        )
+
     return loss_fn
 
 
@@ -338,6 +373,9 @@ def train_epoch(
     total_loss = 0
     total_ce_loss = 0
     total_dice_loss = 0
+    aux_fg_bg_loss = 0
+    aux_fg_accuracy = 0
+    aux_fg_iou = 0
     num_batches = 0
 
     progress_bar = tqdm(dataloader, desc=f'Epoch {epoch + 1} - Training', dynamic_ncols=True, leave=False)
@@ -469,6 +507,15 @@ def train_epoch(
         total_ce_loss += loss_dict.get('ce_loss', 0)
         total_dice_loss += loss_dict.get('dice_loss', 0)
         num_batches += 1
+        
+        # Track auxiliary metrics if available
+        if 'aux_fg_bg_loss' not in locals():
+            aux_fg_bg_loss = 0
+            aux_fg_accuracy = 0
+            aux_fg_iou = 0
+        aux_fg_bg_loss += loss_dict.get('aux_fg_bg_loss', 0)
+        aux_fg_accuracy += loss_dict.get('aux_fg_accuracy', 0)
+        aux_fg_iou += loss_dict.get('aux_fg_iou', 0)
 
         # Update progress bar
         progress_bar.set_postfix({
@@ -487,11 +534,19 @@ def train_epoch(
                     writer.add_scalar(f'train/{key}', value.item(), global_step)
 
     # Return epoch metrics
-    return {
+    metrics = {
         'total_loss': total_loss / num_batches,
         'ce_loss': total_ce_loss / num_batches,
         'dice_loss': total_dice_loss / num_batches
     }
+    
+    # Add auxiliary metrics if available
+    if aux_fg_bg_loss > 0:
+        metrics['aux_fg_bg_loss'] = aux_fg_bg_loss / num_batches
+        metrics['aux_fg_accuracy'] = aux_fg_accuracy / num_batches
+        metrics['aux_fg_iou'] = aux_fg_iou / num_batches
+    
+    return metrics
 
 
 def main():
@@ -593,6 +648,8 @@ def main():
     print(f"Training samples: {len(train_dataset)}")
     print(f"Validation samples: {len(val_dataset)}")
 
+    # Skip the first ONNX export - we'll do it later with the checkpoint
+
     # Create dataloaders with custom collate function
     collate_fn = create_collate_fn()
 
@@ -661,8 +718,21 @@ def main():
 
     val_coco = COCO(config.data.val_annotation)
     
+    # Use auxiliary visualizer if auxiliary task is enabled
+    if config.auxiliary_task.enabled:
+        from src.human_edge_detection.visualize_auxiliary import ValidationVisualizerWithAuxiliary
+        visualizer = ValidationVisualizerWithAuxiliary(
+            model=model,
+            feature_extractor=feature_extractor,
+            coco=val_coco,
+            image_dir=config.data.val_img_dir,
+            output_dir=exp_dirs['visualizations'],
+            device=device,
+            roi_padding=config.data.roi_padding,
+            visualize_auxiliary=config.auxiliary_task.visualize
+        )
     # Use HierarchicalUNetVisualizer for hierarchical UNet models
-    if any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+    elif any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         from src.human_edge_detection.advanced.hierarchical_unet_visualizer import HierarchicalUNetVisualizer
         visualizer = HierarchicalUNetVisualizer(
             model=model,
@@ -751,31 +821,43 @@ def main():
 
         # Export untrained model to ONNX
         try:
-            from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
-            untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
-            # Determine model type
-            if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
-                model_type = 'hierarchical'
-            elif config.model.use_class_specific_decoder:
-                model_type = 'class_specific'
-            elif config.multiscale.enabled:
-                model_type = 'multiscale'
+            if config.auxiliary_task.enabled:
+                # Use auxiliary-aware export
+                from src.human_edge_detection.export_onnx_advanced_auxiliary import export_model_inference_only
+                untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
+                print("\nExporting untrained model to ONNX (inference only, no auxiliary)...")
+                export_model_inference_only(
+                    checkpoint_path=str(untrained_checkpoint_path),
+                    output_path=str(untrained_onnx_path),
+                    device=device
+                )
+                success = True
             else:
-                model_type = 'baseline'
-            
-            if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
-                print("\nExporting RGB enhanced decoder to ONNX...")
-            else:
-                print("\nExporting untrained model to ONNX...")
+                from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
+                untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
+                # Determine model type
+                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+                    model_type = 'hierarchical'
+                elif config.model.use_class_specific_decoder:
+                    model_type = 'class_specific'
+                elif config.multiscale.enabled:
+                    model_type = 'multiscale'
+                else:
+                    model_type = 'baseline'
                 
-            success = export_checkpoint_to_onnx_advanced(
-                checkpoint_path=str(untrained_checkpoint_path),
-                output_path=str(untrained_onnx_path),
-                model_type=model_type,
-                config=config.to_dict(),
-                device=device,
-                verify=False  # Skip verification for untrained models
-            )
+                if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
+                    print("\nExporting RGB enhanced decoder to ONNX...")
+                else:
+                    print("\nExporting untrained model to ONNX...")
+                    
+                success = export_checkpoint_to_onnx_advanced(
+                    checkpoint_path=str(untrained_checkpoint_path),
+                    output_path=str(untrained_onnx_path),
+                    model_type=model_type,
+                    config=config.to_dict(),
+                    device=device,
+                    verify=False  # Skip verification for untrained models
+                )
 
             if success:
                 if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
@@ -790,7 +872,7 @@ def main():
                 print("Warning: Failed to export untrained model to ONNX")
         except Exception as e:
             print(f"Warning: Failed to export untrained model to ONNX: {e}")
-            print("Continuing with training...")
+        print("Continuing with training...")
 
     # Training loop
     print(f"\nStarting training for {config.training.num_epochs} epochs...")
@@ -808,6 +890,12 @@ def main():
             writer.add_scalar('train/ce_loss', train_metrics['ce_loss'], epoch)
             writer.add_scalar('train/dice_loss', train_metrics['dice_loss'], epoch)
             writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], epoch)
+            
+            # Log auxiliary metrics if available
+            if 'aux_fg_bg_loss' in train_metrics:
+                writer.add_scalar('train/aux_fg_bg_loss', train_metrics['aux_fg_bg_loss'], epoch)
+                writer.add_scalar('train/aux_fg_accuracy', train_metrics['aux_fg_accuracy'], epoch)
+                writer.add_scalar('train/aux_fg_iou', train_metrics['aux_fg_iou'], epoch)
 
             # Validation
             if epoch % config.training.validate_every == 0:
@@ -891,7 +979,52 @@ def main():
     finally:
         writer.close()
         text_logger.close()
-        
+    
+    # Export best model to ONNX
+    print("\nExporting best model to ONNX...")
+    best_model_path = exp_dirs['checkpoints'] / 'best_model.pth'
+    best_onnx_path = exp_dirs['checkpoints'] / 'best_model.onnx'
+    
+    if best_model_path.exists():
+        try:
+            if config.auxiliary_task.enabled:
+                # Use auxiliary-aware export
+                from src.human_edge_detection.export_onnx_advanced_auxiliary import export_model_inference_only
+                print("Exporting best model to ONNX (inference only, no auxiliary)...")
+                export_model_inference_only(
+                    checkpoint_path=str(best_model_path),
+                    output_path=str(best_onnx_path),
+                    device=device
+                )
+            else:
+                # Use standard export
+                from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
+                # Determine model type
+                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+                    model_type = 'hierarchical'
+                elif config.model.use_class_specific_decoder:
+                    model_type = 'class_specific'
+                elif config.multiscale.enabled:
+                    model_type = 'multiscale'
+                else:
+                    model_type = 'baseline'
+                
+                export_checkpoint_to_onnx_advanced(
+                    checkpoint_path=str(best_model_path),
+                    output_path=str(best_onnx_path),
+                    model_type=model_type,
+                    config=config.to_dict(),
+                    device=device,
+                    verify=True
+                )
+            print(f"Best model exported to: {best_onnx_path}")
+            
+        except Exception as e:
+            import traceback
+            print(f"Warning: Could not export best model to ONNX: {e}")
+            print("Full traceback:")
+            traceback.print_exc()
+    
     print(f"\nTraining completed! Best mIoU: {best_miou:.4f}")
 
 
