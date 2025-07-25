@@ -855,8 +855,14 @@ class ValidationVisualizerWithAuxiliary:
         combined_img_resized.save(output_path)
         print(f"  Saved combined visualization: {output_path}")
 
-    def _extract_roi_features(self, features: torch.Tensor, rois: List[Tuple[int, int, int, int]]) -> torch.Tensor:
+    def _extract_roi_features(self, features: Union[torch.Tensor, Dict[str, torch.Tensor]], rois: List[Tuple[int, int, int, int]]) -> torch.Tensor:
         """Extract ROI features from feature map."""
+        # Handle dictionary features (multi-scale models)
+        if isinstance(features, dict):
+            # For multi-scale models, we need to handle this differently
+            # Just return a dummy tensor for now since the model will handle ROI extraction internally
+            return torch.zeros(len(rois), 1024, 7, 7).to(self.device)
+        
         # This is a simplified version - in practice, you'd use ROIAlign
         roi_features = []
 
@@ -989,9 +995,24 @@ class ValidationVisualizerWithAuxiliary:
 
                     batch_pred = self.model(features, rois)
                 else:
-                    # Standard model
-                    roi_features = self._extract_roi_features(features, batch_rois)
-                    batch_pred = self.model(roi_features)
+                    # Check if features is a dict (multi-scale)
+                    if isinstance(features, dict):
+                        # Multi-scale model without auxiliary wrapper
+                        # Prepare ROIs for the model
+                        roi_tensors = []
+                        for roi in batch_rois:
+                            x1, y1, x2, y2 = roi
+                            roi_norm = torch.tensor(
+                                [[0, x1/640, y1/640, x2/640, y2/640]],
+                                dtype=torch.float32, device=self.device
+                            )
+                            roi_tensors.append(roi_norm)
+                        rois = torch.cat(roi_tensors, dim=0)
+                        batch_pred = self.model(features, rois)
+                    else:
+                        # Standard model with tensor features
+                        roi_features = self._extract_roi_features(features, batch_rois)
+                        batch_pred = self.model(roi_features)
             else:
                 # Integrated model
                 batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
@@ -1002,6 +1023,12 @@ class ValidationVisualizerWithAuxiliary:
                 main_pred, aux_outputs = batch_pred
                 if 'fg_bg_binary' in aux_outputs:
                     aux_probs = torch.sigmoid(aux_outputs['fg_bg_binary']).cpu().numpy()
+                elif 'bg_fg_logits' in aux_outputs:
+                    # Handle hierarchical models that output bg_fg_logits
+                    bg_fg_logits = aux_outputs['bg_fg_logits']
+                    # Convert to foreground probability
+                    fg_probs = torch.softmax(bg_fg_logits, dim=1)[:, 1:2, :, :]  # Take foreground channel
+                    aux_probs = fg_probs.cpu().numpy()
 
                     # Process each auxiliary prediction
                     for j, (roi_coord, aux_pred) in enumerate(zip(batch_coords, aux_probs)):

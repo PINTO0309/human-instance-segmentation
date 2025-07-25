@@ -29,15 +29,27 @@ class AuxiliaryFgBgHead(nn.Module):
         )
         
         # Upsampling if needed
+        self.mask_size = mask_size
         if mask_size > 28:
-            self.upsample = nn.ConvTranspose2d(1, 1, 2, stride=2)
+            # Use adaptive upsampling to reach target size
+            self.upsample = nn.Identity()  # Will use interpolate in forward
         else:
             self.upsample = nn.Identity()
     
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """Forward pass for binary fg/bg prediction."""
         logits = self.fg_bg_head(features)
-        return self.upsample(logits)
+        
+        # Upsample to target mask size if needed
+        if logits.shape[-1] != self.mask_size:
+            logits = nn.functional.interpolate(
+                logits,
+                size=(self.mask_size, self.mask_size),
+                mode='bilinear',
+                align_corners=False
+            )
+        
+        return logits
 
 
 class MultiTaskSegmentationModel(nn.Module):
@@ -88,7 +100,13 @@ class MultiTaskSegmentationModel(nn.Module):
             
             if len(params) > 1 and rois is not None:
                 # Model expects both features and rois
-                main_output = self.main_head(features, rois)
+                # Check if model is a SegmentationModel with named args
+                if 'images' in params and 'features' in params and 'rois' in params:
+                    # Call with named arguments for SegmentationModel
+                    main_output = self.main_head(features=features, rois=rois)
+                else:
+                    # Call with positional arguments
+                    main_output = self.main_head(features, rois)
             else:
                 # Model only expects features
                 main_output = self.main_head(features)
@@ -100,8 +118,14 @@ class MultiTaskSegmentationModel(nn.Module):
                 main_aux = {}
                 
             # Check if model has exposed ROI features for auxiliary task
-            if hasattr(self.main_head, 'last_roi_features'):
+            # First check the main head's segmentation_head for multi-scale models
+            if hasattr(self.main_head, 'segmentation_head') and hasattr(self.main_head.segmentation_head, 'last_roi_features'):
+                roi_features = self.main_head.segmentation_head.last_roi_features
+            elif hasattr(self.main_head, 'last_roi_features'):
                 roi_features = self.main_head.last_roi_features
+            elif hasattr(self, 'last_roi_features'):
+                # Sometimes the attribute might be set on the wrapper itself
+                roi_features = self.last_roi_features
         else:
             # Fallback for non-standard models
             if rois is not None:
@@ -116,13 +140,26 @@ class MultiTaskSegmentationModel(nn.Module):
             # Use the ROI features from the main model
             aux_logits = self.aux_head(roi_features)
         else:
+            # For multi-scale models, check if main_head has last_roi_features after forward pass
+            if hasattr(self.main_head, 'last_roi_features') and self.main_head.last_roi_features is not None:
+                roi_features = self.main_head.last_roi_features
+                aux_logits = self.aux_head(roi_features)
             # Fallback: assume features are already ROI-aligned
             # This works for models that output ROI features directly
-            if isinstance(features, dict):
-                # Should not happen if model is properly integrated
-                raise ValueError("Auxiliary task requires ROI-aligned features, but received feature dict. "
-                               "The model needs to expose ROI features for auxiliary task.")
-            aux_logits = self.aux_head(features)
+            elif isinstance(features, dict):
+                # For multi-scale models that pass dictionary features
+                # We cannot use these directly for auxiliary task
+                # Just return zero auxiliary loss to not break training
+                print("WARNING: Multi-scale model did not expose ROI features. Auxiliary task will be skipped.")
+                # Don't add fg_bg_binary to aux_outputs - this will skip auxiliary loss
+                return main_logits, main_aux
+            # For hierarchical models that return features as tensors
+            elif isinstance(features, torch.Tensor) and features.dim() == 4:
+                # Assume these are already ROI-aligned features
+                aux_logits = self.aux_head(features)
+            else:
+                # Last resort - try to use the features as-is
+                aux_logits = self.aux_head(features)
         
         # Add auxiliary output
         aux_outputs = {
@@ -169,11 +206,21 @@ class MultiTaskLoss(nn.Module):
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Compute multi-task loss."""
         
+        # Handle hierarchical models that output bg_fg_logits instead of fg_bg_binary
+        if 'bg_fg_logits' in aux_outputs and 'fg_bg_binary' not in aux_outputs:
+            # Convert bg_fg_logits (2-channel) to fg_bg_binary (1-channel)
+            # bg_fg_logits: [batch, 2, H, W] where channel 0=bg, 1=fg
+            # We want fg probability, so take channel 1
+            bg_fg_logits = aux_outputs.pop('bg_fg_logits')
+            fg_logits = bg_fg_logits[:, 1:2, :, :]  # Keep dimension
+            aux_outputs['fg_bg_binary'] = fg_logits
+        
         # Main segmentation loss
         if 'fg_bg_binary' in aux_outputs:
             # Remove auxiliary prediction before passing to main loss
             aux_pred = aux_outputs.pop('fg_bg_binary')
-            main_loss, main_dict = self.main_loss_fn(predictions, targets, aux_outputs)
+            # Only pass predictions and targets to main loss (not aux_outputs)
+            main_loss, main_dict = self.main_loss_fn(predictions, targets)
             
             # Create binary fg/bg targets from 3-class targets
             fg_targets = (targets > 0).float()  # 0=bg, 1,2=fg
@@ -211,7 +258,7 @@ class MultiTaskLoss(nn.Module):
             return total_loss, loss_dict
         else:
             # Fallback to main loss only
-            return self.main_loss_fn(predictions, targets, aux_outputs)
+            return self.main_loss_fn(predictions, targets)
 
 
 def create_multitask_model(

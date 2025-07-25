@@ -256,27 +256,38 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
 
     # Apply auxiliary task wrapper if enabled
     if config.auxiliary_task.enabled:
-        # Get feature channels based on model type
-        if config.multiscale.enabled:
-            # Multi-scale model feature channels
-            feature_channels = config.multiscale.fusion_channels
-        elif config.model.use_variable_roi_sizes:
-            # Variable ROI model feature channels
-            if config.model.use_rgb_enhancement:
-                feature_channels = 1024  # RGB enhanced
-            else:
-                feature_channels = 1024  # Standard variable ROI
-        else:
-            # Standard model feature channels
-            feature_channels = 1024  # From YOLO extractor
-        
-        # Wrap model with auxiliary task
-        model = MultiTaskSegmentationModel(
-            base_segmentation_head=model,
-            in_channels=feature_channels,
-            mask_size=config.model.mask_size,
-            aux_weight=config.auxiliary_task.weight
+        # Check if model is already a hierarchical model (which has its own auxiliary outputs)
+        is_hierarchical = config.model.use_hierarchical or any(
+            getattr(config.model, attr, False) 
+            for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 
+                         'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']
         )
+        
+        if not is_hierarchical:
+            # Only wrap non-hierarchical models
+            # Get feature channels based on model type
+            if config.multiscale.enabled:
+                # Multi-scale model feature channels
+                feature_channels = config.multiscale.fusion_channels
+            elif config.model.use_variable_roi_sizes:
+                # Variable ROI model feature channels
+                if config.model.use_rgb_enhancement:
+                    feature_channels = 1024  # RGB enhanced
+                else:
+                    feature_channels = 1024  # Standard variable ROI
+            else:
+                # Standard model feature channels
+                feature_channels = 1024  # From YOLO extractor
+            
+            # Wrap model with auxiliary task
+            model = MultiTaskSegmentationModel(
+                base_segmentation_head=model,
+                in_channels=feature_channels,
+                mask_size=config.model.mask_size,
+                aux_weight=config.auxiliary_task.weight
+            )
+        else:
+            print("Note: Hierarchical models have built-in auxiliary outputs, skipping MultiTaskSegmentationModel wrapper")
 
     return model.to(device), feature_extractor
 
