@@ -5,8 +5,33 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Optional, Tuple
 
-from ..model import LayerNorm2d, ResidualBlock
+from ..model import LayerNorm2d
 from .attention_modules import ChannelAttentionModule, SpatialAttentionModule
+
+
+class ResidualBlock(nn.Module):
+    """Residual block with configurable normalization."""
+    
+    def __init__(self, channels: int, normalization_type: str = 'layernorm2d', 
+                 normalization_groups: int = 8):
+        super().__init__()
+        from .normalization_comparison import get_normalization_layer
+        
+        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.norm1 = get_normalization_layer(normalization_type, channels, 
+                                           num_groups=min(normalization_groups, channels))
+        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
+        self.norm2 = get_normalization_layer(normalization_type, channels,
+                                           num_groups=min(normalization_groups, channels))
+        self.relu = nn.ReLU(inplace=True)
+        
+    def forward(self, x):
+        residual = x
+        out = self.relu(self.norm1(self.conv1(x)))
+        out = self.norm2(self.conv2(out))
+        out += residual
+        out = self.relu(out)
+        return out
 
 
 class ShallowUNet(nn.Module):
@@ -218,16 +243,24 @@ class EnhancedUNetONNX(nn.Module):
 class EnhancedUNet(nn.Module):
     """Enhanced U-Net with deeper architecture and residual connections."""
 
-    def __init__(self, in_channels: int, base_channels: int = 64, depth: int = 4):
+    def __init__(self, in_channels: int, base_channels: int = 64, depth: int = 4,
+                 groups: int = None, normalization_type: str = 'layernorm2d',
+                 normalization_groups: int = 8):
         """Initialize enhanced U-Net.
 
         Args:
             in_channels: Number of input channels
             base_channels: Base channel count for the network
             depth: Depth of the U-Net (number of downsampling operations)
+            groups: Deprecated parameter for backward compatibility
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for GroupNorm
         """
         super().__init__()
         self.depth = depth
+        
+        # Import normalization utilities
+        from .normalization_comparison import get_normalization_layer
 
         # Build encoder
         self.encoders = nn.ModuleList()
@@ -240,18 +273,18 @@ class EnhancedUNet(nn.Module):
                 # First encoder with input processing
                 encoder = nn.Sequential(
                     nn.Conv2d(channels[i], channels[i+1], 3, padding=1),
-                    LayerNorm2d(channels[i+1]),
+                    get_normalization_layer(normalization_type, channels[i+1], num_groups=min(normalization_groups, channels[i+1])),
                     nn.ReLU(inplace=True),
-                    ResidualBlock(channels[i+1]),
-                    ResidualBlock(channels[i+1])
+                    ResidualBlock(channels[i+1], normalization_type, normalization_groups),
+                    ResidualBlock(channels[i+1], normalization_type, normalization_groups)
                 )
             else:
                 # Deeper encoders with residual blocks
                 encoder = nn.Sequential(
-                    ResidualBlock(channels[i]),
-                    ResidualBlock(channels[i]),
+                    ResidualBlock(channels[i], normalization_type, normalization_groups),
+                    ResidualBlock(channels[i], normalization_type, normalization_groups),
                     nn.Conv2d(channels[i], channels[i+1], 3, padding=1),
-                    LayerNorm2d(channels[i+1]),
+                    get_normalization_layer(normalization_type, channels[i+1], num_groups=min(normalization_groups, channels[i+1])),
                     nn.ReLU(inplace=True)
                 )
 
@@ -261,10 +294,10 @@ class EnhancedUNet(nn.Module):
 
         # Bottleneck with attention
         self.bottleneck = nn.Sequential(
-            ResidualBlock(channels[-1]),
-            ResidualBlock(channels[-1]),
+            ResidualBlock(channels[-1], normalization_type, normalization_groups),
+            ResidualBlock(channels[-1], normalization_type, normalization_groups),
             nn.Conv2d(channels[-1], channels[-1], 3, padding=1),
-            LayerNorm2d(channels[-1]),
+            get_normalization_layer(normalization_type, channels[-1], num_groups=min(normalization_groups, channels[-1])),
             nn.ReLU(inplace=True),
             # Spatial attention
             nn.Conv2d(channels[-1], channels[-1], 1),
@@ -285,17 +318,17 @@ class EnhancedUNet(nn.Module):
             # Decoder block with residual connections
             decoder = nn.Sequential(
                 nn.Conv2d(channels[i] * 2, channels[i], 3, padding=1),
-                LayerNorm2d(channels[i]),
+                get_normalization_layer(normalization_type, channels[i], num_groups=min(normalization_groups, channels[i])),
                 nn.ReLU(inplace=True),
-                ResidualBlock(channels[i]),
-                ResidualBlock(channels[i])
+                ResidualBlock(channels[i], normalization_type, normalization_groups),
+                ResidualBlock(channels[i], normalization_type, normalization_groups)
             )
             self.decoders.append(decoder)
 
         # Final layer
         self.final = nn.Sequential(
             nn.Conv2d(channels[1], channels[1] // 2, 3, padding=1),
-            LayerNorm2d(channels[1] // 2),
+            get_normalization_layer(normalization_type, channels[1] // 2, num_groups=min(normalization_groups, channels[1] // 2)),
             nn.ReLU(inplace=True),
             nn.Conv2d(channels[1] // 2, 2, 1)  # 2 classes: bg, fg
         )

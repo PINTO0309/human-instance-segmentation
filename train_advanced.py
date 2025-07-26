@@ -129,6 +129,9 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             use_subpixel_conv=getattr(config.model, 'use_subpixel_conv', False),
             use_contour_detection=getattr(config.model, 'use_contour_detection', False),
             use_distance_transform=getattr(config.model, 'use_distance_transform', False),
+            # Normalization configuration
+            normalization_type=getattr(config.model, 'normalization_type', 'layernorm2d'),
+            normalization_groups=getattr(config.model, 'normalization_groups', 8),
         )
         
         feature_extractor = None  # RGB model doesn't need external feature extractor

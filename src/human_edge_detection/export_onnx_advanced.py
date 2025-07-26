@@ -13,10 +13,14 @@ from .model import create_model, ROISegmentationHead
 from .advanced.multi_scale_model import MultiScaleSegmentationModel
 
 try:
-    import onnxsim
+    from onnxsim import simplify as onnxsim_simplify
     ONNXSIM_AVAILABLE = True
 except ImportError:
-    ONNXSIM_AVAILABLE = False
+    try:
+        import onnx_simplifier as onnxsim
+        ONNXSIM_AVAILABLE = True
+    except ImportError:
+        ONNXSIM_AVAILABLE = False
 
 
 class AdvancedONNXExporter:
@@ -297,8 +301,7 @@ class AdvancedONNXExporter:
                         # Return specific outputs in the expected order
                         if isinstance(aux_dict, dict):
                             bg_fg_logits = aux_dict.get('bg_fg_logits', torch.zeros_like(masks)[:, :2])
-                            # Use low-res target/non-target logits (28x28)
-                            target_nontarget_logits = aux_dict.get('bg_fg_logits_low', torch.zeros_like(masks)[:, :2, :28, :28])
+                            target_nontarget_logits = aux_dict.get('target_nontarget_logits', torch.zeros_like(masks)[:, :2])
                             return masks, bg_fg_logits, target_nontarget_logits
                         else:
                             return output
@@ -506,8 +509,7 @@ class AdvancedONNXExporter:
                     # Return specific outputs in the expected order
                     if isinstance(aux_dict, dict):
                         bg_fg_logits = aux_dict.get('bg_fg_logits', torch.zeros_like(masks)[:, :2])
-                        # Use low-res target/non-target logits (28x28)
-                        target_nontarget_logits = aux_dict.get('bg_fg_logits_low', torch.zeros_like(masks)[:, :2, :28, :28])
+                        target_nontarget_logits = aux_dict.get('target_nontarget_logits', torch.zeros_like(masks)[:, :2])
                         return masks, bg_fg_logits, target_nontarget_logits
                     else:
                         return output  # Return all outputs including auxiliary
@@ -803,7 +805,11 @@ class AdvancedONNXExporter:
         print("Simplifying ONNX model with onnxsim...")
         try:
             model_onnx = onnx.load(model_path)
-            model_simp, check = onnxsim.simplify(model_onnx)
+            # Try to use the imported simplify function
+            if 'onnxsim_simplify' in globals():
+                model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
+            else:
+                model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
             if check:
                 onnx.save(model_simp, model_path)
                 print("Model simplified successfully!")
@@ -913,7 +919,7 @@ def export_checkpoint_to_onnx_advanced(
 
     # Load checkpoint
     print(f"Loading checkpoint from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     # Get config from checkpoint if not provided
     if config is None and 'config' in checkpoint:
@@ -994,9 +1000,12 @@ def export_checkpoint_to_onnx_advanced(
         # Use the same model building logic as in train_advanced.py
         from train_advanced import build_model
         
-        # Convert config dict to ExperimentConfig object
+        # Convert config dict to ExperimentConfig object if needed
         from .experiments.config_manager import ExperimentConfig
-        exp_config = ExperimentConfig.from_dict(config)
+        if isinstance(config, ExperimentConfig):
+            exp_config = config
+        else:
+            exp_config = ExperimentConfig.from_dict(config)
         
         # Build model
         model, _ = build_model(exp_config, device)

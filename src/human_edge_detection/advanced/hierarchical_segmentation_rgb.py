@@ -26,7 +26,9 @@ class RGBFeatureExtractor(nn.Module):
         in_channels: int = 3,
         out_channels: int = 256,
         roi_size: int = 28,
-        num_layers: int = 4
+        num_layers: int = 4,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8
     ):
         """Initialize RGB feature extractor.
         
@@ -43,17 +45,36 @@ class RGBFeatureExtractor(nn.Module):
         layers = []
         channels = [in_channels, 64, 128, 192, out_channels][:num_layers + 1]
         
+        # Import normalization utilities
+        from .normalization_comparison import get_normalization_layer
+        
         for i in range(len(channels) - 1):
             # No strided convolutions - keep spatial size constant
+            out_ch = channels[i + 1]
+            
+            # Ensure channels are compatible with GroupNorm
+            if normalization_type.lower() == 'groupnorm' and out_ch % normalization_groups != 0:
+                out_ch = ((out_ch + normalization_groups - 1) // normalization_groups) * normalization_groups
+                channels[i + 1] = out_ch
+            
             layers.extend([
-                nn.Conv2d(channels[i], channels[i + 1], 3, padding=1, stride=1),
-                LayerNorm2d(channels[i + 1]),
+                nn.Conv2d(channels[i], out_ch, 3, padding=1, stride=1),
+                get_normalization_layer(normalization_type, out_ch, num_groups=normalization_groups),
                 nn.ReLU(inplace=True)
             ])
             
             # Add residual blocks for deeper features
             if i >= 1:
-                layers.append(ResidualBlock(channels[i + 1]))
+                # Create normalization-compatible ResidualBlock
+                if normalization_type.lower() == 'groupnorm':
+                    from .enhanced_unet_groupnorm import ResidualBlockGroupNorm
+                    layers.append(ResidualBlockGroupNorm(out_ch, min(normalization_groups, out_ch)))
+                elif normalization_type.lower() in ['batchnorm', 'batchnorm2d']:
+                    # Use the flexible ResidualBlock from hierarchical_segmentation_unet
+                    from .hierarchical_segmentation_unet import ResidualBlock as FlexibleResidualBlock
+                    layers.append(FlexibleResidualBlock(out_ch, normalization_type, normalization_groups))
+                else:
+                    layers.append(ResidualBlock(out_ch))
         
         self.features = nn.Sequential(*layers)
         
@@ -88,6 +109,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         use_subpixel_conv: bool = False,
         use_contour_detection: bool = False,
         use_distance_transform: bool = False,
+        **kwargs  # For additional configuration like normalization
     ):
         """Initialize RGB-based hierarchical segmentation model.
         
@@ -109,11 +131,17 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         self.mask_size = mask_size
         
         # RGB feature extractor
+        # Get normalization configuration
+        normalization_type = kwargs.get('normalization_type', 'layernorm2d')
+        normalization_groups = kwargs.get('normalization_groups', 8)
+        
         self.rgb_extractor = RGBFeatureExtractor(
             in_channels=3,
             out_channels=feature_channels,
             roi_size=roi_size,
-            num_layers=4
+            num_layers=4,
+            normalization_type=normalization_type,
+            normalization_groups=normalization_groups
         )
         
         # Check if any refinement modules are enabled
@@ -128,6 +156,10 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         if use_refinement:
             # Use refined hierarchical segmentation head
             from .hierarchical_segmentation_refinement import RefinedHierarchicalSegmentationHead
+            # Get normalization configuration
+            normalization_type = kwargs.get('normalization_type', 'layernorm2d')
+            normalization_groups = kwargs.get('normalization_groups', 8)
+            
             self.segmentation_head = RefinedHierarchicalSegmentationHead(
                 in_channels=feature_channels,
                 mid_channels=256,
@@ -139,6 +171,8 @@ class HierarchicalRGBSegmentationModel(nn.Module):
                 use_subpixel_conv=use_subpixel_conv,
                 use_contour_detection=use_contour_detection,
                 use_distance_transform=use_distance_transform,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups,
             )
         else:
             # Use standard hierarchical segmentation head
@@ -321,6 +355,10 @@ def create_rgb_hierarchical_model(
     roi_size: int = 28,
     mask_size: int = 56,
     multi_scale: bool = False,
+    activation_function: str = 'relu',
+    activation_beta: float = 1.0,
+    normalization_type: str = 'layernorm2d',
+    normalization_groups: int = 8,
     **kwargs
 ) -> nn.Module:
     """Create RGB-based hierarchical segmentation model.
@@ -366,4 +404,7 @@ def create_rgb_hierarchical_model(
             use_subpixel_conv=use_subpixel_conv,
             use_contour_detection=use_contour_detection,
             use_distance_transform=use_distance_transform,
+            # Pass normalization config
+            normalization_type=normalization_type,
+            normalization_groups=normalization_groups,
         )

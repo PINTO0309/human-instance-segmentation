@@ -19,10 +19,14 @@ import numpy as np
 import onnx
 
 try:
-    import onnxsim
+    from onnxsim import simplify as onnxsim_simplify
     ONNXSIM_AVAILABLE = True
 except ImportError:
-    ONNXSIM_AVAILABLE = False
+    try:
+        import onnxsim
+        ONNXSIM_AVAILABLE = True
+    except ImportError:
+        ONNXSIM_AVAILABLE = False
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -279,7 +283,11 @@ def export_model_inference_only(
         print("\nSimplifying model with onnxsim...")
         try:
             model_onnx = onnx.load(output_path)
-            model_simp, check = onnxsim.simplify(model_onnx)
+            # Try to use the imported simplify function
+            if 'onnxsim_simplify' in globals():
+                model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
+            else:
+                model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
             if check:
                 onnx.save(model_simp, output_path)
                 print("Model simplified successfully!")

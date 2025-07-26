@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Tuple, Optional, List
+from .activation_utils import ActivationConfig, get_activation
 
 
 class LayerNorm2d(nn.Module):
@@ -28,13 +29,15 @@ class LayerNorm2d(nn.Module):
 
 class ResidualBlock(nn.Module):
     """Residual block for easier gradient flow."""
-    def __init__(self, channels: int):
+    def __init__(self, channels: int, normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
         super().__init__()
+        from .normalization_comparison import get_normalization_layer
+        
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm1 = LayerNorm2d(channels)
+        self.norm1 = get_normalization_layer(normalization_type, channels, num_groups=normalization_groups)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm2 = LayerNorm2d(channels)
+        self.norm2 = get_normalization_layer(normalization_type, channels, num_groups=normalization_groups)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
@@ -233,21 +236,26 @@ class SubPixelDecoder(nn.Module):
 class ContourDetectionBranch(nn.Module):
     """Explicit contour detection branch for boundary refinement."""
     
-    def __init__(self, in_channels: int, contour_channels: int = 64):
+    def __init__(self, in_channels: int, contour_channels: int = 64,
+                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
         """Initialize contour detection branch.
         
         Args:
             in_channels: Number of input channels
             contour_channels: Number of channels for contour processing
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for GroupNorm
         """
         super().__init__()
         
+        from .normalization_comparison import get_normalization_layer
+        
         self.contour_branch = nn.Sequential(
             nn.Conv2d(in_channels, contour_channels, 3, padding=1),
-            LayerNorm2d(contour_channels),
+            get_normalization_layer(normalization_type, contour_channels, num_groups=normalization_groups),
             nn.ReLU(inplace=True),
             nn.Conv2d(contour_channels, contour_channels, 3, padding=1),
-            LayerNorm2d(contour_channels),
+            get_normalization_layer(normalization_type, contour_channels, num_groups=normalization_groups),
             nn.ReLU(inplace=True),
             nn.Conv2d(contour_channels, 1, 1),
             nn.Sigmoid()
@@ -268,20 +276,25 @@ class ContourDetectionBranch(nn.Module):
 class DistanceTransformDecoder(nn.Module):
     """Distance transform prediction for mask refinement."""
     
-    def __init__(self, in_channels: int, distance_channels: int = 128):
+    def __init__(self, in_channels: int, distance_channels: int = 128,
+                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
         """Initialize distance transform decoder.
         
         Args:
             in_channels: Number of input channels
             distance_channels: Number of channels for distance processing
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for GroupNorm
         """
         super().__init__()
         
+        from .normalization_comparison import get_normalization_layer
+        
         self.distance_head = nn.Sequential(
             nn.Conv2d(in_channels, distance_channels, 3, padding=1),
-            LayerNorm2d(distance_channels),
+            get_normalization_layer(normalization_type, distance_channels, num_groups=normalization_groups),
             nn.ReLU(inplace=True),
-            ResidualBlock(distance_channels),
+            ResidualBlock(distance_channels, normalization_type, normalization_groups),
             nn.Conv2d(distance_channels, 1, 1)
         )
         
@@ -403,67 +416,83 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         num_classes: int = 3,
         mask_size: int = 56,
         dropout_rate: float = 0.1,
-        use_attention_module: bool = False
+        use_attention_module: bool = False,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8
     ):
         """Initialize extended hierarchical segmentation head V2."""
         super().__init__()
         
         # Import necessary components
         from .hierarchical_segmentation_unet import (
-            EnhancedUNet,
             SpatialAttentionModule, ChannelAttentionModule
         )
+        
+        # Import EnhancedUNet which now supports normalization
+        from .hierarchical_segmentation_unet import EnhancedUNet
+        base_channels = 64  # Keep consistent base channels
         
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
         self.num_classes = num_classes
         self.mask_size = mask_size
         self.use_attention_module = use_attention_module
         
+        # Import normalization utility
+        from .normalization_comparison import get_normalization_layer
+        
         # Shared feature processing
         self.shared_features = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
-            LayerNorm2d(mid_channels),
+            get_normalization_layer(normalization_type, mid_channels, num_groups=normalization_groups),
             nn.ReLU(inplace=True),
             nn.Dropout2d(dropout_rate),
-            ResidualBlock(mid_channels),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups),
             nn.Dropout2d(dropout_rate),
-            ResidualBlock(mid_channels),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups),
         )
         
         # Branch 1: Background vs Foreground using Enhanced UNet
-        self.bg_vs_fg_unet = EnhancedUNet(mid_channels, base_channels=96, depth=3)
+        self.bg_vs_fg_unet = EnhancedUNet(
+            mid_channels, 
+            base_channels=base_channels, 
+            depth=3,
+            normalization_type=normalization_type,
+            normalization_groups=normalization_groups
+        )
         
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(
             nn.ConvTranspose2d(2, 32, 2, stride=2),
-            LayerNorm2d(32),
+            get_normalization_layer(normalization_type, 32, num_groups=min(normalization_groups, 32)),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 2, 1)
         )
         
         # Branch 2: Target vs Non-target
         if use_attention_module:
-            self.target_vs_nontarget_branch = nn.ModuleList([
-                ResidualBlock(mid_channels),
+            # Build modules list manually to handle normalization
+            modules = [
+                ResidualBlock(mid_channels, normalization_type, normalization_groups),
                 SpatialAttentionModule(kernel_size=7),
                 nn.Dropout2d(dropout_rate),
                 nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
-                LayerNorm2d(mid_channels // 2),
+                get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
                 nn.ReLU(inplace=True),
                 ChannelAttentionModule(mid_channels // 2, reduction_ratio=8),
                 nn.Dropout2d(dropout_rate),
-                ResidualBlock(mid_channels // 2),
+                ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2)),
                 nn.Conv2d(mid_channels // 2, 2, 1)
-            ])
+            ]
+            self.target_vs_nontarget_branch = nn.ModuleList(modules)
         else:
             self.target_vs_nontarget_branch = nn.Sequential(
-                ResidualBlock(mid_channels),
+                ResidualBlock(mid_channels, normalization_type, normalization_groups),
                 nn.Dropout2d(dropout_rate),
                 nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
-                LayerNorm2d(mid_channels // 2),
+                get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
                 nn.ReLU(inplace=True),
                 nn.Dropout2d(dropout_rate),
-                ResidualBlock(mid_channels // 2),
+                ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2)),
                 nn.Conv2d(mid_channels // 2, 2, 1)
             )
         
@@ -556,6 +585,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         use_subpixel_conv: bool = False,
         use_contour_detection: bool = False,
         use_distance_transform: bool = False,
+        # Normalization configuration
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8,
     ):
         """Initialize refined hierarchical segmentation head.
         
@@ -579,7 +611,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             mid_channels=mid_channels,
             num_classes=num_classes,
             mask_size=mask_size,
-            use_attention_module=use_attention_module
+            use_attention_module=use_attention_module,
+            normalization_type=normalization_type,
+            normalization_groups=normalization_groups
         )
         
         self.mask_size = mask_size
@@ -616,13 +650,17 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         if use_contour_detection:
             self.contour_branch = ContourDetectionBranch(
                 in_channels=mid_channels,
-                contour_channels=64
+                contour_channels=64,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups
             )
             
         if use_distance_transform:
             self.distance_decoder = DistanceTransformDecoder(
                 in_channels=mid_channels,
-                distance_channels=128
+                distance_channels=128,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups
             )
             
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:

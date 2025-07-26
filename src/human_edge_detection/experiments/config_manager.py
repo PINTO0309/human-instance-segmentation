@@ -143,6 +143,13 @@ class ModelConfig:
     use_contour_detection: bool = False  # Contour Detection Branch
     use_distance_transform: bool = False  # Distance Transform Prediction
     use_boundary_aware_loss: bool = False  # Boundary-aware Loss
+    # Activation function configuration
+    activation_function: str = 'relu'  # Options: 'relu', 'swish', 'gelu', 'silu'
+    activation_beta: float = 1.0  # Beta parameter for Swish activation
+    # Normalization configuration
+    normalization_type: str = 'layernorm2d'  # Options: 'layernorm2d', 'batchnorm', 'instancenorm', 'groupnorm', 'mixed'
+    normalization_groups: int = 8  # For GroupNorm
+    normalization_mix_ratio: float = 0.5  # For MixedNorm (BatchNorm vs InstanceNorm ratio)
 
 
 @dataclass
@@ -1833,7 +1840,7 @@ class ConfigManager:
                 mask_size=64,
                 onnx_model=None,
                 # Start with only boundary refinement
-                use_boundary_refinement=False,
+                use_boundary_refinement=True,
                 use_boundary_aware_loss=False,
                 use_contour_detection=True,
                 use_active_contour_loss=True,
@@ -1872,6 +1879,117 @@ class ConfigManager:
                 min_lr=1e-7,
             )
         ),
+        ##################################################################################################
+        # GroupNorm version of refined configuration
+        ##################################################################################################
+        'rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss_distance_groupnorm': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss_distance_groupnorm',
+            description='RGB Hierarchical UNet V2 Attention with GroupNorm - ROI:64, Mask:64 with Stable Refinement',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=64,
+                onnx_model=None,
+                # Refinement modules (same as original)
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=True,
+                use_active_contour_loss=True,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # GroupNorm configuration
+                normalization_type='groupnorm',
+                normalization_groups=8,  # 8 groups is standard for GroupNorm
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss_distance_batchnorm': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss_distance_batchnorm',
+            description='RGB Hierarchical UNet V2 Attention with BatchNorm - ROI:64, Mask:64 with Stable Refinement',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=64,
+                onnx_model=None,
+                # Refinement modules (same as original)
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=True,
+                use_active_contour_loss=True,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # BatchNorm configuration
+                normalization_type='batchnorm',
+                normalization_groups=8,  # Not used for BatchNorm but kept for compatibility
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+
     }
 
     @classmethod
