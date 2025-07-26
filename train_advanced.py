@@ -96,7 +96,8 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             mask_size=config.model.mask_size,
             multi_scale=multi_scale,
             roi_sizes=config.model.variable_roi_sizes if multi_scale else None,
-            fusion_method=config.multiscale.fusion_method if multi_scale else 'concat'
+            fusion_method=config.multiscale.fusion_method if multi_scale else 'concat',
+            use_attention_module=config.model.use_attention_module
         )
         
         feature_extractor = None  # RGB model doesn't need external feature extractor
@@ -852,21 +853,48 @@ def main():
         # Export untrained model to ONNX
         try:
             if config.auxiliary_task.enabled:
-                # Use auxiliary-aware export
+                # Export two versions for auxiliary-enabled models
                 from src.human_edge_detection.export_onnx_advanced_auxiliary import export_model_inference_only
+                from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
+                
+                # 1. Export with auxiliary branch
                 untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
+                print("\nExporting untrained model to ONNX (with auxiliary branch)...")
+                
+                # Determine model type
+                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
+                    model_type = 'hierarchical'
+                elif config.model.use_class_specific_decoder:
+                    model_type = 'class_specific'
+                elif config.multiscale.enabled:
+                    model_type = 'multiscale'
+                else:
+                    model_type = 'baseline'
+                
+                success_with_aux = export_checkpoint_to_onnx_advanced(
+                    checkpoint_path=str(untrained_checkpoint_path),
+                    output_path=str(untrained_onnx_path),
+                    model_type=model_type,
+                    config=config.to_dict(),
+                    device=device,
+                    verify=False,  # Skip verification for untrained models
+                    include_auxiliary=True  # Include auxiliary branches in export
+                )
+                
+                # 2. Export without auxiliary branch (optimized for inference)
+                untrained_opt_onnx_path = exp_dirs['checkpoints'] / 'untrained_opt_model.onnx'
                 print("\nExporting untrained model to ONNX (inference only, no auxiliary)...")
                 export_model_inference_only(
                     checkpoint_path=str(untrained_checkpoint_path),
-                    output_path=str(untrained_onnx_path),
+                    output_path=str(untrained_opt_onnx_path),
                     device=device
                 )
-                success = True
+                success = success_with_aux
             else:
                 from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
                 untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
                 # Determine model type
-                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
                     model_type = 'hierarchical'
                 elif config.model.use_class_specific_decoder:
                     model_type = 'class_specific'
@@ -1036,7 +1064,7 @@ def main():
                 # Use standard export
                 from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
                 # Determine model type
-                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
                     model_type = 'hierarchical'
                 elif config.model.use_class_specific_decoder:
                     model_type = 'class_specific'

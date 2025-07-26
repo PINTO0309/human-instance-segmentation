@@ -83,7 +83,7 @@ class TrainingConfig:
 
     # Validation
     validate_every: int = 1
-    save_every: int = 1
+    save_every: int = 10
     early_stopping_patience: int = 10
 
     # Loss weights
@@ -134,6 +134,7 @@ class ModelConfig:
     use_class_specific_decoder: bool = False  # Use class-specific decoders
     use_external_features: bool = False  # If True, expect pre-extracted features instead of images
     use_rgb_hierarchical: bool = False  # Use RGB-based hierarchical model without YOLOv9 features
+    use_attention_module: bool = False  # Use attention modules in target/non-target branch
 
 
 @dataclass
@@ -256,71 +257,6 @@ class ConfigManager:
                 boundary_width=5,
                 boundary_weight=2.0,
                 instance_sep_weight=3.0
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_full.json",
-                roi_padding=0.0  # No padding
-            ),
-        ),
-
-        'multiscale_cascade': ExperimentConfig(
-            name='multiscale_cascade',
-            description='Multi-scale + cascade',
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            cascade=CascadeConfig(
-                enabled=True,
-                num_stages=3,
-                stage_weights=[0.3, 0.3, 0.4]
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_full.json",
-                roi_padding=0.0  # No padding
-            ),
-        ),
-
-        'full': ExperimentConfig(
-            name='full',
-            description='All features enabled',
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_3', 'layer_22', 'layer_34'],
-                fusion_method='adaptive'
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=True,
-                boundary_width=5,
-                boundary_weight=2.0,
-                instance_sep_weight=3.0,
-                adaptive=True
-            ),
-            cascade=CascadeConfig(
-                enabled=True,
-                num_stages=3,
-                stage_weights=[0.3, 0.3, 0.4]
-            ),
-            data=DataConfig(
-                data_stats="data_analyze_full.json",
-                roi_padding=0.0  # No padding
-            ),
-        ),
-
-        'efficient': ExperimentConfig(
-            name='efficient',
-            description='Efficient configuration with fewer layers',
-            multiscale=MultiScaleConfig(
-                enabled=True,
-                target_layers=['layer_5', 'layer_34'],  # Only 2 scales
-                fusion_method='sum'  # Simpler fusion
-            ),
-            distance_loss=DistanceLossConfig(
-                enabled=True,
-                boundary_width=3,  # Smaller boundary
-                boundary_weight=1.5,
-                instance_sep_weight=2.0
             ),
             data=DataConfig(
                 data_stats="data_analyze_full.json",
@@ -612,123 +548,6 @@ class ConfigManager:
             )
         ),
 
-        # 'rgb_enhanced_lightweight': ExperimentConfig(
-        #     name='rgb_enhanced_lightweight',
-        #     description='RGB enhancement on layer_34 only (lightweight version)',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_rgb_enhancement=True,
-        #         rgb_enhanced_layers=['layer_34']  # Enhance only the deepest layer
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=True,
-        #         boundary_width=3,
-        #         boundary_weight=1.5,
-        #         instance_sep_weight=2.0
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_081012.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         use_focal=True,
-        #         focal_gamma=2.0,
-        #         learning_rate=5e-4  # Slightly lower learning rate for stability
-        #     )
-        # ),
-
-        # 'rgb_enhanced_baseline': ExperimentConfig(
-        #     name='rgb_enhanced_baseline',
-        #     description='RGB enhancement baseline without focal loss',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_rgb_enhancement=True,
-        #         rgb_enhanced_layers=['layer_34']
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=True,
-        #         boundary_width=5,
-        #         boundary_weight=2.0,
-        #         instance_sep_weight=3.0
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_full.json",
-        #         roi_padding=0.0  # No padding
-        #     )
-        # ),
-
-        # 'rgb_enhanced_multi_layer': ExperimentConfig(
-        #     name='rgb_enhanced_multi_layer',
-        #     description='RGB enhancement on all layers (layer_3, layer_22, layer_34)',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_rgb_enhancement=True,
-        #         rgb_enhanced_layers=['layer_3', 'layer_22', 'layer_34']  # Enhance all layers
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=True,
-        #         boundary_width=3,
-        #         boundary_weight=1.5,
-        #         instance_sep_weight=2.0
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_081012.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         use_focal=True,
-        #         focal_gamma=2.0,
-        #         learning_rate=5e-4,
-        #         batch_size=2  # Reduced batch size for memory
-        #     )
-        # ),
-
-        # 'rgb_enhanced_dual_layer': ExperimentConfig(
-        #     name='rgb_enhanced_dual_layer',
-        #     description='RGB enhancement on layer_3 and layer_34',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_rgb_enhancement=True,
-        #         rgb_enhanced_layers=['layer_3', 'layer_34']  # Enhance high-res and deep layers
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=True,
-        #         boundary_width=3,
-        #         boundary_weight=1.5,
-        #         instance_sep_weight=2.0
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_081012.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         use_focal=True,
-        #         focal_gamma=2.0,
-        #         learning_rate=5e-4,
-        #         batch_size=2
-        #     )
-        # ),
-
         'hierarchical_segmentation': ExperimentConfig(
             name='hierarchical_segmentation',
             description='Hierarchical segmentation to prevent mode collapse',
@@ -755,84 +574,6 @@ class ConfigManager:
             )
         ),
 
-        # 'hierarchical_segmentation2': ExperimentConfig(
-        #     name='hierarchical_segmentation2',
-        #     description='Hierarchical segmentation to prevent mode collapse',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_34': 28},
-        #         use_hierarchical=True
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         use_focal=False,  # Hierarchical loss handles class balance
-        #         learning_rate=5e-4,
-        #         batch_size=2
-        #     )
-        # ),
-
-        # 'hierarchical_segmentation3': ExperimentConfig(
-        #     name='hierarchical_segmentation3',
-        #     description='Hierarchical segmentation to prevent mode collapse',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_22': 42},
-        #         use_hierarchical=True
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_22'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         use_focal=False,  # Hierarchical loss handles class balance
-        #         learning_rate=5e-4,
-        #         batch_size=2
-        #     )
-        # ),
-
-        # 'hierarchical_segmentation4': ExperimentConfig(
-        #     name='hierarchical_segmentation4',
-        #     description='Hierarchical segmentation to prevent mode collapse',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_22': 42, 'layer_34': 28},
-        #         use_hierarchical=True
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         use_focal=False,  # Hierarchical loss handles class balance
-        #         learning_rate=5e-4,
-        #         batch_size=2
-        #     )
-        # ),
-
         'hierarchical_segmentation_unet': ExperimentConfig(
             name='hierarchical_segmentation_unet',
             description='Hierarchical segmentation with UNet-based foreground/background separation',
@@ -858,36 +599,6 @@ class ConfigManager:
                 batch_size=2
             )
         ),
-
-        # 'class_specific_decoder': ExperimentConfig(
-        #     name='class_specific_decoder',
-        #     description='Class-specific decoders to prevent interference',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_class_specific_decoder=True
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=True,
-        #         boundary_width=3,
-        #         boundary_weight=1.5,
-        #         instance_sep_weight=2.0
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_full.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         use_focal=True,
-        #         focal_gamma=2.0,
-        #         learning_rate=5e-4,
-        #         batch_size=2
-        #     )
-        # ),
 
         'hierarchical_segmentation_unet_v2': ExperimentConfig(
             name='hierarchical_segmentation_unet_v2',
@@ -1256,160 +967,6 @@ class ConfigManager:
             )
         ),
 
-        # 'hierarchical_segmentation_warm_restarts': ExperimentConfig(
-        #     name='hierarchical_segmentation_warm_restarts',
-        #     description='Hierarchical segmentation with CosineAnnealingWarmRestarts scheduler',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_hierarchical=True  # Enable hierarchical architecture
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         num_epochs=150,
-        #         learning_rate=5e-4,
-        #         batch_size=2,
-        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-        #         T_0=10,  # First restart after 10 epochs
-        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-        #         eta_min_restart=1e-6
-        #     )
-        # ),
-
-        # 'hierarchical_segmentation_unet_warm_restarts': ExperimentConfig(
-        #     name='hierarchical_segmentation_unet_warm_restarts',
-        #     description='Hierarchical UNet v1 with CosineAnnealingWarmRestarts scheduler',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_hierarchical_unet=True  # Enable hierarchical UNet v1 architecture
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         num_epochs=150,
-        #         learning_rate=5e-4,
-        #         batch_size=2,
-        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-        #         T_0=10,  # First restart after 10 epochs
-        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-        #         eta_min_restart=1e-6
-        #     )
-        # ),
-
-        # 'hierarchical_segmentation_unet_v2_warm_restarts': ExperimentConfig(
-        #     name='hierarchical_segmentation_unet_v2_warm_restarts',
-        #     description='Hierarchical UNet v2 with CosineAnnealingWarmRestarts scheduler',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_hierarchical_unet_v2=True  # Enable hierarchical UNet v2 architecture
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         num_epochs=150,
-        #         learning_rate=5e-4,
-        #         batch_size=2,
-        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-        #         T_0=10,  # First restart after 10 epochs
-        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-        #         eta_min_restart=1e-6,
-        #         gradient_clip=10.0  # Increased for deeper UNet
-        #     )
-        # ),
-
-        # 'hierarchical_segmentation_unet_v3_warm_restarts': ExperimentConfig(
-        #     name='hierarchical_segmentation_unet_v3_warm_restarts',
-        #     description='Hierarchical UNet v3 with CosineAnnealingWarmRestarts scheduler',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_hierarchical_unet_v3=True  # Enable hierarchical UNet v3 architecture
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         num_epochs=150,
-        #         learning_rate=3e-4,  # Lower LR for dual UNet
-        #         batch_size=2,
-        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-        #         T_0=10,  # First restart after 10 epochs
-        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-        #         eta_min_restart=1e-6,
-        #         gradient_clip=10.0
-        #     )
-        # ),
-
-        # 'hierarchical_segmentation_unet_v4_warm_restarts': ExperimentConfig(
-        #     name='hierarchical_segmentation_unet_v4_warm_restarts',
-        #     description='Hierarchical UNet v4 with CosineAnnealingWarmRestarts scheduler',
-        #     model=ModelConfig(
-        #         variable_roi_sizes={'layer_3': 56, 'layer_22': 42, 'layer_34': 28},
-        #         use_hierarchical_unet_v4=True  # Enable hierarchical UNet v4 architecture
-        #     ),
-        #     multiscale=MultiScaleConfig(
-        #         enabled=True,
-        #         target_layers=['layer_3', 'layer_22', 'layer_34'],
-        #         fusion_method='adaptive'
-        #     ),
-        #     distance_loss=DistanceLossConfig(
-        #         enabled=False  # Use hierarchical loss instead
-        #     ),
-        #     data=DataConfig(
-        #         data_stats="data_analyze_no_separation.json",
-        #         roi_padding=0.0  # No padding
-        #     ),
-        #     training=TrainingConfig(
-        #         num_epochs=150,
-        #         learning_rate=2e-4,  # Even lower LR for complex architecture
-        #         batch_size=2,
-        #         scheduler='cosine_warm_restarts',  # Use CosineAnnealingWarmRestarts
-        #         T_0=10,  # First restart after 10 epochs
-        #         T_mult=2,  # Double the period after each restart (10, 20, 40, ...)
-        #         eta_min_restart=1e-6,
-        #         gradient_clip=15.0,  # Higher clip for cross-attention
-        #         mixed_precision=False  # Disable for stability with cross-attention
-        #     )
-        # ),
-
         # Test configurations with fixed weights
         'hierarchical_unet_v2_fixed_weights': ExperimentConfig(
             name='hierarchical_unet_v2_fixed_weights',
@@ -1496,7 +1053,7 @@ class ConfigManager:
             multiscale=MultiScaleConfig(
                 enabled=True,
                 target_layers=None,  # Not used for RGB model
-                fusion_method='adaptive'
+                fusion_method='concat'
             ),
             auxiliary_task=AuxiliaryTaskConfig(
                 enabled=True,
@@ -1513,7 +1070,96 @@ class ConfigManager:
             ),
             training=TrainingConfig(
                 learning_rate=5e-5,
-                warmup_epochs=10,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
+        # RGB Hierarchical UNet V2 with Attention Modules
+        'rgb_hierarchical_unet_v2_attention': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention',
+            description='RGB-based Hierarchical UNet V2 with Attention Modules',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,  # Enable attention modules
+                roi_size=28,
+                mask_size=56,
+                onnx_model=None,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
+        # Multi-scale RGB Hierarchical UNet V2 with Attention Modules
+        'rgb_hierarchical_unet_v2_multiscale_attention': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_multiscale_attention',
+            description='Multi-scale RGB-based Hierarchical UNet V2 with Attention Modules',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,  # Enable attention modules
+                roi_size=28,
+                mask_size=56,
+                onnx_model=None,
+                variable_roi_sizes={'scale1': 56, 'scale2': 42, 'scale3': 28},
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=True,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
                 scheduler='cosine',
                 num_epochs=100,
                 batch_size=2,

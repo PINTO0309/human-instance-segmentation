@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from typing import Dict, Optional, Tuple
 
 from ..model import LayerNorm2d, ResidualBlock
+from .attention_modules import ChannelAttentionModule, SpatialAttentionModule
 
 
 class ShallowUNet(nn.Module):
@@ -601,7 +602,8 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         mid_channels: int = 256,
         num_classes: int = 3,
         mask_size: int = 56,
-        dropout_rate: float = 0.1
+        dropout_rate: float = 0.1,
+        use_attention_module: bool = False
     ):
         """Initialize hierarchical segmentation head V2.
 
@@ -611,12 +613,14 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
             num_classes: Total number of classes (should be 3)
             mask_size: Output mask size
             dropout_rate: Dropout rate for regularization
+            use_attention_module: Whether to use attention modules
         """
         super().__init__()
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
 
         self.num_classes = num_classes
         self.mask_size = mask_size
+        self.use_attention_module = use_attention_module
 
         # Shared feature processing with dropout
         self.shared_features = nn.Sequential(
@@ -641,16 +645,32 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         )
 
         # Branch 2: Target vs Non-target (standard CNN) with dropout
-        self.target_vs_nontarget_branch = nn.Sequential(
-            ResidualBlock(mid_channels),
-            nn.Dropout2d(dropout_rate),
-            nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
-            LayerNorm2d(mid_channels // 2),
-            nn.ReLU(inplace=True),
-            nn.Dropout2d(dropout_rate),
-            ResidualBlock(mid_channels // 2),
-            nn.Conv2d(mid_channels // 2, 2, 1)
-        )
+        if use_attention_module:
+            # Enhanced version with attention modules
+            self.target_vs_nontarget_branch = nn.ModuleList([
+                ResidualBlock(mid_channels),
+                SpatialAttentionModule(kernel_size=7),  # Spatial attention after first residual
+                nn.Dropout2d(dropout_rate),
+                nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
+                LayerNorm2d(mid_channels // 2),
+                nn.ReLU(inplace=True),
+                ChannelAttentionModule(mid_channels // 2, reduction_ratio=8),  # Channel attention
+                nn.Dropout2d(dropout_rate),
+                ResidualBlock(mid_channels // 2),
+                nn.Conv2d(mid_channels // 2, 2, 1)
+            ])
+        else:
+            # Original version without attention
+            self.target_vs_nontarget_branch = nn.Sequential(
+                ResidualBlock(mid_channels),
+                nn.Dropout2d(dropout_rate),
+                nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
+                LayerNorm2d(mid_channels // 2),
+                nn.ReLU(inplace=True),
+                nn.Dropout2d(dropout_rate),
+                ResidualBlock(mid_channels // 2),
+                nn.Conv2d(mid_channels // 2, 2, 1)
+            )
 
         # Enhanced gating with multi-scale attention and dropout
         self.fg_gate = nn.Sequential(
@@ -680,7 +700,16 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
 
         # Branch 2: Target vs Non-target (modulated by foreground attention)
         gated_features = shared * fg_attention
-        target_nontarget_logits = self.target_vs_nontarget_branch(gated_features)
+        
+        if self.use_attention_module:
+            # Apply modules sequentially for attention version
+            x = gated_features
+            for module in self.target_vs_nontarget_branch:
+                x = module(x)
+            target_nontarget_logits = x
+        else:
+            # Original sequential processing
+            target_nontarget_logits = self.target_vs_nontarget_branch(gated_features)
 
         # Combine predictions hierarchically
         batch_size = features.shape[0]

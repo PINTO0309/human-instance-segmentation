@@ -237,26 +237,26 @@ def export_model_inference_only(
         dynamic_axes['roi_indices'] = {0: 'num_rois'}
     else:
         # For standard models
-        input_names = ['features', 'roi_indices']
-        dummy_inputs = (dummy_features, dummy_rois)
-
         # Check if this is an RGB model (features are images)
         if dummy_features.shape[1] == 3 and dummy_features.shape[2] == 640 and dummy_features.shape[3] == 640:
-            # RGB model - features are images with batch dimension
+            # RGB model - use 'images' for input name
+            input_names = ['images', 'rois']
             dynamic_axes = {
-                'features': {0: 'batch_size'},
-                'roi_indices': {0: 'num_rois'}
+                'images': {0: 'batch_size'},
+                'rois': {0: 'num_rois'}
             }
         else:
             # Standard model - features are per-ROI
+            input_names = ['features', 'roi_indices']
             dynamic_axes = {
                 'features': {0: 'num_rois'},
                 'roi_indices': {0: 'num_rois'}
             }
+        dummy_inputs = (dummy_features, dummy_rois)
 
     # Output configuration (main output only for inference)
-    dynamic_axes['main_output'] = {0: 'num_rois'}
-    output_names = ['main_output']
+    dynamic_axes['masks'] = {0: 'num_rois'}
+    output_names = ['masks']
     # Auxiliary output excluded for inference efficiency
 
     torch.onnx.export(
@@ -314,23 +314,37 @@ def export_model_inference_only(
                 inputs = {name: feat.cpu().numpy() for name, feat in dummy_features.items()}
                 inputs['rois'] = dummy_rois.cpu().numpy()
             else:
-                inputs = {
-                    'features': dummy_features.cpu().numpy(),
-                    'rois': dummy_rois.cpu().numpy()
-                }
+                # Check if RGB model
+                if dummy_features.shape[1] == 3 and dummy_features.shape[2] == 640 and dummy_features.shape[3] == 640:
+                    inputs = {
+                        'images': dummy_features.cpu().numpy(),
+                        'rois': dummy_rois.cpu().numpy()
+                    }
+                else:
+                    inputs = {
+                        'features': dummy_features.cpu().numpy(),
+                        'rois': dummy_rois.cpu().numpy()
+                    }
         elif isinstance(dummy_features, dict):
             inputs = {name: feat.cpu().numpy() for name, feat in dummy_features.items()}
             inputs['roi_indices'] = dummy_rois.cpu().numpy()
         else:
-            inputs = {
-                'features': dummy_features.cpu().numpy(),
-                'roi_indices': dummy_rois.cpu().numpy()
-            }
+            # Check if RGB model
+            if dummy_features.shape[1] == 3 and dummy_features.shape[2] == 640 and dummy_features.shape[3] == 640:
+                inputs = {
+                    'images': dummy_features.cpu().numpy(),
+                    'rois': dummy_rois.cpu().numpy()
+                }
+            else:
+                inputs = {
+                    'features': dummy_features.cpu().numpy(),
+                    'roi_indices': dummy_rois.cpu().numpy()
+                }
 
         outputs = session.run(None, inputs)
 
         print(f"\nInference successful!")
-        print(f"Main output shape: {outputs[0].shape}")
+        print(f"Masks output shape: {outputs[0].shape}")
         print("(Auxiliary branch excluded from export for inference efficiency)")
 
         # Save metadata

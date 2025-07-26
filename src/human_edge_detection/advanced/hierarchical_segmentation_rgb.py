@@ -80,7 +80,8 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         roi_size: int = 28,
         mask_size: int = 56,
         feature_channels: int = 256,
-        num_classes: int = 3
+        num_classes: int = 3,
+        use_attention_module: bool = False
     ):
         """Initialize RGB-based hierarchical segmentation model.
         
@@ -89,6 +90,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             mask_size: Size of output masks
             feature_channels: Number of feature channels after extraction
             num_classes: Number of output classes (3 for hierarchical)
+            use_attention_module: Whether to use attention modules
         """
         super().__init__()
         
@@ -108,7 +110,8 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             in_channels=feature_channels,
             mid_channels=256,
             num_classes=num_classes,
-            mask_size=mask_size
+            mask_size=mask_size,
+            use_attention_module=use_attention_module
         )
         
         # Dynamic ROI Align for extracting regions from full images
@@ -156,7 +159,8 @@ class MultiScaleRGBSegmentationModel(nn.Module):
         mask_size: int = 56,
         feature_channels: int = 256,
         fusion_method: str = 'concat',
-        num_classes: int = 3
+        num_classes: int = 3,
+        use_attention_module: bool = False
     ):
         """Initialize multi-scale RGB segmentation model.
         
@@ -166,6 +170,7 @@ class MultiScaleRGBSegmentationModel(nn.Module):
             feature_channels: Number of feature channels per scale
             fusion_method: How to fuse multi-scale features ('concat', 'sum', 'adaptive')
             num_classes: Number of output classes
+            use_attention_module: Whether to use attention modules
         """
         super().__init__()
         
@@ -216,7 +221,8 @@ class MultiScaleRGBSegmentationModel(nn.Module):
             in_channels=feature_channels,
             mid_channels=256,
             num_classes=num_classes,
-            mask_size=mask_size
+            mask_size=mask_size,
+            use_attention_module=use_attention_module
         )
         
     def forward(
@@ -295,14 +301,18 @@ def create_rgb_hierarchical_model(
     if multi_scale:
         roi_sizes = kwargs.get('roi_sizes', {'scale1': 56, 'scale2': 42, 'scale3': 28})
         fusion_method = kwargs.get('fusion_method', 'concat')
+        use_attention_module = kwargs.get('use_attention_module', False)
         
         return MultiScaleRGBSegmentationModel(
             roi_sizes=roi_sizes,
             mask_size=mask_size,
-            fusion_method=fusion_method
+            fusion_method=fusion_method,
+            use_attention_module=use_attention_module
         )
     else:
+        use_attention_module = kwargs.get('use_attention_module', False)
         return HierarchicalRGBSegmentationModel(
             roi_size=roi_size,
-            mask_size=mask_size
+            mask_size=mask_size,
+            use_attention_module=use_attention_module
         )
