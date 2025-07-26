@@ -71,8 +71,15 @@ class BoundaryRefinementModule(nn.Module):
             nn.Conv2d(edge_channels, in_channels, 1)
         )
         
-        # Learnable blending weight
-        self.blend_weight = nn.Parameter(torch.tensor(0.1))
+        # Learnable blending weight - initialize smaller for stability
+        self.blend_weight = nn.Parameter(torch.tensor(0.01))
+        
+        # Initialize edge conv weights smaller
+        for m in self.edge_conv.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight, gain=0.1)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
         
     def detect_edges(self, mask_logits: torch.Tensor) -> torch.Tensor:
         """Detect edges in the mask using Sobel-like filters.
@@ -97,8 +104,14 @@ class BoundaryRefinementModule(nn.Module):
         # Combine gradients
         edges = torch.sqrt(dy**2 + dx**2).mean(dim=1, keepdim=True)
         
-        # Normalize and threshold
-        edges = (edges - edges.min()) / (edges.max() - edges.min() + 1e-8)
+        # Normalize and threshold with numerical stability
+        edge_min = edges.min()
+        edge_max = edges.max()
+        if edge_max - edge_min < 1e-6:
+            # Avoid division by near-zero
+            edges = torch.zeros_like(edges)
+        else:
+            edges = (edges - edge_min) / (edge_max - edge_min + 1e-6)
         return edges
         
     def forward(self, mask_logits: torch.Tensor) -> torch.Tensor:
@@ -272,8 +285,8 @@ class DistanceTransformDecoder(nn.Module):
             nn.Conv2d(distance_channels, 1, 1)
         )
         
-        # Learnable threshold
-        self.threshold = nn.Parameter(torch.tensor(0.5))
+        # Learnable threshold - initialize smaller
+        self.threshold = nn.Parameter(torch.tensor(0.3))
         
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Predict distance transform and convert to mask.
@@ -293,7 +306,7 @@ class DistanceTransformDecoder(nn.Module):
         return mask, distance_map
 
 
-def active_contour_loss(pred_mask: torch.Tensor, smoothness_weight: float = 0.1) -> torch.Tensor:
+def active_contour_loss(pred_mask: torch.Tensor, smoothness_weight: float = 0.01) -> torch.Tensor:
     """Active contour loss for smooth boundaries.
     
     Args:
@@ -312,8 +325,10 @@ def active_contour_loss(pred_mask: torch.Tensor, smoothness_weight: float = 0.1)
     dy = pred_mask[:, :, 1:, :] - pred_mask[:, :, :-1, :]
     dx = pred_mask[:, :, :, 1:] - pred_mask[:, :, :, :-1]
     
-    # Boundary length (L1 norm of gradients)
-    boundary_length = torch.mean(torch.abs(dy)) + torch.mean(torch.abs(dx))
+    # Boundary length (L1 norm of gradients) with clamping for stability
+    dy_clamped = torch.clamp(torch.abs(dy), max=10.0)
+    dx_clamped = torch.clamp(torch.abs(dx), max=10.0)
+    boundary_length = torch.mean(dy_clamped) + torch.mean(dx_clamped)
     
     # Curvature (second derivatives)
     if dy.shape[2] > 1:
@@ -695,11 +710,11 @@ class RefinedHierarchicalLoss(nn.Module):
         use_dynamic_weights: bool = True,
         dice_weight: float = 1.0,
         ce_weight: float = 1.0,
-        # Refinement loss weights
-        active_contour_weight: float = 0.1,
-        boundary_aware_weight: float = 0.1,
-        contour_loss_weight: float = 0.1,
-        distance_loss_weight: float = 0.1,
+        # Refinement loss weights - start small to avoid instability
+        active_contour_weight: float = 0.01,
+        boundary_aware_weight: float = 0.01,
+        contour_loss_weight: float = 0.01,
+        distance_loss_weight: float = 0.01,
         # Refinement flags
         use_active_contour_loss: bool = False,
         use_boundary_aware_loss: bool = False,
@@ -784,11 +799,13 @@ class RefinedHierarchicalLoss(nn.Module):
         total_loss = base_loss
         loss_components = base_components.copy()
         
-        # Add refinement losses
+        # Add refinement losses with clamping for stability
         if self.use_active_contour_loss:
             # Convert logits to probabilities
             probs = torch.softmax(pred, dim=1)
-            ac_loss = active_contour_loss(probs, smoothness_weight=0.1)
+            ac_loss = active_contour_loss(probs, smoothness_weight=0.01)
+            # Clamp to prevent explosion
+            ac_loss = torch.clamp(ac_loss, max=10.0)
             total_loss = total_loss + self.active_contour_weight * ac_loss
             loss_components['active_contour'] = ac_loss.item()
             
@@ -796,8 +813,10 @@ class RefinedHierarchicalLoss(nn.Module):
             ba_loss = boundary_aware_loss(
                 pred, target, 
                 boundary_width=3,
-                boundary_weight=5.0
+                boundary_weight=2.0
             )
+            # Clamp to prevent explosion
+            ba_loss = torch.clamp(ba_loss, max=10.0)
             total_loss = total_loss + self.boundary_aware_weight * ba_loss
             loss_components['boundary_aware'] = ba_loss.item()
             
@@ -808,6 +827,8 @@ class RefinedHierarchicalLoss(nn.Module):
                 aux_outputs['contours'], 
                 contour_targets
             )
+            # Clamp to prevent explosion
+            contour_loss = torch.clamp(contour_loss, max=10.0)
             total_loss = total_loss + self.contour_loss_weight * contour_loss
             loss_components['contour'] = contour_loss.item()
             
@@ -818,6 +839,8 @@ class RefinedHierarchicalLoss(nn.Module):
                 aux_outputs['distance_map'],
                 distance_targets
             )
+            # Clamp to prevent explosion
+            distance_loss = torch.clamp(distance_loss, max=10.0)
             total_loss = total_loss + self.distance_loss_weight * distance_loss
             loss_components['distance_transform'] = distance_loss.item()
             

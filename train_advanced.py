@@ -7,6 +7,31 @@ from pathlib import Path
 import time
 from typing import Dict, Optional, Tuple
 import warnings
+import logging
+
+# Setup logger
+logger = logging.getLogger(__name__)
+
+def compute_gradient_norm(model):
+    """Compute the L2 norm of gradients."""
+    total_norm = 0.0
+    param_count = 0
+    for p in model.parameters():
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+            param_count += 1
+    total_norm = total_norm ** 0.5
+    return total_norm
+
+def check_for_nan_gradients(model):
+    """Check if any gradient contains NaN."""
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            if torch.isnan(param.grad).any():
+                return True, name
+    return False, None
+
 
 # Suppress FutureWarning messages
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -442,6 +467,7 @@ def train_epoch(
     aux_fg_accuracy = 0
     aux_fg_iou = 0
     num_batches = 0
+    grad_norm_before_clip = 0.0  # Initialize for metrics
 
     progress_bar = tqdm(dataloader, desc=f'Epoch {epoch + 1} - Training', dynamic_ncols=True, leave=False)
 
@@ -563,7 +589,55 @@ def train_epoch(
                 else:
                     loss, loss_dict = loss_fn(predictions, masks)
 
+            # Check for NaN before backward
+
+
+            if torch.isnan(loss):
+
+
+                logger.warning(f"NaN loss detected at epoch {epoch}, batch {batch_idx}")
+
+
+                logger.warning(f"Loss components: {loss_dict}")
+
+
+                # Skip this batch
+
+
+                optimizer.zero_grad()
+
+
+                continue
+
+
+                
+
+
             loss.backward()
+
+
+            
+
+
+            # Check gradients after backward
+
+
+            grad_norm_before_clip = compute_gradient_norm(model)
+
+
+            has_nan, nan_param = check_for_nan_gradients(model)
+
+
+            if has_nan:
+
+
+                logger.warning(f"NaN gradient detected in {nan_param}")
+
+
+                optimizer.zero_grad()
+
+
+                continue
 
             if config.training.gradient_clip > 0:
                 torch.nn.utils.clip_grad_norm_(
@@ -604,7 +678,8 @@ def train_epoch(
     metrics = {
         'total_loss': total_loss / num_batches,
         'ce_loss': total_ce_loss / num_batches,
-        'dice_loss': total_dice_loss / num_batches
+        'dice_loss': total_dice_loss / num_batches,
+        'grad_norm': grad_norm_before_clip if num_batches > 0 else 0.0
     }
     
     # Add auxiliary metrics if available
