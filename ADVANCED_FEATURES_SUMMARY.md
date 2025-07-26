@@ -2109,3 +2109,368 @@ python -m src.human_edge_detection.export_onnx_advanced_auxiliary \
 ##### まとめ
 
 Auxiliary branchは**学習を改善するための仕組み**であり、推論時には不要です。学習時に得られた改善効果は既にメインモデルの重みに反映されているため、推論時は計算効率を優先してauxiliary branchを除外することを推奨します。
+
+## Binary Mask 精緻化手法
+
+Binary Maskの品質をさらに向上させるための手法を以下に示します。これらの手法は、短期的に実装可能なものから中期的な開発が必要なものまで含まれています。
+
+### 1. 短期的改善（すぐに実装可能）
+
+#### 1.1 エッジリファインメントモジュール
+
+##### Boundary Refinement Network (BRN)
+マスクの境界部分を専門的に処理する小さなサブネットワーク：
+
+```python
+class BoundaryRefinementModule(nn.Module):
+    def __init__(self, in_channels=3):
+        super().__init__()
+        self.edge_conv = nn.Sequential(
+            nn.Conv2d(in_channels, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 1, 1),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, mask_logits):
+        # エッジ検出
+        edges = self.detect_edges(mask_logits)
+        # エッジ周辺のみリファイン
+        refined_edges = self.edge_conv(mask_logits)
+        # 元のマスクとブレンド
+        return mask_logits + refined_edges * edges
+```
+
+##### Active Contour Loss
+境界の滑らかさを促進する損失関数：
+
+```python
+def active_contour_loss(pred_mask, smoothness_weight=0.1):
+    """境界の長さと滑らかさを最小化"""
+    # 勾配計算
+    dy = pred_mask[:, :, 1:, :] - pred_mask[:, :, :-1, :]
+    dx = pred_mask[:, :, :, 1:] - pred_mask[:, :, :, :-1]
+    
+    # 境界の長さ
+    boundary_length = torch.mean(torch.abs(dy)) + torch.mean(torch.abs(dx))
+    
+    # 曲率（2次微分）
+    ddy = dy[:, :, 1:, :] - dy[:, :, :-1, :]
+    ddx = dx[:, :, :, 1:] - dx[:, :, :, :-1]
+    curvature = torch.mean(torch.abs(ddy)) + torch.mean(torch.abs(ddx))
+    
+    return boundary_length + smoothness_weight * curvature
+```
+
+#### 1.2 高解像度処理
+
+##### Progressive Upsampling
+段階的に解像度を上げることで、より滑らかな境界を生成：
+
+```python
+class ProgressiveUpsamplingDecoder(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.stages = nn.ModuleList([
+            # 56x56 → 112x112
+            nn.Sequential(
+                nn.ConvTranspose2d(in_channels, in_channels//2, 4, 2, 1),
+                ResidualBlock(in_channels//2),
+            ),
+            # 112x112 → 224x224
+            nn.Sequential(
+                nn.ConvTranspose2d(in_channels//2, in_channels//4, 4, 2, 1),
+                ResidualBlock(in_channels//4),
+            ),
+            # 224x224 → 56x56 (最終的にダウンサンプル)
+            nn.Sequential(
+                nn.Conv2d(in_channels//4, 3, 1),
+                nn.AdaptiveAvgPool2d(56)
+            )
+        ])
+```
+
+##### Sub-pixel Convolution
+ピクセルシャッフルを使用した高品質アップサンプリング：
+
+```python
+class SubPixelDecoder(nn.Module):
+    def __init__(self, in_channels, upscale_factor=2):
+        super().__init__()
+        self.conv = nn.Conv2d(in_channels, 3 * upscale_factor**2, 3, padding=1)
+        self.pixel_shuffle = nn.PixelShuffle(upscale_factor)
+```
+
+### 2. 中期的改善（設計・実装に時間が必要）
+
+#### 2.1 グラフベース手法
+
+##### Graph Convolutional Refinement
+マスクの境界をグラフとして表現し、GCNで精緻化：
+
+```python
+class GraphRefinementModule(nn.Module):
+    def __init__(self, feature_dim=256):
+        super().__init__()
+        self.boundary_extractor = BoundaryExtractor()
+        self.gcn_layers = nn.ModuleList([
+            GraphConvLayer(feature_dim, feature_dim),
+            GraphConvLayer(feature_dim, feature_dim),
+            GraphConvLayer(feature_dim, 1)
+        ])
+        
+    def forward(self, features, initial_mask):
+        # 境界点をグラフノードとして抽出
+        boundary_points = self.boundary_extractor(initial_mask)
+        # グラフ構築と精緻化
+        refined_boundary = self.refine_graph(boundary_points, features)
+        return self.reconstruct_mask(refined_boundary)
+```
+
+##### CRF Post-processing
+条件付きランダムフィールドによる後処理（PyTorch実装）：
+
+```python
+class CRFRefinement(nn.Module):
+    def __init__(self, num_iterations=5):
+        super().__init__()
+        self.iterations = num_iterations
+        self.compatibility = nn.Parameter(torch.eye(3))  # 3クラス間の互換性
+        
+    def forward(self, unary, image):
+        # Pairwise potential計算
+        pairwise = self.compute_pairwise_potential(image)
+        
+        # Mean field推論
+        Q = F.softmax(unary, dim=1)
+        for _ in range(self.iterations):
+            Q = self.mean_field_update(Q, unary, pairwise)
+        return Q
+```
+
+#### 2.2 学習ベースの後処理
+
+##### Learned Post-Processing Network
+マスクの後処理を学習する専用ネットワーク：
+
+```python
+class LearnedPostProcessor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.refine_net = nn.Sequential(
+            # 初期マスク + 画像特徴を入力
+            nn.Conv2d(3 + 256, 64, 3, padding=1),
+            ResidualBlock(64),
+            nn.Conv2d(64, 32, 3, padding=1),
+            ResidualBlock(32),
+            nn.Conv2d(32, 3, 1)
+        )
+        
+    def forward(self, initial_mask, image_features):
+        combined = torch.cat([initial_mask, image_features], dim=1)
+        refinement = self.refine_net(combined)
+        return initial_mask + refinement  # Residual learning
+```
+
+##### Iterative Refinement
+マスクを反復的に改善：
+
+```python
+class IterativeRefinementModule(nn.Module):
+    def __init__(self, num_iterations=3):
+        super().__init__()
+        self.iterations = num_iterations
+        self.refinement_blocks = nn.ModuleList([
+            RefinementBlock(3, 3) for _ in range(num_iterations)
+        ])
+        
+    def forward(self, initial_mask, features):
+        mask = initial_mask
+        for i, block in enumerate(self.refinement_blocks):
+            mask = block(mask, features)
+            # 各イテレーションで監督信号を与えることも可能
+        return mask
+```
+
+#### 2.3 マルチタスク学習の改善
+
+##### Contour Detection Branch
+輪郭検出を明示的にタスクとして追加：
+
+```python
+class ContourAwareDecoder(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.mask_branch = MaskDecoder(in_channels)
+        self.contour_branch = nn.Sequential(
+            nn.Conv2d(in_channels, 64, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 1, 1),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, features):
+        mask = self.mask_branch(features)
+        contour = self.contour_branch(features)
+        # 輪郭情報でマスクを調整
+        return mask, contour
+```
+
+##### Distance Transform Prediction
+距離変換マップを予測してマスクを精緻化：
+
+```python
+class DistanceTransformDecoder(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.distance_head = nn.Sequential(
+            nn.Conv2d(in_channels, 128, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 1, 1)
+        )
+        
+    def forward(self, features):
+        # 境界からの距離を予測
+        distance_map = self.distance_head(features)
+        # 閾値処理でマスクに変換
+        mask = torch.sigmoid(distance_map - self.threshold)
+        return mask, distance_map
+```
+
+#### 2.4 アーキテクチャ改善
+
+##### Deformable Convolution
+物体の形状に適応的な畳み込み：
+
+```python
+class DeformableRefinementBlock(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.offset_conv = nn.Conv2d(in_channels, 18, 3, padding=1)  # 9*2 offsets
+        self.deform_conv = DeformConv2d(in_channels, in_channels, 3, padding=1)
+        
+    def forward(self, x):
+        offsets = self.offset_conv(x)
+        return self.deform_conv(x, offsets)
+```
+
+##### Attention-based Refinement
+Self-attentionを使った長距離依存関係のモデリング：
+
+```python
+class AttentionRefinementModule(nn.Module):
+    def __init__(self, in_channels):
+        super().__init__()
+        self.self_attention = nn.MultiheadAttention(in_channels, num_heads=8)
+        self.feed_forward = nn.Sequential(
+            nn.Linear(in_channels, in_channels * 4),
+            nn.ReLU(inplace=True),
+            nn.Linear(in_channels * 4, in_channels)
+        )
+        
+    def forward(self, x):
+        # 空間次元をシーケンスとして扱う
+        b, c, h, w = x.shape
+        x_seq = x.view(b, c, -1).permute(2, 0, 1)  # (hw, b, c)
+        
+        # Self-attention
+        attn_out, _ = self.self_attention(x_seq, x_seq, x_seq)
+        x_seq = x_seq + attn_out
+        
+        # Feed-forward
+        x_seq = x_seq + self.feed_forward(x_seq)
+        
+        # 元の形状に戻す
+        return x_seq.permute(1, 2, 0).view(b, c, h, w)
+```
+
+#### 2.5 損失関数の改善
+
+##### Boundary-aware Loss
+境界付近により大きな重みを与える損失関数：
+
+```python
+def boundary_aware_loss(pred, target, boundary_width=3):
+    # 境界マップ生成
+    kernel = torch.ones(1, 1, boundary_width, boundary_width).to(pred.device)
+    boundary = F.conv2d(target.float(), kernel, padding=boundary_width//2)
+    boundary = (boundary > 0) & (boundary < boundary_width**2)
+    
+    # 重み付きCrossEntropy
+    weights = torch.ones_like(pred)
+    weights[boundary] = 5.0  # 境界付近の重みを増加
+    
+    return F.cross_entropy(pred, target, reduction='none') * weights
+```
+
+##### F-measure Loss
+精度と再現率のバランスを直接最適化：
+
+```python
+def f_measure_loss(pred, target, beta=1.0):
+    pred_flat = pred.view(-1)
+    target_flat = target.view(-1)
+    
+    tp = torch.sum(pred_flat * target_flat)
+    fp = torch.sum(pred_flat * (1 - target_flat))
+    fn = torch.sum((1 - pred_flat) * target_flat)
+    
+    precision = tp / (tp + fp + 1e-8)
+    recall = tp / (tp + fn + 1e-8)
+    
+    f_score = (1 + beta**2) * precision * recall / (beta**2 * precision + recall + 1e-8)
+    return 1 - f_score
+```
+
+#### 2.6 データ拡張の改善
+
+##### Boundary-preserving Augmentation
+境界を保持しながらデータ拡張：
+
+```python
+class BoundaryPreservingAugmentation:
+    def __init__(self):
+        self.elastic_transform = ElasticTransform(alpha=50, sigma=5)
+        
+    def __call__(self, image, mask):
+        # 境界付近は変形を抑制
+        boundary = self.extract_boundary(mask)
+        deformation_field = self.elastic_transform.get_field(image.shape)
+        deformation_field[boundary] *= 0.3  # 境界付近の変形を軽減
+        
+        return self.apply_deformation(image, deformation_field), \
+               self.apply_deformation(mask, deformation_field)
+```
+
+##### Test-time Augmentation (TTA)
+推論時の拡張による精度向上：
+
+```python
+class TestTimeAugmentation:
+    def __init__(self, model):
+        self.model = model
+        self.transforms = [
+            lambda x: x,  # Original
+            lambda x: torch.flip(x, dims=[2]),  # Horizontal flip
+            lambda x: torch.flip(x, dims=[3]),  # Vertical flip
+            lambda x: torch.rot90(x, k=1, dims=[2, 3]),  # 90度回転
+        ]
+        
+    def predict(self, x):
+        predictions = []
+        for i, transform in enumerate(self.transforms):
+            augmented = transform(x)
+            pred = self.model(augmented)
+            # 逆変換
+            pred = self.inverse_transform(pred, i)
+            predictions.append(pred)
+        
+        # 平均または投票
+        return torch.mean(torch.stack(predictions), dim=0)
+```
+
+### まとめ
+
+これらの手法は、実装の容易さと効果のバランスを考慮して選択することが重要です。短期的改善から始めて、徐々に高度な手法を導入することで、Binary Maskの品質を段階的に向上させることができます。特に、エッジリファインメントと高解像度処理は比較的実装が容易で効果も高いため、最初に試すことを推奨します。
