@@ -81,7 +81,13 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         mask_size: int = 56,
         feature_channels: int = 256,
         num_classes: int = 3,
-        use_attention_module: bool = False
+        use_attention_module: bool = False,
+        # Refinement module flags
+        use_boundary_refinement: bool = False,
+        use_progressive_upsampling: bool = False,
+        use_subpixel_conv: bool = False,
+        use_contour_detection: bool = False,
+        use_distance_transform: bool = False,
     ):
         """Initialize RGB-based hierarchical segmentation model.
         
@@ -91,6 +97,11 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             feature_channels: Number of feature channels after extraction
             num_classes: Number of output classes (3 for hierarchical)
             use_attention_module: Whether to use attention modules
+            use_boundary_refinement: Enable boundary refinement
+            use_progressive_upsampling: Enable progressive upsampling
+            use_subpixel_conv: Enable sub-pixel convolution
+            use_contour_detection: Enable contour detection branch
+            use_distance_transform: Enable distance transform prediction
         """
         super().__init__()
         
@@ -105,14 +116,39 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             num_layers=4
         )
         
-        # Hierarchical segmentation head (reuse from UNet v2)
-        self.segmentation_head = HierarchicalSegmentationHeadUNetV2(
-            in_channels=feature_channels,
-            mid_channels=256,
-            num_classes=num_classes,
-            mask_size=mask_size,
-            use_attention_module=use_attention_module
-        )
+        # Check if any refinement modules are enabled
+        use_refinement = any([
+            use_boundary_refinement,
+            use_progressive_upsampling,
+            use_subpixel_conv,
+            use_contour_detection,
+            use_distance_transform
+        ])
+        
+        if use_refinement:
+            # Use refined hierarchical segmentation head
+            from .hierarchical_segmentation_refinement import RefinedHierarchicalSegmentationHead
+            self.segmentation_head = RefinedHierarchicalSegmentationHead(
+                in_channels=feature_channels,
+                mid_channels=256,
+                num_classes=num_classes,
+                mask_size=mask_size,
+                use_attention_module=use_attention_module,
+                use_boundary_refinement=use_boundary_refinement,
+                use_progressive_upsampling=use_progressive_upsampling,
+                use_subpixel_conv=use_subpixel_conv,
+                use_contour_detection=use_contour_detection,
+                use_distance_transform=use_distance_transform,
+            )
+        else:
+            # Use standard hierarchical segmentation head
+            self.segmentation_head = HierarchicalSegmentationHeadUNetV2(
+                in_channels=feature_channels,
+                mid_channels=256,
+                num_classes=num_classes,
+                mask_size=mask_size,
+                use_attention_module=use_attention_module
+            )
         
         # Dynamic ROI Align for extracting regions from full images
         self.roi_align = DynamicRoIAlign(
@@ -298,21 +334,36 @@ def create_rgb_hierarchical_model(
     Returns:
         Hierarchical segmentation model
     """
+    # Extract common parameters
+    use_attention_module = kwargs.get('use_attention_module', False)
+    
+    # Extract refinement parameters
+    use_boundary_refinement = kwargs.get('use_boundary_refinement', False)
+    use_progressive_upsampling = kwargs.get('use_progressive_upsampling', False)
+    use_subpixel_conv = kwargs.get('use_subpixel_conv', False)
+    use_contour_detection = kwargs.get('use_contour_detection', False)
+    use_distance_transform = kwargs.get('use_distance_transform', False)
+    
     if multi_scale:
         roi_sizes = kwargs.get('roi_sizes', {'scale1': 56, 'scale2': 42, 'scale3': 28})
         fusion_method = kwargs.get('fusion_method', 'concat')
-        use_attention_module = kwargs.get('use_attention_module', False)
         
         return MultiScaleRGBSegmentationModel(
             roi_sizes=roi_sizes,
             mask_size=mask_size,
             fusion_method=fusion_method,
-            use_attention_module=use_attention_module
+            use_attention_module=use_attention_module,
+            # TODO: Add refinement support to MultiScaleRGBSegmentationModel
         )
     else:
-        use_attention_module = kwargs.get('use_attention_module', False)
         return HierarchicalRGBSegmentationModel(
             roi_size=roi_size,
             mask_size=mask_size,
-            use_attention_module=use_attention_module
+            use_attention_module=use_attention_module,
+            # Binary mask refinement modules
+            use_boundary_refinement=use_boundary_refinement,
+            use_progressive_upsampling=use_progressive_upsampling,
+            use_subpixel_conv=use_subpixel_conv,
+            use_contour_detection=use_contour_detection,
+            use_distance_transform=use_distance_transform,
         )
