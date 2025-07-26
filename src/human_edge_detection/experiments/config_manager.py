@@ -1085,7 +1085,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         # ROI and Mask Size Optimization Experiments
         # ROIAlign: 112 series
         'rgb_hierarchical_unet_v2_attention_r112m224': ExperimentConfig(
@@ -1130,7 +1130,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         'rgb_hierarchical_unet_v2_attention_r112m192': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r112m192',
             description='RGB Hierarchical UNet V2 Attention - ROI:112, Mask:192',
@@ -1173,7 +1173,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         'rgb_hierarchical_unet_v2_attention_r112m160': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r112m160',
             description='RGB Hierarchical UNet V2 Attention - ROI:112, Mask:160',
@@ -1216,7 +1216,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         'rgb_hierarchical_unet_v2_attention_r112m112': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r112m112',
             description='RGB Hierarchical UNet V2 Attention - ROI:112, Mask:112',
@@ -1259,7 +1259,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         # ROIAlign: 96 series
         'rgb_hierarchical_unet_v2_attention_r96m192': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r96m192',
@@ -1303,7 +1303,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         'rgb_hierarchical_unet_v2_attention_r96m160': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r96m160',
             description='RGB Hierarchical UNet V2 Attention - ROI:96, Mask:160',
@@ -1346,7 +1346,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         'rgb_hierarchical_unet_v2_attention_r96m112': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r96m112',
             description='RGB Hierarchical UNet V2 Attention - ROI:96, Mask:112',
@@ -1389,7 +1389,50 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
+        'rgb_hierarchical_unet_v2_attention_r96m96': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r96m96',
+            description='RGB Hierarchical UNet V2 Attention - ROI:96, Mask:96',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=96,
+                mask_size=96,
+                onnx_model=None,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
         # ROIAlign: 80 series
         'rgb_hierarchical_unet_v2_attention_r80m160': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r80m160',
@@ -1433,7 +1476,7 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
         'rgb_hierarchical_unet_v2_attention_r80m112': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r80m112',
             description='RGB Hierarchical UNet V2 Attention - ROI:80, Mask:112',
@@ -1476,7 +1519,93 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
+        'rgb_hierarchical_unet_v2_attention_r80m96': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r80m96',
+            description='RGB Hierarchical UNet V2 Attention - ROI:80, Mask:96',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=80,
+                mask_size=96,
+                onnx_model=None,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
+        'rgb_hierarchical_unet_v2_attention_r80m80': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r80m80',
+            description='RGB Hierarchical UNet V2 Attention - ROI:80, Mask:80',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=80,
+                mask_size=80,
+                onnx_model=None,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
         # ROIAlign: 64 series
         'rgb_hierarchical_unet_v2_attention_r64m112': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r64m112',
@@ -1520,7 +1649,93 @@ class ConfigManager:
                 min_lr=1e-6
             )
         ),
-        
+
+        'rgb_hierarchical_unet_v2_attention_r64m96': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m96',
+            description='RGB Hierarchical UNet V2 Attention - ROI:64, Mask:96',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=96,
+                onnx_model=None,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
+        'rgb_hierarchical_unet_v2_attention_r64m80': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m80',
+            description='RGB Hierarchical UNet V2 Attention - ROI:64, Mask:80',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=80,
+                onnx_model=None,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_no_separation.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=5.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.001,
+                min_lr=1e-6
+            )
+        ),
+
         'rgb_hierarchical_unet_v2_attention_r64m64': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_attention_r64m64',
             description='RGB Hierarchical UNet V2 Attention - ROI:64, Mask:64',

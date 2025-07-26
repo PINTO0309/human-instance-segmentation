@@ -691,8 +691,17 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         # Branch 1: Background vs Foreground with Enhanced UNet
         bg_fg_logits_low = self.bg_vs_fg_unet(shared)
 
-        # Upsample to mask size
+        # Upsample to mask size dynamically
+        # First apply convolution
         bg_fg_logits = self.upsample_bg_fg(bg_fg_logits_low)
+        # Then interpolate to exact mask size if needed
+        if bg_fg_logits.shape[2] != self.mask_size or bg_fg_logits.shape[3] != self.mask_size:
+            bg_fg_logits = F.interpolate(
+                bg_fg_logits,
+                size=(self.mask_size, self.mask_size),
+                mode='bilinear',
+                align_corners=False
+            )
         bg_fg_probs = F.softmax(bg_fg_logits, dim=1)
 
         # Create foreground attention gate from UNet features
@@ -710,6 +719,15 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         else:
             # Original sequential processing
             target_nontarget_logits = self.target_vs_nontarget_branch(gated_features)
+        
+        # Ensure target_nontarget_logits matches mask_size
+        if target_nontarget_logits.shape[2] != self.mask_size or target_nontarget_logits.shape[3] != self.mask_size:
+            target_nontarget_logits = F.interpolate(
+                target_nontarget_logits,
+                size=(self.mask_size, self.mask_size),
+                mode='bilinear',
+                align_corners=False
+            )
 
         # Combine predictions hierarchically
         batch_size = features.shape[0]
