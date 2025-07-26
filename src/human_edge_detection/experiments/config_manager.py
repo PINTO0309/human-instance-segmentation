@@ -1872,8 +1872,8 @@ class ConfigManager:
                 min_lr=1e-7,
             )
         ),
-        'rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss': ExperimentConfig(
-            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss',
+        'rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss_distance': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_activecontourloss_distance',
             description='RGB Hierarchical UNet V2 Attention - ROI:64, Mask:64 with Stable Refinement',
             model=ModelConfig(
                 use_rgb_hierarchical=True,
@@ -1887,7 +1887,7 @@ class ConfigManager:
                 use_boundary_aware_loss=False,
                 use_contour_detection=True,
                 use_active_contour_loss=True,
-                use_distance_transform=False,
+                use_distance_transform=True,
                 use_progressive_upsampling=False,
                 use_subpixel_conv=False,
             ),
