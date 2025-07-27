@@ -86,22 +86,42 @@ class BoundaryRefinementModule(nn.Module):
 境界の滑らかさを促進する損失関数：
 
 ```python
-def active_contour_loss(pred_mask, smoothness_weight=0.1):
-    """境界の長さと滑らかさを最小化"""
-    # 勾配計算
+def active_contour_loss(pred_mask, smoothness_weight=0.01):
+    """エネルギー最小化による境界の平滑化
+    
+    Active Contour Model (Snake) に基づく損失関数。
+    境界の長さを最小化することで、ギザギザした境界を滑らかにする。
+    """
+    # ターゲットクラスの確率マップを取得
+    if pred_mask.dim() == 4 and pred_mask.shape[1] > 1:
+        pred_mask = pred_mask[:, 1:2, :, :]  # クラス1（ターゲット）
+
+    # 勾配計算（隣接ピクセル間の差分）
     dy = pred_mask[:, :, 1:, :] - pred_mask[:, :, :-1, :]
     dx = pred_mask[:, :, :, 1:] - pred_mask[:, :, :, :-1]
 
-    # 境界の長さ
-    boundary_length = torch.mean(torch.abs(dy)) + torch.mean(torch.abs(dx))
+    # 境界の長さ（L1ノルム）- 数値安定性のためクランプ
+    dy_clamped = torch.clamp(torch.abs(dy), max=10.0)
+    dx_clamped = torch.clamp(torch.abs(dx), max=10.0)
+    boundary_length = torch.mean(dy_clamped) + torch.mean(dx_clamped)
 
-    # 曲率（2次微分）
+    # 曲率（2次微分）- オプション
     ddy = dy[:, :, 1:, :] - dy[:, :, :-1, :]
     ddx = dx[:, :, :, 1:] - dx[:, :, :, :-1]
     curvature = torch.mean(torch.abs(ddy)) + torch.mean(torch.abs(ddx))
 
     return boundary_length + smoothness_weight * curvature
 ```
+
+**動作原理：**
+- **境界長最小化**: マスクの境界線の総長を短くすることで、不要な凹凸を除去
+- **曲率ペナルティ**: 急激な方向変化を抑制し、自然な曲線を促進
+- **確率マップへの適用**: ソフトマックス後の連続値に対して作用
+
+**効果：**
+- ノイズによる細かいギザギザを除去
+- 境界を滑らかな曲線に変換
+- 過度の詳細を抑制し、主要な形状を保持
 
 ### 3. Progressive Upsampling
 
@@ -285,18 +305,49 @@ if 'distance_map' in aux_outputs:
 境界付近により大きな重みを与える損失関数：
 
 ```python
-def boundary_aware_loss(pred, target, boundary_width=3):
-    # 境界マップ生成
+def boundary_aware_loss(pred, target, boundary_width=3, boundary_weight=2.0):
+    """境界領域に焦点を当てた損失関数
+    
+    マスクの境界付近のピクセルにより大きな重みを与えることで、
+    境界の精度を向上させる。
+    """
+    # ターゲットマスクから境界領域を検出
+    # 膨張（dilation）操作で境界を特定
     kernel = torch.ones(1, 1, boundary_width, boundary_width).to(pred.device)
-    boundary = F.conv2d(target.float(), kernel, padding=boundary_width//2)
-    boundary = (boundary > 0) & (boundary < boundary_width**2)
-
-    # 重み付きCrossEntropy
-    weights = torch.ones_like(pred)
-    weights[boundary] = 5.0  # 境界付近の重みを増加
-
-    return F.cross_entropy(pred, target, reduction='none') * weights
+    
+    # 各クラスの境界を検出
+    boundaries = []
+    for c in range(3):  # 3クラス分
+        class_mask = (target == c).float().unsqueeze(1)
+        dilated = F.conv2d(class_mask, kernel, padding=boundary_width//2)
+        eroded = F.conv2d(class_mask, kernel, padding=boundary_width//2)
+        # 膨張と収縮の差分が境界
+        boundary = (dilated > 0) & (eroded < boundary_width**2)
+        boundaries.append(boundary)
+    
+    # すべてのクラス境界を統合
+    boundary_mask = torch.cat(boundaries, dim=1).any(dim=1)
+    
+    # 重み付きマップの作成
+    weights = torch.ones_like(target, dtype=torch.float32)
+    weights[boundary_mask] = boundary_weight  # 境界ピクセルの重みを増加
+    
+    # 重み付きクロスエントロピー損失
+    ce_loss = F.cross_entropy(pred, target, reduction='none')
+    weighted_loss = ce_loss * weights
+    
+    return weighted_loss.mean()
 ```
+
+**動作原理：**
+- **境界検出**: 膨張・収縮演算により各クラスの境界ピクセルを特定
+- **重み付け**: 境界ピクセルにより高い重み（デフォルト2.0倍）を適用
+- **選択的学習**: モデルが境界付近の予測により注意を払うよう誘導
+
+**効果：**
+- 境界付近の分類精度が向上
+- エッジのぼやけを減少
+- 細かい構造の保持
 
 ## 統合アーキテクチャ
 
@@ -412,6 +463,73 @@ ModelConfig(
 )
 ```
 
+## Active Contour Loss と Contour Detection の違い
+
+### Active Contour Loss（エネルギー最小化アプローチ）
+
+**役割**: セグメンテーションマスクの境界を滑らかにする損失関数
+
+```python
+# 境界の長さを最小化（Snake algorithm inspired）
+boundary_length = torch.mean(torch.abs(dy)) + torch.mean(torch.abs(dx))
+```
+
+**特徴**:
+- 予測されたマスクの確率値に直接作用
+- 境界線の総長を短くすることでノイズを除去
+- 数学的なエネルギー最小化原理に基づく
+- 追加のネットワーク構造は不要
+
+**適用場面**:
+- ノイズの多い予測結果の平滑化
+- 医療画像など滑らかな境界が求められる場合
+- 過剰にギザギザした境界の修正
+
+### Contour Detection Branch（明示的な境界学習）
+
+**役割**: 専用のニューラルネットワークで境界位置を予測
+
+```python
+# CNNで境界マップを生成
+self.contour_branch = nn.Sequential(
+    nn.Conv2d(in_channels, 64, 3, padding=1),
+    nn.Sigmoid()  # 0-1の境界確率
+)
+```
+
+**特徴**:
+- 独立したネットワークブランチで境界を検出
+- 境界位置を0-1の連続値として表現
+- マルチタスク学習により特徴表現を改善
+- 追加のパラメータと計算が必要
+
+**適用場面**:
+- 明確なエッジが重要な場合（建物、道路など）
+- 境界の位置精度が求められる場合
+- 後処理での境界情報活用
+
+### 同時使用時の相互作用
+
+**相補的効果**:
+```
+Active Contour Loss ← → Contour Detection
+   (平滑化)              (精度向上)
+        ↓                    ↓
+    滑らかな境界  ＋  正確な位置
+              ↓
+        最適な境界表現
+```
+
+**推奨される組み合わせ**:
+1. **人物セグメンテーション**: 両方を低重み（0.1）で使用
+2. **医療画像**: Active Contour重視（0.2）、Contour Detection低め（0.05）
+3. **建築物検出**: Contour Detection重視（0.2）、Active Contour低め（0.05）
+
+**注意点**:
+- 両方の重みが高いと競合する可能性
+- 学習初期は片方のみ有効化を推奨
+- タスクの性質に応じて重みバランスを調整
+
 ## トラブルシューティング
 
 ### NaN損失が発生する場合
@@ -432,3 +550,9 @@ ModelConfig(
 1. 精緻化損失の重みを小さくする（0.001〜0.01）
 2. ベースモデルを先に学習してから精緻化を追加
 3. データ拡張を減らす
+
+### Active ContourとContour Detectionが競合する場合
+
+1. どちらか一方の重みを下げる
+2. 段階的に有効化（まずActive Contour、次にContour Detection）
+3. タスクに応じて主要な手法を選択

@@ -469,6 +469,11 @@ def train_epoch(
     aux_fg_bg_loss = 0
     aux_fg_accuracy = 0
     aux_fg_iou = 0
+    # Refinement losses
+    active_contour_loss = 0
+    boundary_aware_loss = 0
+    contour_loss = 0
+    distance_transform_loss = 0
     num_batches = 0
     grad_norm_before_clip = 0.0  # Initialize for metrics
 
@@ -660,6 +665,12 @@ def train_epoch(
         aux_fg_bg_loss += loss_dict.get('aux_fg_bg_loss', 0)
         aux_fg_accuracy += loss_dict.get('aux_fg_accuracy', 0)
         aux_fg_iou += loss_dict.get('aux_fg_iou', 0)
+        
+        # Track refinement losses if available
+        active_contour_loss += loss_dict.get('active_contour', 0)
+        boundary_aware_loss += loss_dict.get('boundary_aware', 0)
+        contour_loss += loss_dict.get('contour', 0)
+        distance_transform_loss += loss_dict.get('distance_transform', 0)
 
         # Update progress bar
         progress_bar.set_postfix({
@@ -690,6 +701,16 @@ def train_epoch(
         metrics['aux_fg_bg_loss'] = aux_fg_bg_loss / num_batches
         metrics['aux_fg_accuracy'] = aux_fg_accuracy / num_batches
         metrics['aux_fg_iou'] = aux_fg_iou / num_batches
+    
+    # Add refinement losses if available
+    if active_contour_loss > 0:
+        metrics['active_contour'] = active_contour_loss / num_batches
+    if boundary_aware_loss > 0:
+        metrics['boundary_aware'] = boundary_aware_loss / num_batches
+    if contour_loss > 0:
+        metrics['contour'] = contour_loss / num_batches
+    if distance_transform_loss > 0:
+        metrics['distance_transform'] = distance_transform_loss / num_batches
     
     return metrics
 
@@ -1068,6 +1089,16 @@ def main():
                 writer.add_scalar('train/aux_fg_bg_loss', train_metrics['aux_fg_bg_loss'], epoch)
                 writer.add_scalar('train/aux_fg_accuracy', train_metrics['aux_fg_accuracy'], epoch)
                 writer.add_scalar('train/aux_fg_iou', train_metrics['aux_fg_iou'], epoch)
+            
+            # Log refinement losses if available
+            if 'active_contour' in train_metrics:
+                writer.add_scalar('train/active_contour', train_metrics['active_contour'], epoch)
+            if 'boundary_aware' in train_metrics:
+                writer.add_scalar('train/boundary_aware', train_metrics['boundary_aware'], epoch)
+            if 'contour' in train_metrics:
+                writer.add_scalar('train/contour', train_metrics['contour'], epoch)
+            if 'distance_transform' in train_metrics:
+                writer.add_scalar('train/distance_transform', train_metrics['distance_transform'], epoch)
 
             # Validation
             if epoch % config.training.validate_every == 0:
@@ -1088,6 +1119,16 @@ def main():
                     writer.add_scalar('val/aux_fg_bg_loss', val_metrics['aux_fg_bg_loss'], epoch)
                     writer.add_scalar('val/aux_fg_accuracy', val_metrics['aux_fg_accuracy'], epoch)
                     writer.add_scalar('val/aux_fg_iou', val_metrics['aux_fg_iou'], epoch)
+                
+                # Log validation refinement losses if available
+                if 'active_contour' in val_metrics:
+                    writer.add_scalar('val/active_contour', val_metrics['active_contour'], epoch)
+                if 'boundary_aware' in val_metrics:
+                    writer.add_scalar('val/boundary_aware', val_metrics['boundary_aware'], epoch)
+                if 'contour' in val_metrics:
+                    writer.add_scalar('val/contour', val_metrics['contour'], epoch)
+                if 'distance_transform' in val_metrics:
+                    writer.add_scalar('val/distance_transform', val_metrics['distance_transform'], epoch)
 
                 print(f"\nEpoch {epoch+1} - Validation:")
                 print(f"  Loss: {val_metrics['total_loss']:.4f}")

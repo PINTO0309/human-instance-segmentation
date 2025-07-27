@@ -50,6 +50,12 @@ def evaluate_model(
     aux_fg_accuracy = 0
     aux_fg_iou = 0
     
+    # Refinement losses
+    active_contour_loss = 0
+    boundary_aware_loss = 0
+    contour_loss = 0
+    distance_transform_loss = 0
+    
     # IoU tracking
     class_ious = {i: [] for i in range(3)}  # Assuming 3 classes
     
@@ -122,6 +128,12 @@ def evaluate_model(
             aux_fg_accuracy += loss_dict.get('aux_fg_accuracy', 0)
             aux_fg_iou += loss_dict.get('aux_fg_iou', 0)
             
+            # Track refinement losses if available
+            active_contour_loss += loss_dict.get('active_contour', 0)
+            boundary_aware_loss += loss_dict.get('boundary_aware', 0)
+            contour_loss += loss_dict.get('contour', 0)
+            distance_transform_loss += loss_dict.get('distance_transform', 0)
+            
             # Calculate IoU metrics
             pred_classes = pred_for_metrics.argmax(dim=1)  # (N, H, W)
             
@@ -153,6 +165,16 @@ def evaluate_model(
         metrics['aux_fg_bg_loss'] = aux_fg_bg_loss / num_batches
         metrics['aux_fg_accuracy'] = aux_fg_accuracy / num_batches
         metrics['aux_fg_iou'] = aux_fg_iou / num_batches
+    
+    # Add refinement losses if available
+    if active_contour_loss > 0:
+        metrics['active_contour'] = active_contour_loss / num_batches
+    if boundary_aware_loss > 0:
+        metrics['boundary_aware'] = boundary_aware_loss / num_batches
+    if contour_loss > 0:
+        metrics['contour'] = contour_loss / num_batches
+    if distance_transform_loss > 0:
+        metrics['distance_transform'] = distance_transform_loss / num_batches
     
     # Calculate mean IoU for each class
     for cls in range(3):
