@@ -28,7 +28,9 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
         num_classes: int = 3,
         mask_size: Union[int, Tuple[int, int]] = 56,
         dropout_rate: float = 0.1,
-        use_attention_module: bool = False
+        use_attention_module: bool = False,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8
     ):
         """Initialize pre-trained UNet guided segmentation head.
         
@@ -56,21 +58,24 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
         # Input adjustment layer to combine features with fg_prob
         self.input_adjust = nn.Conv2d(in_channels + 1, in_channels, 1)
         
+        from .normalization_comparison import get_normalization_layer
+        from .hierarchical_segmentation_refinement import ResidualBlock as FlexibleResidualBlock
+        
         # Feature processing for target/non-target branch
         self.feature_processor = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
-            LayerNorm2d(mid_channels),
+            get_normalization_layer(normalization_type, mid_channels, num_groups=min(normalization_groups, mid_channels)),
             nn.ReLU(inplace=True),
             nn.Dropout2d(dropout_rate),
-            ResidualBlock(mid_channels),
+            FlexibleResidualBlock(mid_channels, normalization_type, normalization_groups),
             nn.Dropout2d(dropout_rate),
-            ResidualBlock(mid_channels),
+            FlexibleResidualBlock(mid_channels, normalization_type, normalization_groups),
         )
         
         # Direct 3-class prediction branch
         self.final_classifier = nn.Sequential(
             nn.Conv2d(mid_channels, mid_channels // 2, 3, padding=1),
-            LayerNorm2d(mid_channels // 2),
+            get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_channels // 2, num_classes, 1)  # Direct 3-class output
         )
@@ -407,6 +412,8 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
         pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
         use_attention_module: bool = False,
         freeze_pretrained_weights: bool = False,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8,
     ):
         """Initialize hierarchical RGB segmentation model with pre-trained UNet.
         
@@ -454,18 +461,22 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
         # The pre-trained UNet outputs 2 channels (bg/fg), we'll process these
         feature_dim = 256  # Intermediate feature dimension
         
+        # Import FlexibleResidualBlock and normalization layer for normalization support
+        from .hierarchical_segmentation_refinement import ResidualBlock as FlexibleResidualBlock
+        from .normalization_comparison import get_normalization_layer
+        
         # Feature processor to convert UNet output to features for hierarchical head
         self.feature_processor = nn.Sequential(
             nn.Conv2d(2, 64, 3, padding=1),
-            LayerNorm2d(64),
+            get_normalization_layer(normalization_type, 64, num_groups=min(normalization_groups, 64)),
             nn.ReLU(inplace=True),
-            ResidualBlock(64),
+            FlexibleResidualBlock(64, normalization_type, min(normalization_groups, 64)),
             nn.Conv2d(64, 128, 3, padding=1),
-            LayerNorm2d(128),
+            get_normalization_layer(normalization_type, 128, num_groups=min(normalization_groups, 128)),
             nn.ReLU(inplace=True),
-            ResidualBlock(128),
+            FlexibleResidualBlock(128, normalization_type, min(normalization_groups, 128)),
             nn.Conv2d(128, feature_dim, 3, padding=1),
-            LayerNorm2d(feature_dim),
+            get_normalization_layer(normalization_type, feature_dim, num_groups=min(normalization_groups, feature_dim)),
             nn.ReLU(inplace=True),
         )
         
@@ -587,22 +598,26 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         # Feature dimension after ROI extraction
         feature_dim = 256  # Intermediate feature dimension
         
+        # Import flexible ResidualBlock that supports normalization types
+        from .hierarchical_segmentation_refinement import ResidualBlock as FlexibleResidualBlock
+        from .normalization_comparison import get_normalization_layer
+        
         # RGB feature extractor for ROI patches
         self.rgb_feature_extractor = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1),
-            LayerNorm2d(64),
+            get_normalization_layer(normalization_type, 64, num_groups=min(normalization_groups, 64)),
             nn.ReLU(inplace=True),
-            ResidualBlock(64),
+            FlexibleResidualBlock(64, normalization_type, min(normalization_groups, 64)),
             nn.Conv2d(64, 128, 3, padding=1),  # Removed stride=2
-            LayerNorm2d(128),
+            get_normalization_layer(normalization_type, 128, num_groups=min(normalization_groups, 128)),
             nn.ReLU(inplace=True),
-            ResidualBlock(128),
+            FlexibleResidualBlock(128, normalization_type, min(normalization_groups, 128)),
             nn.Conv2d(128, 256, 3, padding=1),  # Removed stride=2
-            LayerNorm2d(256),
+            get_normalization_layer(normalization_type, 256, num_groups=min(normalization_groups, 256)),
             nn.ReLU(inplace=True),
-            ResidualBlock(256),
+            FlexibleResidualBlock(256, normalization_type, min(normalization_groups, 256)),
             nn.Conv2d(256, feature_dim, 1),
-            LayerNorm2d(feature_dim),
+            get_normalization_layer(normalization_type, feature_dim, num_groups=min(normalization_groups, feature_dim)),
             nn.ReLU(inplace=True),
         )
         
@@ -701,7 +716,9 @@ class MultiScaleRGBSegmentationModel(nn.Module):
         feature_channels: int = 256,
         fusion_method: str = 'concat',
         num_classes: int = 3,
-        use_attention_module: bool = False
+        use_attention_module: bool = False,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8
     ):
         """Initialize multi-scale RGB segmentation model.
         
@@ -750,10 +767,13 @@ class MultiScaleRGBSegmentationModel(nn.Module):
         if fusion_method == 'adaptive':
             self.fusion_weights = nn.Parameter(torch.ones(len(roi_sizes)))
             
+        # Import normalization layer
+        from .normalization_comparison import get_normalization_layer
+        
         # Project fused features to expected input size
         self.fusion_proj = nn.Sequential(
             nn.Conv2d(fused_channels, feature_channels, 1),
-            LayerNorm2d(feature_channels),
+            get_normalization_layer(normalization_type, feature_channels, num_groups=min(normalization_groups, feature_channels)),
             nn.ReLU(inplace=True)
         )
         

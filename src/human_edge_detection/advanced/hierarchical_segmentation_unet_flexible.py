@@ -17,20 +17,26 @@ from .activation_utils import ActivationConfig, get_activation
 class FlexibleResidualBlock(nn.Module):
     """Residual block with configurable activation function."""
     
-    def __init__(self, channels: int, activation_config: ActivationConfig):
+    def __init__(self, channels: int, activation_config: ActivationConfig,
+                 normalization_type: str = 'layernorm2d',
+                 normalization_groups: int = 8):
         """Initialize flexible residual block.
         
         Args:
             channels: Number of channels
             activation_config: Configuration for activation functions
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for group normalization
         """
         super().__init__()
+        from .normalization_comparison import get_normalization_layer
+        
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm1 = LayerNorm2d(channels)
+        self.norm1 = get_normalization_layer(normalization_type, channels, num_groups=min(normalization_groups, channels))
         self.activation1 = activation_config.get_activation()
         
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm2 = LayerNorm2d(channels)
+        self.norm2 = get_normalization_layer(normalization_type, channels, num_groups=min(normalization_groups, channels))
         self.activation2 = activation_config.get_activation()
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:

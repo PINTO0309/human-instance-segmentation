@@ -38,22 +38,27 @@ class ResidualBlock(nn.Module):
 class ShallowUNet(nn.Module):
     """Shallow U-Net for foreground/background separation."""
 
-    def __init__(self, in_channels: int, base_channels: int = 64):
+    def __init__(self, in_channels: int, base_channels: int = 64,
+                 normalization_type: str = 'layernorm2d',
+                 normalization_groups: int = 8):
         """Initialize shallow U-Net.
 
         Args:
             in_channels: Number of input channels
             base_channels: Base channel count for the network
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for group normalization
         """
         super().__init__()
+        from .normalization_comparison import get_normalization_layer
 
         # Encoder path
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, base_channels, 3, padding=1),
-            LayerNorm2d(base_channels),
+            get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
             nn.ReLU(inplace=True),
             nn.Conv2d(base_channels, base_channels, 3, padding=1),
-            LayerNorm2d(base_channels),
+            get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
             nn.ReLU(inplace=True)
         )
 
@@ -61,10 +66,10 @@ class ShallowUNet(nn.Module):
 
         self.enc2 = nn.Sequential(
             nn.Conv2d(base_channels, base_channels * 2, 3, padding=1),
-            LayerNorm2d(base_channels * 2),
+            get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
             nn.ReLU(inplace=True),
             nn.Conv2d(base_channels * 2, base_channels * 2, 3, padding=1),
-            LayerNorm2d(base_channels * 2),
+            get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
             nn.ReLU(inplace=True)
         )
 
@@ -73,10 +78,10 @@ class ShallowUNet(nn.Module):
         # Bottom
         self.bottom = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels * 4, 3, padding=1),
-            LayerNorm2d(base_channels * 4),
+            get_normalization_layer(normalization_type, base_channels * 4, num_groups=min(normalization_groups, base_channels * 4)),
             nn.ReLU(inplace=True),
             nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
-            LayerNorm2d(base_channels * 4),
+            get_normalization_layer(normalization_type, base_channels * 4, num_groups=min(normalization_groups, base_channels * 4)),
             nn.ReLU(inplace=True)
         )
 
@@ -84,20 +89,20 @@ class ShallowUNet(nn.Module):
         self.up2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, 2, stride=2)
         self.dec2 = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 2, 3, padding=1),
-            LayerNorm2d(base_channels * 2),
+            get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
             nn.ReLU(inplace=True),
             nn.Conv2d(base_channels * 2, base_channels * 2, 3, padding=1),
-            LayerNorm2d(base_channels * 2),
+            get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
             nn.ReLU(inplace=True)
         )
 
         self.up1 = nn.ConvTranspose2d(base_channels * 2, base_channels, 2, stride=2)
         self.dec1 = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
-            LayerNorm2d(base_channels),
+            get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
             nn.ReLU(inplace=True),
             nn.Conv2d(base_channels, base_channels, 3, padding=1),
-            LayerNorm2d(base_channels),
+            get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
             nn.ReLU(inplace=True)
         )
 
@@ -143,68 +148,71 @@ class ShallowUNet(nn.Module):
 
 class EnhancedUNetONNX(nn.Module):
     """ONNX-compatible Enhanced UNet with fixed sizes for depth=3."""
-    def __init__(self, in_channels: int, base_channels: int = 64):
+    def __init__(self, in_channels: int, base_channels: int = 64,
+                 normalization_type: str = 'layernorm2d',
+                 normalization_groups: int = 8):
         """Initialize enhanced UNet for fixed depth=3."""
         super().__init__()
         self.depth = 3  # Fixed depth
+        from .normalization_comparison import get_normalization_layer
 
         # Encoder path - depth 3
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, base_channels, 3, padding=1),
-            LayerNorm2d(base_channels),
+            get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
             nn.ReLU(inplace=True),
-            ResidualBlock(base_channels)
+            ResidualBlock(base_channels, normalization_type, normalization_groups)
         )
         self.pool1 = nn.MaxPool2d(2)
 
         self.enc2 = nn.Sequential(
             nn.Conv2d(base_channels, base_channels * 2, 3, padding=1),
-            LayerNorm2d(base_channels * 2),
+            get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
             nn.ReLU(inplace=True),
-            ResidualBlock(base_channels * 2)
+            ResidualBlock(base_channels * 2, normalization_type, normalization_groups)
         )
         self.pool2 = nn.MaxPool2d(2)
 
         self.enc3 = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels * 4, 3, padding=1),
-            LayerNorm2d(base_channels * 4),
+            get_normalization_layer(normalization_type, base_channels * 4, num_groups=min(normalization_groups, base_channels * 4)),
             nn.ReLU(inplace=True),
-            ResidualBlock(base_channels * 4)
+            ResidualBlock(base_channels * 4, normalization_type, normalization_groups)
         )
         self.pool3 = nn.MaxPool2d(2)
 
         # Bottleneck
         self.bottleneck = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 8, 3, padding=1),
-            LayerNorm2d(base_channels * 8),
+            get_normalization_layer(normalization_type, base_channels * 8, num_groups=min(normalization_groups, base_channels * 8)),
             nn.ReLU(inplace=True),
-            ResidualBlock(base_channels * 8),
-            ResidualBlock(base_channels * 8)
+            ResidualBlock(base_channels * 8, normalization_type, normalization_groups),
+            ResidualBlock(base_channels * 8, normalization_type, normalization_groups)
         )
 
         # Decoder path
         self.up3 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, 2, stride=2)
         self.dec3 = nn.Sequential(
             nn.Conv2d(base_channels * 8, base_channels * 4, 3, padding=1),
-            LayerNorm2d(base_channels * 4),
+            get_normalization_layer(normalization_type, base_channels * 4, num_groups=min(normalization_groups, base_channels * 4)),
             nn.ReLU(inplace=True),
-            ResidualBlock(base_channels * 4)
+            ResidualBlock(base_channels * 4, normalization_type, normalization_groups)
         )
 
         self.up2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, 2, stride=2)
         self.dec2 = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 2, 3, padding=1),
-            LayerNorm2d(base_channels * 2),
+            get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
             nn.ReLU(inplace=True),
-            ResidualBlock(base_channels * 2)
+            ResidualBlock(base_channels * 2, normalization_type, normalization_groups)
         )
 
         self.up1 = nn.ConvTranspose2d(base_channels * 2, base_channels, 2, stride=2)
         self.dec1 = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
-            LayerNorm2d(base_channels),
+            get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
             nn.ReLU(inplace=True),
-            ResidualBlock(base_channels)
+            ResidualBlock(base_channels, normalization_type, normalization_groups)
         )
 
         # Final output
@@ -387,7 +395,9 @@ class HierarchicalSegmentationHeadUNet(nn.Module):
         in_channels: int,
         mid_channels: int = 256,
         num_classes: int = 3,
-        mask_size: int = 56
+        mask_size: int = 56,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8
     ):
         """Initialize hierarchical segmentation head with UNet.
 
@@ -413,7 +423,7 @@ class HierarchicalSegmentationHeadUNet(nn.Module):
         )
 
         # Branch 1: Background vs Foreground using UNet
-        self.bg_vs_fg_unet = ShallowUNet(mid_channels, base_channels=128)
+        self.bg_vs_fg_unet = ShallowUNet(mid_channels, base_channels=128, normalization_type=normalization_type, normalization_groups=normalization_groups)
 
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(

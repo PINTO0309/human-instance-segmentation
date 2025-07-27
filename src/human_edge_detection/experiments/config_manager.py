@@ -2491,16 +2491,16 @@ class ConfigManager:
                 num_workers=4
             ),
             training=TrainingConfig(
-                learning_rate=5e-5,  # Lower LR for stability with refinement modules
-                warmup_epochs=10,    # More warmup for stable training
+                learning_rate=1e-5,  # Lower LR for stability with refinement modules
+                warmup_epochs=5,    # More warmup for stable training
                 scheduler='cosine',
                 num_epochs=100,
                 batch_size=2,
                 gradient_clip=1.0,
                 dice_weight=1.0,
                 ce_weight=1.0,
-                weight_decay=0.0001,
-                min_lr=1e-6,
+                weight_decay=0.00001,
+                min_lr=1e-7,
             ),
         ),
 

@@ -54,22 +54,26 @@ class ResidualBlock(nn.Module):
 class BoundaryRefinementModule(nn.Module):
     """Refines mask boundaries using specialized edge processing."""
     
-    def __init__(self, in_channels: int = 3, edge_channels: int = 32):
+    def __init__(self, in_channels: int = 3, edge_channels: int = 32,
+                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
         """Initialize boundary refinement module.
         
         Args:
             in_channels: Number of input channels (3 for 3-class mask)
             edge_channels: Number of channels for edge processing
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for GroupNorm
         """
         super().__init__()
+        from .normalization_comparison import get_normalization_layer
         
         # Edge detection and refinement network
         self.edge_conv = nn.Sequential(
             nn.Conv2d(in_channels, edge_channels, 3, padding=1),
-            LayerNorm2d(edge_channels),
+            get_normalization_layer(normalization_type, edge_channels, num_groups=min(normalization_groups, edge_channels)),
             nn.ReLU(inplace=True),
             nn.Conv2d(edge_channels, edge_channels, 3, padding=1),
-            LayerNorm2d(edge_channels),
+            get_normalization_layer(normalization_type, edge_channels, num_groups=min(normalization_groups, edge_channels)),
             nn.ReLU(inplace=True),
             nn.Conv2d(edge_channels, in_channels, 1)
         )
@@ -141,30 +145,35 @@ class BoundaryRefinementModule(nn.Module):
 class ProgressiveUpsamplingDecoder(nn.Module):
     """Progressive upsampling for smoother boundaries."""
     
-    def __init__(self, in_channels: int, num_classes: int = 3):
+    def __init__(self, in_channels: int, num_classes: int = 3,
+                 normalization_type: str = 'layernorm2d',
+                 normalization_groups: int = 8):
         """Initialize progressive upsampling decoder.
         
         Args:
             in_channels: Number of input feature channels
             num_classes: Number of output classes
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for group normalization
         """
         super().__init__()
+        from .normalization_comparison import get_normalization_layer
         
         # Progressive upsampling stages
         self.stages = nn.ModuleList([
             # Stage 1: 2x upsampling
             nn.Sequential(
                 nn.ConvTranspose2d(in_channels, in_channels//2, 4, stride=2, padding=1),
-                LayerNorm2d(in_channels//2),
+                get_normalization_layer(normalization_type, in_channels//2, num_groups=min(normalization_groups, in_channels//2)),
                 nn.ReLU(inplace=True),
-                ResidualBlock(in_channels//2),
+                ResidualBlock(in_channels//2, normalization_type, normalization_groups),
             ),
             # Stage 2: 2x upsampling
             nn.Sequential(
                 nn.ConvTranspose2d(in_channels//2, in_channels//4, 4, stride=2, padding=1),
-                LayerNorm2d(in_channels//4),
+                get_normalization_layer(normalization_type, in_channels//4, num_groups=min(normalization_groups, in_channels//4)),
                 nn.ReLU(inplace=True),
-                ResidualBlock(in_channels//4),
+                ResidualBlock(in_channels//4, normalization_type, normalization_groups),
             ),
             # Final projection
             nn.Conv2d(in_channels//4, num_classes, 1)
@@ -643,7 +652,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         if use_boundary_refinement:
             self.boundary_refiner = BoundaryRefinementModule(
                 in_channels=num_classes,
-                edge_channels=32
+                edge_channels=32,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups
             )
             
         if use_progressive_upsampling:

@@ -16,7 +16,9 @@ class HierarchicalSegmentationHead(nn.Module):
         in_channels: int,
         mid_channels: int = 256,
         num_classes: int = 3,
-        mask_size: int = 56
+        mask_size: int = 56,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8
     ):
         """Initialize hierarchical segmentation head.
 
@@ -31,33 +33,34 @@ class HierarchicalSegmentationHead(nn.Module):
 
         self.num_classes = num_classes
         self.mask_size = mask_size
+        from .normalization_comparison import get_normalization_layer
 
         # Shared feature processing
         self.shared_features = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
-            LayerNorm2d(mid_channels),
+            get_normalization_layer(normalization_type, mid_channels, num_groups=min(normalization_groups, mid_channels)),
             nn.ReLU(inplace=True),
-            ResidualBlock(mid_channels),
-            ResidualBlock(mid_channels),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups),
         )
 
         # Branch 1: Background vs Foreground (binary)
         self.bg_vs_fg_branch = nn.Sequential(
-            ResidualBlock(mid_channels),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups),
             nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
-            LayerNorm2d(mid_channels // 2),
+            get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
             nn.ReLU(inplace=True),
-            ResidualBlock(mid_channels // 2),
+            ResidualBlock(mid_channels // 2, normalization_type, normalization_groups),
             nn.Conv2d(mid_channels // 2, 2, 1)  # 2 classes: bg, fg
         )
 
         # Branch 2: Target vs Non-target (within foreground)
         self.target_vs_nontarget_branch = nn.Sequential(
-            ResidualBlock(mid_channels),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups),
             nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
-            LayerNorm2d(mid_channels // 2),
+            get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
             nn.ReLU(inplace=True),
-            ResidualBlock(mid_channels // 2),
+            ResidualBlock(mid_channels // 2, normalization_type, normalization_groups),
             nn.Conv2d(mid_channels // 2, 2, 1)  # 2 classes: target, non-target
         )
 
