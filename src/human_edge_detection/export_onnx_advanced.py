@@ -804,12 +804,21 @@ class AdvancedONNXExporter:
         """Simplify ONNX model with onnxsim."""
         print("Simplifying ONNX model with onnxsim...")
         try:
+            import sys
+            import io
+            import contextlib
+            
             model_onnx = onnx.load(model_path)
-            # Try to use the imported simplify function
-            if 'onnxsim_simplify' in globals():
-                model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
-            else:
-                model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
+            
+            # Suppress onnxsim output by redirecting stdout
+            f = io.StringIO()
+            with contextlib.redirect_stdout(f):
+                # Try to use the imported simplify function
+                if 'onnxsim_simplify' in globals():
+                    model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
+                else:
+                    model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
+                    
             if check:
                 onnx.save(model_simp, model_path)
                 print("Model simplified successfully!")

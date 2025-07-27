@@ -7,7 +7,7 @@ with RGB image inputs instead of pre-extracted YOLOv9 features.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Union
 from ..dynamic_roi_align import DynamicRoIAlign
 
 from .hierarchical_segmentation_unet import (
@@ -98,8 +98,8 @@ class HierarchicalRGBSegmentationModel(nn.Module):
     
     def __init__(
         self,
-        roi_size: int = 28,
-        mask_size: int = 56,
+        roi_size: Union[int, Tuple[int, int]] = 28,
+        mask_size: Union[int, Tuple[int, int]] = 56,
         feature_channels: int = 256,
         num_classes: int = 3,
         use_attention_module: bool = False,
@@ -114,8 +114,8 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         """Initialize RGB-based hierarchical segmentation model.
         
         Args:
-            roi_size: Size of input ROIs
-            mask_size: Size of output masks
+            roi_size: Size of input ROIs - int for square or (height, width) tuple for non-square
+            mask_size: Size of output masks - int for square or (height, width) tuple for non-square
             feature_channels: Number of feature channels after extraction
             num_classes: Number of output classes (3 for hierarchical)
             use_attention_module: Whether to use attention modules
@@ -127,8 +127,22 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         """
         super().__init__()
         
-        self.roi_size = roi_size
-        self.mask_size = mask_size
+        # Support non-square ROI sizes
+        if isinstance(roi_size, (tuple, list)):
+            self.roi_height = int(roi_size[0])
+            self.roi_width = int(roi_size[1])
+            self.roi_size = roi_size[0]  # For compatibility
+        else:
+            self.roi_height = self.roi_width = self.roi_size = int(roi_size)
+            
+        # Support non-square mask sizes
+        if isinstance(mask_size, (tuple, list)):
+            self.mask_height = int(mask_size[0])
+            self.mask_width = int(mask_size[1])
+            self.mask_size = mask_size  # Keep original for compatibility checks
+        else:
+            self.mask_height = self.mask_width = int(mask_size)
+            self.mask_size = mask_size
         
         # RGB feature extractor
         # Get normalization configuration
@@ -209,7 +223,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
                 - Dictionary of auxiliary outputs
         """
         # Extract ROI regions from images using DynamicRoIAlign
-        roi_features = self.roi_align(images, rois, self.roi_size, self.roi_size)
+        roi_features = self.roi_align(images, rois, self.roi_height, self.roi_width)
         
         # Extract features from RGB ROIs
         features = self.rgb_extractor(roi_features)
@@ -352,8 +366,8 @@ class MultiScaleRGBSegmentationModel(nn.Module):
 
 
 def create_rgb_hierarchical_model(
-    roi_size: int = 28,
-    mask_size: int = 56,
+    roi_size: Union[int, Tuple[int, int]] = 28,
+    mask_size: Union[int, Tuple[int, int]] = 56,
     multi_scale: bool = False,
     activation_function: str = 'relu',
     activation_beta: float = 1.0,
@@ -364,10 +378,10 @@ def create_rgb_hierarchical_model(
     """Create RGB-based hierarchical segmentation model.
     
     Args:
-        roi_size: Size of input ROIs
-        mask_size: Size of output masks
+        roi_size: Size of input ROIs - int for square or (height, width) tuple for non-square
+        mask_size: Size of output masks - int for square or (height, width) tuple for non-square
         multi_scale: Whether to use multi-scale feature extraction
-        **kwargs: Additional arguments for multi-scale model
+        **kwargs: Additional arguments
         
     Returns:
         Hierarchical segmentation model

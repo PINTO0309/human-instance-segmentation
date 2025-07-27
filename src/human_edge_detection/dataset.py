@@ -160,7 +160,9 @@ class COCOInstanceSegmentationDataset(Dataset):
                 roi_mask[(other_mask_roi > 0) & (roi_mask == 0)] = 2
         
         # Resize ROI mask to fixed size
-        roi_mask_resized = cv2.resize(roi_mask, self.mask_size, interpolation=cv2.INTER_NEAREST)
+        # cv2.resize expects (width, height) but mask_size is (height, width)
+        mask_size_cv2 = (self.mask_size[1], self.mask_size[0]) if isinstance(self.mask_size, tuple) else (self.mask_size, self.mask_size)
+        roi_mask_resized = cv2.resize(roi_mask, mask_size_cv2, interpolation=cv2.INTER_NEAREST)
         
         # Normalize ROI coordinates
         roi_norm = np.array([

@@ -3,7 +3,7 @@
 import json
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union, Tuple
 from dataclasses import dataclass, field, asdict
 import copy
 
@@ -120,8 +120,8 @@ class ModelConfig:
     """Model configuration."""
     onnx_model: str = 'ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx'
     num_classes: int = 3
-    roi_size: int = 28
-    mask_size: int = 56
+    roi_size: Union[int, Tuple[int, int]] = 28  # Can be int for square or (height, width) for non-square
+    mask_size: Union[int, Tuple[int, int]] = 56  # Can be int for square or (height, width) for non-square
     execution_provider: str = 'tensorrt'
     variable_roi_sizes: Optional[Dict[str, int]] = None  # For variable ROI experiments
     use_rgb_enhancement: bool = False  # Whether to use RGB enhancement
@@ -1952,6 +1952,277 @@ class ConfigManager:
                 use_contour_detection=True,
                 use_active_contour_loss=True,
                 use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # BatchNorm configuration
+                normalization_type='batchnorm',
+                normalization_groups=8,  # Not used for BatchNorm but kept for compatibility
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_distance_batchnorm': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_contour_distance_batchnorm',
+            description='RGB Hierarchical UNet V2 Attention with BatchNorm - ROI:64, Mask:64 with Stable Refinement',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=64,
+                onnx_model=None,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # BatchNorm configuration
+                normalization_type='batchnorm',
+                normalization_groups=8,  # Not used for BatchNorm but kept for compatibility
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_attention_r64m64_refined_boundaryref_contour_distance_batchnorm': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_boundaryref_contour_distance_batchnorm',
+            description='RGB Hierarchical UNet V2 Attention with BatchNorm - ROI:64, Mask:64 with Stable Refinement',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=64,
+                onnx_model=None,
+                # Refinement modules
+                use_boundary_refinement=True,
+                use_boundary_aware_loss=False,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # BatchNorm configuration
+                normalization_type='batchnorm',
+                normalization_groups=8,  # Not used for BatchNorm but kept for compatibility
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_attention_r64m64_refined_boundaryref_contour_batchnorm': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_boundaryref_contour_batchnorm',
+            description='RGB Hierarchical UNet V2 Attention with BatchNorm - ROI:64, Mask:64 with Stable Refinement',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=64,
+                onnx_model=None,
+                # Refinement modules
+                use_boundary_refinement=True,
+                use_boundary_aware_loss=False,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=False,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # BatchNorm configuration
+                normalization_type='batchnorm',
+                normalization_groups=8,  # Not used for BatchNorm but kept for compatibility
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_attention_r64m64_refined_batchnorm': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64m64_refined_batchnorm',
+            description='RGB Hierarchical UNet V2 Attention with BatchNorm - ROI:64, Mask:64 with Stable Refinement',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=64,
+                mask_size=64,
+                onnx_model=None,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=False,
+                use_active_contour_loss=False,
+                use_distance_transform=False,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # BatchNorm configuration
+                normalization_type='batchnorm',
+                normalization_groups=8,  # Not used for BatchNorm but kept for compatibility
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+
+        # Non-square ROI configuration based on dataset statistics
+        'rgb_hierarchical_unet_v2_attention_r64x48m64x48_refined_batchnorm': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_attention_r64x48m64x48_refined_batchnorm',
+            description='RGB Hierarchical UNet V2 Attention with BatchNorm - ROI:64x48 (H:W), Mask:64x48 (H:W) - Optimized for dataset aspect ratio',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                mask_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                onnx_model=None,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=False,
+                use_active_contour_loss=False,
+                use_distance_transform=False,
                 use_progressive_upsampling=False,
                 use_subpixel_conv=False,
                 # BatchNorm configuration

@@ -797,17 +797,23 @@ def main():
 
     # Create datasets
     print("\nLoading datasets...")
+    # Handle mask_size as either int or tuple
+    if isinstance(config.model.mask_size, tuple):
+        mask_size = config.model.mask_size
+    else:
+        mask_size = (config.model.mask_size, config.model.mask_size)
+    
     train_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.train_annotation,
         image_dir=config.data.train_img_dir,
-        mask_size=(config.model.mask_size, config.model.mask_size),
+        mask_size=mask_size,
         roi_padding=config.data.roi_padding
     )
 
     val_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.val_annotation,
         image_dir=config.data.val_img_dir,
-        mask_size=(config.model.mask_size, config.model.mask_size),
+        mask_size=mask_size,
         roi_padding=config.data.roi_padding
     )
 

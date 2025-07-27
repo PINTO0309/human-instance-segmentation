@@ -7,7 +7,7 @@ particularly focusing on boundary precision and smoothness.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Union
 from .activation_utils import ActivationConfig, get_activation
 
 
@@ -414,7 +414,7 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         in_channels: int,
         mid_channels: int = 256,
         num_classes: int = 3,
-        mask_size: int = 56,
+        mask_size: Union[int, Tuple[int, int]] = 56,
         dropout_rate: float = 0.1,
         use_attention_module: bool = False,
         normalization_type: str = 'layernorm2d',
@@ -434,7 +434,14 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
         self.num_classes = num_classes
-        self.mask_size = mask_size
+        # Support non-square mask sizes
+        if isinstance(mask_size, (tuple, list)):
+            self.mask_height = int(mask_size[0])
+            self.mask_width = int(mask_size[1])
+            self.mask_size = mask_size  # Keep original for compatibility
+        else:
+            self.mask_height = self.mask_width = int(mask_size)
+            self.mask_size = mask_size
         self.use_attention_module = use_attention_module
         
         # Import normalization utility
@@ -577,7 +584,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         in_channels: int,
         mid_channels: int = 256,
         num_classes: int = 3,
-        mask_size: int = 56,
+        mask_size: Union[int, Tuple[int, int]] = 56,
         use_attention_module: bool = False,
         # Refinement module flags
         use_boundary_refinement: bool = False,
@@ -616,7 +623,14 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             normalization_groups=normalization_groups
         )
         
-        self.mask_size = mask_size
+        # Support non-square mask sizes
+        if isinstance(mask_size, (tuple, list)):
+            self.mask_height = int(mask_size[0])
+            self.mask_width = int(mask_size[1])
+            self.mask_size = mask_size  # Keep original for compatibility
+        else:
+            self.mask_height = self.mask_width = int(mask_size)
+            self.mask_size = mask_size
         self.num_classes = num_classes
         
         # Refinement modules

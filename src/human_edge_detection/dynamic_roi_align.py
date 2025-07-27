@@ -75,6 +75,16 @@ class DynamicRoIAlign(torch.nn.Module):
 
         # Create normalized coordinates [0, 1] for output grid points
         # These represent relative positions within each output bin
+        # Ensure output_width and output_height are integers
+        if isinstance(output_width, (list, tuple)):
+            output_width = output_width[0] if len(output_width) > 0 else output_width
+        if isinstance(output_height, (list, tuple)):
+            output_height = output_height[0] if len(output_height) > 0 else output_height
+        if torch.is_tensor(output_width):
+            output_width = int(output_width.item())
+        if torch.is_tensor(output_height):
+            output_height = int(output_height.item())
+            
         x_coords_normalized = torch.linspace(0, 1, output_width, device=rois.device)
         y_coords_normalized = torch.linspace(0, 1, output_height, device=rois.device)
 

@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 from ..model import LayerNorm2d
 from .attention_modules import ChannelAttentionModule, SpatialAttentionModule
@@ -472,7 +472,7 @@ class HierarchicalSegmentationHeadUNet(nn.Module):
         # Combine predictions hierarchically
         # Final logits: [background, target, non-target]
         batch_size = features.shape[0]
-        final_logits = torch.zeros(batch_size, 3, self.mask_size, self.mask_size,
+        final_logits = torch.zeros(batch_size, 3, self.mask_height, self.mask_width,
                                   device=features.device)
 
         # Background probability from UNet branch
@@ -634,7 +634,7 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         in_channels: int,
         mid_channels: int = 256,
         num_classes: int = 3,
-        mask_size: int = 56,
+        mask_size: Union[int, Tuple[int, int]] = 56,
         dropout_rate: float = 0.1,
         use_attention_module: bool = False
     ):
@@ -644,7 +644,7 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
             in_channels: Input feature channels
             mid_channels: Intermediate channel count
             num_classes: Total number of classes (should be 3)
-            mask_size: Output mask size
+            mask_size: Output mask size - int for square or (height, width) tuple for non-square
             dropout_rate: Dropout rate for regularization
             use_attention_module: Whether to use attention modules
         """
@@ -652,7 +652,14 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
 
         self.num_classes = num_classes
-        self.mask_size = mask_size
+        # Support non-square mask sizes
+        if isinstance(mask_size, (tuple, list)):
+            self.mask_height = int(mask_size[0])
+            self.mask_width = int(mask_size[1])
+            self.mask_size = mask_size  # Keep original for compatibility
+        else:
+            self.mask_height = self.mask_width = int(mask_size)
+            self.mask_size = mask_size
         self.use_attention_module = use_attention_module
 
         # Shared feature processing with dropout
@@ -727,14 +734,16 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         # Upsample to mask size dynamically
         # First apply convolution
         bg_fg_logits = self.upsample_bg_fg(bg_fg_logits_low)
-        # Then interpolate to exact mask size if needed
-        if bg_fg_logits.shape[2] != self.mask_size or bg_fg_logits.shape[3] != self.mask_size:
-            bg_fg_logits = F.interpolate(
-                bg_fg_logits,
-                size=(self.mask_size, self.mask_size),
-                mode='bilinear',
-                align_corners=False
-            )
+        # Always interpolate to exact mask size (will be no-op if already correct size)
+        # This avoids TracerWarning during ONNX export
+        mask_h = int(self.mask_height) if not isinstance(self.mask_height, int) else self.mask_height
+        mask_w = int(self.mask_width) if not isinstance(self.mask_width, int) else self.mask_width
+        bg_fg_logits = F.interpolate(
+            bg_fg_logits,
+            size=(mask_h, mask_w),
+            mode='bilinear',
+            align_corners=False
+        )
         bg_fg_probs = F.softmax(bg_fg_logits, dim=1)
 
         # Create foreground attention gate from UNet features
@@ -753,18 +762,23 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
             # Original sequential processing
             target_nontarget_logits = self.target_vs_nontarget_branch(gated_features)
         
-        # Ensure target_nontarget_logits matches mask_size
-        if target_nontarget_logits.shape[2] != self.mask_size or target_nontarget_logits.shape[3] != self.mask_size:
-            target_nontarget_logits = F.interpolate(
-                target_nontarget_logits,
-                size=(self.mask_size, self.mask_size),
-                mode='bilinear',
-                align_corners=False
-            )
+        # Always interpolate to exact mask size (will be no-op if already correct size)
+        # This avoids TracerWarning during ONNX export
+        mask_h = int(self.mask_height) if not isinstance(self.mask_height, int) else self.mask_height
+        mask_w = int(self.mask_width) if not isinstance(self.mask_width, int) else self.mask_width
+        target_nontarget_logits = F.interpolate(
+            target_nontarget_logits,
+            size=(mask_h, mask_w),
+            mode='bilinear',
+            align_corners=False
+        )
 
         # Combine predictions hierarchically
         batch_size = features.shape[0]
-        final_logits = torch.zeros(batch_size, 3, self.mask_size, self.mask_size,
+        # Ensure mask dimensions are integers for torch.zeros
+        mask_h = int(self.mask_height) if not isinstance(self.mask_height, int) else self.mask_height
+        mask_w = int(self.mask_width) if not isinstance(self.mask_width, int) else self.mask_width
+        final_logits = torch.zeros(batch_size, 3, mask_h, mask_w,
                                   device=features.device)
 
         final_logits[:, 0] = bg_fg_logits[:, 0]
