@@ -2499,7 +2499,7 @@ class ConfigManager:
                 gradient_clip=1.0,
                 dice_weight=1.0,
                 ce_weight=1.0,
-                weight_decay=0.00001,
+                weight_decay=0.01,
                 min_lr=1e-7,
             ),
         ),
