@@ -26,16 +26,28 @@ class DynamicRoIAlign(torch.nn.Module):
         """Initialize DynamicRoIAlign module.
 
         Args:
-            spatial_scale (float): Scale factor to convert ROI coordinates to feature map space.
-                                    For example, if ROIs are in image space (640x640) and features
-                                    are 80x80, spatial_scale should be 80/640 = 0.125.
+            spatial_scale (float or tuple): Scale factor to convert ROI coordinates to feature map space.
+                                    Can be a single float for square images, or a tuple (scale_h, scale_w)
+                                    for non-square images. For example:
+                                    - Square: If ROIs are normalized [0,1] and features are 640x640, spatial_scale=640
+                                    - Non-square: If ROIs are normalized [0,1] and features are 480x640,
+                                      spatial_scale=(480, 640)
             sampling_ratio (int): Number of sampling points per bin. -1 for adaptive.
                                     (Currently not implemented in this version)
             aligned (bool): Whether to use pixel-aligned sampling. This affects how
                             coordinates are normalized for grid_sample.
         """
         super().__init__()
-        self.spatial_scale = spatial_scale
+        # Handle both single value and tuple for spatial_scale
+        if isinstance(spatial_scale, (list, tuple)):
+            assert len(spatial_scale) == 2, "spatial_scale tuple must have 2 elements (height, width)"
+            self.spatial_scale = spatial_scale
+            self.spatial_scale_h = spatial_scale[0]
+            self.spatial_scale_w = spatial_scale[1]
+        else:
+            self.spatial_scale = spatial_scale
+            self.spatial_scale_h = spatial_scale
+            self.spatial_scale_w = spatial_scale
         self.sampling_ratio = sampling_ratio
         self.aligned = aligned
 
@@ -63,10 +75,17 @@ class DynamicRoIAlign(torch.nn.Module):
 
         # Extract batch indices and scale ROI coordinates to feature map space
         batch_indices = rois[:, 0].long()
-        boxes = rois[:, 1:] * self.spatial_scale
+        # Scale x and y coordinates separately for non-square images
+        # rois format: [batch_idx, x1, y1, x2, y2] where x,y are normalized [0,1]
+        x1 = rois[:, 1] * self.spatial_scale_w
+        y1 = rois[:, 2] * self.spatial_scale_h
+        x2 = rois[:, 3] * self.spatial_scale_w
+        y2 = rois[:, 4] * self.spatial_scale_h
 
-        # Extract individual coordinates and compute ROI dimensions
-        x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+        # Stack back into boxes tensor
+        boxes = torch.stack([x1, y1, x2, y2], dim=1)
+
+        # ROI dimensions are already computed
         roi_width = x2 - x1
         roi_height = y2 - y1
 
@@ -84,7 +103,7 @@ class DynamicRoIAlign(torch.nn.Module):
             output_width = int(output_width.item())
         if torch.is_tensor(output_height):
             output_height = int(output_height.item())
-            
+
         x_coords_normalized = torch.linspace(0, 1, output_width, device=rois.device)
         y_coords_normalized = torch.linspace(0, 1, output_height, device=rois.device)
 
@@ -102,23 +121,26 @@ class DynamicRoIAlign(torch.nn.Module):
         # fx = x1 + (grid_x + 0.5) * bin_width
         # fy = y1 + (grid_y + 0.5) * bin_height
 
-        # Calculate bin dimensions for each ROI
-        # Each output pixel corresponds to a bin in the original ROI
-        # Shape: (num_rois, 1, 1) for broadcasting
-        bin_width_per_roi = (roi_width / output_width).unsqueeze(1).unsqueeze(2)
-        bin_height_per_roi = (roi_height / output_height).unsqueeze(1).unsqueeze(2)
+        # Note: bin dimensions are implicitly handled by the grid normalization
+        # Each output pixel samples from the corresponding portion of the ROI
 
         # Calculate actual feature map coordinates for each sampling point
-        # Adding 0.5 samples from bin centers rather than corners
+        # The grid already represents positions from 0 to 1 within the ROI
         # Shape: (num_rois, output_height, output_width)
-        fx = x1.unsqueeze(1).unsqueeze(2) + (grid_x_expanded + 0.5) * bin_width_per_roi
-        fy = y1.unsqueeze(1).unsqueeze(2) + (grid_y_expanded + 0.5) * bin_height_per_roi
+        fx = x1.unsqueeze(1).unsqueeze(2) + grid_x_expanded * roi_width.unsqueeze(1).unsqueeze(2)
+        fy = y1.unsqueeze(1).unsqueeze(2) + grid_y_expanded * roi_height.unsqueeze(1).unsqueeze(2)
 
         # Normalize coordinates to [-1, 1] range required by grid_sample
         # grid_sample expects -1 for top-left corner and 1 for bottom-right
         H_feat, W_feat = input_feature_map.shape[2], input_feature_map.shape[3]
-        normalized_fx = (fx / (W_feat - 1)) * 2 - 1
-        normalized_fy = (fy / (H_feat - 1)) * 2 - 1
+        if self.aligned:
+            # When align_corners=True, corners map to corners
+            normalized_fx = (fx / (W_feat - 1)) * 2 - 1
+            normalized_fy = (fy / (H_feat - 1)) * 2 - 1
+        else:
+            # When align_corners=False, pixel centers are used
+            normalized_fx = (fx / W_feat) * 2 - 1
+            normalized_fy = (fy / H_feat) * 2 - 1
 
         # Stack x and y coordinates to form sampling grid
         # Shape: (num_rois, output_height, output_width, 2)

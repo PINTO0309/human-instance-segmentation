@@ -442,7 +442,14 @@ def build_loss_function(
         )
 
     # Wrap with multi-task loss if auxiliary task is enabled
-    if config.auxiliary_task.enabled:
+    # BUT skip for hierarchical models as they handle auxiliary outputs internally
+    is_hierarchical = config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(
+        getattr(config.model, attr, False) 
+        for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 
+                     'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']
+    )
+    
+    if config.auxiliary_task.enabled and not is_hierarchical:
         loss_fn = MultiTaskLoss(
             main_loss_fn=loss_fn,
             aux_weight=config.auxiliary_task.weight,

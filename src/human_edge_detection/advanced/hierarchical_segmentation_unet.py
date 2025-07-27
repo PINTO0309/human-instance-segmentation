@@ -1684,8 +1684,10 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.classes = classes
-        self.mean = mean if mean is not None else [0.485, 0.456, 0.406]
-        self.std = std if std is not None else [0.229, 0.224, 0.225]
+        # Use simple normalization as it works best for this model
+        # Convert [0, 1] to [-1, 1] range
+        self.mean = mean if mean is not None else [0.5, 0.5, 0.5]
+        self.std = std if std is not None else [0.5, 0.5, 0.5]
 
         # Import segmentation_models_pytorch - will need to add to dependencies
         try:

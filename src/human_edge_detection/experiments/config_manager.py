@@ -2381,7 +2381,11 @@ class ConfigManager:
                 min_lr=1e-7,
             ),
         ),
+
+
+        ##############################################################################################
         # Full-image pre-trained people segmentation model variant
+        ##############################################################################################
         'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48',
             description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:64x48 (H:W)',
@@ -2428,7 +2432,7 @@ class ConfigManager:
                 num_workers=4
             ),
             training=TrainingConfig(
-                learning_rate=5e-5,
+                learning_rate=1e-4,
                 warmup_epochs=5,
                 scheduler='cosine',
                 num_epochs=100,
@@ -2437,7 +2441,7 @@ class ConfigManager:
                 dice_weight=1.0,
                 ce_weight=1.0,
                 weight_decay=0.0001,
-                min_lr=1e-7,
+                min_lr=1e-6,
             ),
         ),
 

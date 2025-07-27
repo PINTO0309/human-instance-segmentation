@@ -178,6 +178,19 @@ class HierarchicalLoss(nn.Module):
         self.dice_weight = dice_weight
         self.ce_weight = ce_weight
         
+        # Initialize EMA weights for dynamic weighting
+        if self.use_dynamic_weights:
+            self._ema_bg_weight = 1.0
+            self._ema_fg_weight = 1.0
+            self._ema_target_weight = 1.0
+            self._ema_nontarget_weight = 1.0
+        
+        # Initialize tracking variables
+        self._last_bg_weight = 1.0
+        self._last_fg_weight = 1.0
+        self._last_target_weight = 1.0
+        self._last_nontarget_weight = 1.0
+        
         # Initialize Dice loss for target class
         from ..losses import DiceLoss
         self.dice_loss = DiceLoss()

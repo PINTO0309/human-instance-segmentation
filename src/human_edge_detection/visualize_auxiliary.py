@@ -274,8 +274,16 @@ class ValidationVisualizerWithAuxiliary:
                 # Panel 1: Ground Truth
                 panel1_img = self._create_panel_ground_truth(image_np, anns, orig_width, orig_height)
 
-                # Panel 2: Enhanced Heatmap
-                panel2_img = self._create_panel_heatmap(image_np, auxiliary_pred)
+                # Panel 2: Binary Mask Heatmap (from pre-trained UNet)
+                # Use full_image_logits for Binary Mask Heatmap to show pre-trained UNet output
+                pretrained_unet_heatmap = None
+                if 'full_image_logits' in unet_outputs:
+                    full_image_logits = unet_outputs['full_image_logits']
+                    if isinstance(full_image_logits, torch.Tensor):
+                        # Apply sigmoid to convert logits to probabilities
+                        pretrained_unet_probs = torch.sigmoid(full_image_logits).detach().cpu().numpy()
+                        pretrained_unet_heatmap = pretrained_unet_probs[0, 0]  # Shape: (640, 640)
+                panel2_img = self._create_panel_heatmap(image_np, pretrained_unet_heatmap)
 
                 # Panel 3: Enhanced UNet FG/BG
                 panel3_img = self._create_panel_unet_fg_bg(image_np, unet_outputs)

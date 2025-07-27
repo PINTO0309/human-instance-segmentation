@@ -21,15 +21,15 @@ def convert_batch_format(batch: List[Dict]) -> Dict:
     
     # Convert roi_coords to roi_boxes format
     # roi_coords is normalized [x1, y1, x2, y2]
-    # roi_boxes needs [batch_idx, x1, y1, x2, y2] in pixel coordinates
+    # roi_boxes needs [batch_idx, x1, y1, x2, y2] in normalized coordinates [0.0-1.0]
     roi_boxes = []
     for i, item in enumerate(batch):
         roi_norm = item['roi_coords']
-        # Denormalize to pixel coordinates (assuming 640x640 images)
-        x1 = roi_norm[0] * 640
-        y1 = roi_norm[1] * 640
-        x2 = roi_norm[2] * 640
-        y2 = roi_norm[3] * 640
+        # Keep coordinates normalized as [0.0-1.0]
+        x1 = roi_norm[0]
+        y1 = roi_norm[1]
+        x2 = roi_norm[2]
+        y2 = roi_norm[3]
         roi_boxes.append([i, x1, y1, x2, y2])
     
     roi_boxes = torch.tensor(roi_boxes, dtype=torch.float32)
