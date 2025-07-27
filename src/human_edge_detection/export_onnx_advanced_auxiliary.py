@@ -259,7 +259,17 @@ def export_model_inference_only(
         dummy_inputs = (dummy_features, dummy_rois)
 
     # Output configuration (main output only for inference)
-    dynamic_axes['masks'] = {0: 'num_rois'}
+    # Extract mask size from config
+    if 'config' in checkpoint and config and hasattr(config.model, 'mask_size'):
+        mask_size = config.model.mask_size
+        if isinstance(mask_size, int):
+            mask_height = mask_width = mask_size
+        else:
+            mask_height, mask_width = mask_size
+    else:
+        mask_height = mask_width = 56  # Default
+    
+    dynamic_axes['masks'] = {0: 'num_rois', 2: str(mask_height), 3: str(mask_width)}
     output_names = ['masks']
     # Auxiliary output excluded for inference efficiency
 
@@ -282,12 +292,20 @@ def export_model_inference_only(
     if ONNXSIM_AVAILABLE:
         print("\nSimplifying model with onnxsim...")
         try:
+            import sys
+            import io
+            import contextlib
+
             model_onnx = onnx.load(output_path)
-            # Try to use the imported simplify function
-            if 'onnxsim_simplify' in globals():
-                model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
-            else:
-                model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
+            # Suppress onnxsim output by redirecting stdout and stderr
+            f_stdout = io.StringIO()
+            f_stderr = io.StringIO()
+            with contextlib.redirect_stdout(f_stdout), contextlib.redirect_stderr(f_stderr):
+                # Try to use the imported simplify function
+                if 'onnxsim_simplify' in globals():
+                    model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
+                else:
+                    model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
             if check:
                 onnx.save(model_simp, output_path)
                 print("Model simplified successfully!")

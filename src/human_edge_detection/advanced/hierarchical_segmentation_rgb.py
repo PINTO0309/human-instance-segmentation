@@ -517,6 +517,15 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
         use_attention_module: bool = False,
         freeze_pretrained_weights: bool = False,
+        # Refinement module flags
+        use_boundary_refinement: bool = False,
+        use_progressive_upsampling: bool = False,
+        use_subpixel_conv: bool = False,
+        use_contour_detection: bool = False,
+        use_distance_transform: bool = False,
+        # Normalization configuration
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8,
     ):
         """Initialize hierarchical RGB segmentation model with full-image pre-trained UNet.
         
@@ -526,6 +535,13 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             pretrained_weights_path: Path to pre-trained weights
             use_attention_module: Whether to use attention in target/non-target branch
             freeze_pretrained_weights: If True, freeze pre-trained UNet weights
+            use_boundary_refinement: Enable boundary refinement
+            use_progressive_upsampling: Enable progressive upsampling
+            use_subpixel_conv: Enable sub-pixel convolution
+            use_contour_detection: Enable contour detection branch
+            use_distance_transform: Enable distance transform prediction
+            normalization_type: Type of normalization to use
+            normalization_groups: Number of groups for group normalization
         """
         super().__init__()
         
@@ -590,14 +606,50 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             nn.ReLU(inplace=True),
         )
         
-        # Use new segmentation head that directly uses pre-trained UNet output
-        self.segmentation_head = PretrainedUNetGuidedSegmentationHead(
-            in_channels=feature_dim,
-            mid_channels=256,
-            num_classes=3,
-            mask_size=self.mask_size[0] if self.mask_size[0] == self.mask_size[1] else self.mask_size,
-            use_attention_module=use_attention_module,
-        )
+        # Since we need to incorporate pre-trained UNet bg/fg masks,
+        # we'll concatenate them with features, so adjust input channels
+        # feature_dim (256) + 1 channel for bg/fg mask = 257
+        combined_feature_dim = feature_dim + 1
+        
+        # Check if any refinement modules are enabled
+        use_refinement = any([
+            use_boundary_refinement,
+            use_progressive_upsampling,
+            use_subpixel_conv,
+            use_contour_detection,
+            use_distance_transform
+        ])
+        
+        if use_refinement:
+            # Use refined hierarchical segmentation head with refinement modules
+            from .hierarchical_segmentation_refinement import RefinedHierarchicalSegmentationHead
+            
+            # Adapter to combine features with bg/fg masks before refinement head
+            self.feature_combiner = nn.Conv2d(combined_feature_dim, feature_dim, 1)
+            
+            self.segmentation_head = RefinedHierarchicalSegmentationHead(
+                in_channels=feature_dim,
+                mid_channels=256,
+                num_classes=3,
+                mask_size=self.mask_size[0] if self.mask_size[0] == self.mask_size[1] else self.mask_size,
+                use_attention_module=use_attention_module,
+                use_boundary_refinement=use_boundary_refinement,
+                use_progressive_upsampling=use_progressive_upsampling,
+                use_subpixel_conv=use_subpixel_conv,
+                use_contour_detection=use_contour_detection,
+                use_distance_transform=use_distance_transform,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups,
+            )
+        else:
+            # Use standard segmentation head that directly uses pre-trained UNet output
+            self.segmentation_head = PretrainedUNetGuidedSegmentationHead(
+                in_channels=feature_dim,
+                mid_channels=256,
+                num_classes=3,
+                mask_size=self.mask_size[0] if self.mask_size[0] == self.mask_size[1] else self.mask_size,
+                use_attention_module=use_attention_module,
+            )
         
     def forward(self, images: torch.Tensor, rois: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
         """Forward pass.
@@ -623,7 +675,14 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         rgb_features = self.rgb_feature_extractor(roi_rgb_patches)
         
         # Apply hierarchical segmentation head with pre-trained UNet output as guidance
-        predictions, aux_outputs = self.segmentation_head(rgb_features, roi_bg_fg_masks)
+        if hasattr(self, 'feature_combiner'):
+            # For refined segmentation head, combine features with bg/fg masks
+            combined_features = torch.cat([rgb_features, roi_bg_fg_masks], dim=1)
+            combined_features = self.feature_combiner(combined_features)
+            predictions, aux_outputs = self.segmentation_head(combined_features)
+        else:
+            # For PretrainedUNetGuidedSegmentationHead, pass both features and masks
+            predictions, aux_outputs = self.segmentation_head(rgb_features, roi_bg_fg_masks)
         
         # Add full image UNet output to auxiliary outputs
         aux_outputs['full_image_logits'] = full_image_logits
@@ -821,6 +880,13 @@ def create_rgb_hierarchical_model(
                     pretrained_weights_path=pretrained_weights_path,
                     use_attention_module=use_attention_module,
                     freeze_pretrained_weights=freeze_pretrained_weights,
+                    use_boundary_refinement=use_boundary_refinement,
+                    use_progressive_upsampling=use_progressive_upsampling,
+                    use_subpixel_conv=use_subpixel_conv,
+                    use_contour_detection=use_contour_detection,
+                    use_distance_transform=use_distance_transform,
+                    normalization_type=normalization_type,
+                    normalization_groups=normalization_groups,
                 )
             else:
                 # Create model with ROI-based pre-trained UNet

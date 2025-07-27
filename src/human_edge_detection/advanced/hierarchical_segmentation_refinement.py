@@ -527,10 +527,10 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         bg_fg_logits_low = self.bg_vs_fg_unet(shared)
         
         bg_fg_logits = self.upsample_bg_fg(bg_fg_logits_low)
-        if bg_fg_logits.shape[2] != self.mask_size or bg_fg_logits.shape[3] != self.mask_size:
+        if bg_fg_logits.shape[2] != self.mask_height or bg_fg_logits.shape[3] != self.mask_width:
             bg_fg_logits = F.interpolate(
                 bg_fg_logits,
-                size=(self.mask_size, self.mask_size),
+                size=(self.mask_height, self.mask_width),
                 mode='bilinear',
                 align_corners=False
             )
@@ -547,17 +547,17 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         else:
             target_nontarget_logits = self.target_vs_nontarget_branch(gated_features)
         
-        if target_nontarget_logits.shape[2] != self.mask_size or target_nontarget_logits.shape[3] != self.mask_size:
+        if target_nontarget_logits.shape[2] != self.mask_height or target_nontarget_logits.shape[3] != self.mask_width:
             target_nontarget_logits = F.interpolate(
                 target_nontarget_logits,
-                size=(self.mask_size, self.mask_size),
+                size=(self.mask_height, self.mask_width),
                 mode='bilinear',
                 align_corners=False
             )
         
         # Combine predictions
         batch_size = features.shape[0]
-        final_logits = torch.zeros(batch_size, 3, self.mask_size, self.mask_size,
+        final_logits = torch.zeros(batch_size, 3, self.mask_height, self.mask_width,
                                   device=features.device)
         
         final_logits[:, 0] = bg_fg_logits[:, 0]
@@ -702,10 +702,10 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         elif self.use_subpixel_conv and bg_fg_features is not None:
             # Re-decode with sub-pixel convolution
             refined_masks = self.subpixel_decoder(bg_fg_features)
-            if refined_masks.shape[-1] != self.mask_size:
+            if refined_masks.shape[2] != self.mask_height or refined_masks.shape[3] != self.mask_width:
                 refined_masks = F.interpolate(
                     refined_masks, 
-                    size=self.mask_size, 
+                    size=(self.mask_height, self.mask_width), 
                     mode='bilinear', 
                     align_corners=False
                 )
@@ -718,10 +718,10 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         if self.use_contour_detection and bg_fg_features is not None:
             contours = self.contour_branch(bg_fg_features)
             # Ensure contours match mask size
-            if contours.shape[2] != self.mask_size or contours.shape[3] != self.mask_size:
+            if contours.shape[2] != self.mask_height or contours.shape[3] != self.mask_width:
                 contours = F.interpolate(
                     contours, 
-                    size=self.mask_size, 
+                    size=(self.mask_height, self.mask_width), 
                     mode='bilinear', 
                     align_corners=False
                 )
@@ -730,17 +730,17 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         if self.use_distance_transform and bg_fg_features is not None:
             dist_mask, dist_map = self.distance_decoder(bg_fg_features)
             # Ensure distance outputs match mask size
-            if dist_mask.shape[2] != self.mask_size or dist_mask.shape[3] != self.mask_size:
+            if dist_mask.shape[2] != self.mask_height or dist_mask.shape[3] != self.mask_width:
                 dist_mask = F.interpolate(
                     dist_mask,
-                    size=self.mask_size,
+                    size=(self.mask_height, self.mask_width),
                     mode='bilinear',
                     align_corners=False
                 )
-            if dist_map.shape[2] != self.mask_size or dist_map.shape[3] != self.mask_size:
+            if dist_map.shape[2] != self.mask_height or dist_map.shape[3] != self.mask_width:
                 dist_map = F.interpolate(
                     dist_map,
-                    size=self.mask_size,
+                    size=(self.mask_height, self.mask_width),
                     mode='bilinear',
                     align_corners=False
                 )

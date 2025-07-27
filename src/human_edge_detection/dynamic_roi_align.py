@@ -15,27 +15,29 @@ class DynamicRoIAlign(torch.nn.Module):
     different ROIs may require different levels of detail.
 
     Attributes:
-        spatial_scale (float): Scale factor between input feature map and ROI coordinates.
-                                Default is 1.0, meaning ROI coordinates are in feature map space.
+        spatial_scale (float or tuple): Scale factor to convert ROI coordinates to feature map space.
+            Can be a single float for square images, or a tuple (scale_h, scale_w)
+            for non-square images. For example:
+            - Square: If ROIs are normalized [0,1] and features are 640x640, spatial_scale=640
+            - Non-square: If ROIs are normalized [0,1] and features are 480x640, spatial_scale=(480, 640)
         sampling_ratio (int): Number of sampling points in each bin. -1 means adaptive.
-                                (Note: Currently not used in this implementation)
+            (Note: Currently not used in this implementation)
         aligned (bool): If True, use pixel-aligned grid_sample. Default is False.
     """
 
-    def __init__(self, spatial_scale=1.0, sampling_ratio=-1, aligned=False):
+    def __init__(self, spatial_scale=(640, 640), sampling_ratio=-1, aligned=False):
         """Initialize DynamicRoIAlign module.
 
         Args:
             spatial_scale (float or tuple): Scale factor to convert ROI coordinates to feature map space.
-                                    Can be a single float for square images, or a tuple (scale_h, scale_w)
-                                    for non-square images. For example:
-                                    - Square: If ROIs are normalized [0,1] and features are 640x640, spatial_scale=640
-                                    - Non-square: If ROIs are normalized [0,1] and features are 480x640,
-                                      spatial_scale=(480, 640)
+                Can be a single float for square images, or a tuple (scale_h, scale_w)
+                for non-square images. For example:
+                - Square: If ROIs are normalized [0,1] and features are 640x640, spatial_scale=640
+                - Non-square: If ROIs are normalized [0,1] and features are 480x640, spatial_scale=(480, 640)
             sampling_ratio (int): Number of sampling points per bin. -1 for adaptive.
-                                    (Currently not implemented in this version)
+                (Currently not implemented in this version)
             aligned (bool): Whether to use pixel-aligned sampling. This affects how
-                            coordinates are normalized for grid_sample.
+                coordinates are normalized for grid_sample.
         """
         super().__init__()
         # Handle both single value and tuple for spatial_scale
@@ -56,20 +58,21 @@ class DynamicRoIAlign(torch.nn.Module):
 
         Args:
             input_feature_map (torch.Tensor): Input feature tensor of shape (N, C, H, W)
-                                                where N is batch size, C is channels,
-                                                H and W are spatial dimensions.
+                where N is batch size, C is channels,
+                H and W are spatial dimensions.
             rois (torch.Tensor): ROI tensor of shape (K, 5) where K is number of ROIs.
-                                    Each ROI is [batch_idx, x1, y1, x2, y2].
-                                    Coordinates should be in the same space as specified
-                                    by spatial_scale.
+                Each ROI is [batch_idx, x1, y1, x2, y2].
+                Coordinates should be in the same space as specified
+                by spatial_scale.
+                All coordinate values must be normalized to the range 0.0 to 1.0.
             output_height (int or torch.Tensor): Desired output height for aligned features.
-                                                Can be different for each forward pass.
+                Can be different for each forward pass.
             output_width (int or torch.Tensor): Desired output width for aligned features.
-                                                Can be different for each forward pass.
+                Can be different for each forward pass.
 
         Returns:
             torch.Tensor: Aligned features of shape (K, C, output_height, output_width)
-                            where K is the number of ROIs and C matches input channels.
+                where K is the number of ROIs and C matches input channels.
         """
         num_rois = rois.shape[0]
 

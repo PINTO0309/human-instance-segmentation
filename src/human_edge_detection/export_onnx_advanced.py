@@ -26,7 +26,7 @@ except ImportError:
 class AdvancedONNXExporter:
     """Export both baseline and multiscale models to ONNX format."""
 
-    def __init__(self, model: nn.Module, model_type: str = 'baseline', device: str = 'cpu', include_auxiliary: bool = False):
+    def __init__(self, model: nn.Module, model_type: str = 'baseline', device: str = 'cpu', include_auxiliary: bool = False, mask_size=None):
         """Initialize exporter.
 
         Args:
@@ -34,11 +34,29 @@ class AdvancedONNXExporter:
             model_type: Type of model ('baseline' or 'multiscale')
             device: Device to use for export
             include_auxiliary: Whether to include auxiliary outputs in ONNX export
+            mask_size: Mask size (int or tuple) from config
         """
         self.model = model.to(device)
         self.model_type = model_type
         self.device = device
         self.include_auxiliary = include_auxiliary
+        
+        # Extract mask size
+        if mask_size is not None:
+            self.mask_size = mask_size
+        elif hasattr(model, 'segmentation_head') and hasattr(model.segmentation_head, 'mask_size'):
+            self.mask_size = model.segmentation_head.mask_size
+        elif hasattr(model, 'main_head') and hasattr(model.main_head, 'segmentation_head') and hasattr(model.main_head.segmentation_head, 'mask_size'):
+            self.mask_size = model.main_head.segmentation_head.mask_size
+        else:
+            self.mask_size = 56  # Default
+        
+        # Convert to tuple if int
+        if isinstance(self.mask_size, int):
+            self.mask_height = self.mask_size
+            self.mask_width = self.mask_size
+        else:
+            self.mask_height, self.mask_width = self.mask_size
 
     def export(
         self,
@@ -108,7 +126,7 @@ class AdvancedONNXExporter:
                 dynamic_axes={
                     'features': {0: 'batch_size'},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois'}
+                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
                 },
                 opset_version=opset_version,
                 do_constant_folding=True,
@@ -221,7 +239,7 @@ class AdvancedONNXExporter:
                 dynamic_axes={
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois'}
+                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
                 },
                 opset_version=opset_version,
                 do_constant_folding=True,
@@ -255,24 +273,24 @@ class AdvancedONNXExporter:
     ) -> bool:
         """Export hierarchical segmentation model."""
         print("Exporting hierarchical segmentation model...")
-        
+
         self.model.eval()
-        
+
         # Check if this is an RGB hierarchical model
         # Check the actual model class or if it's wrapped in MultiTaskSegmentationModel
         model_to_check = self.model
         if hasattr(self.model, 'main_head'):
             # If wrapped in MultiTaskSegmentationModel, check the main head
             model_to_check = self.model.main_head
-            
+
         is_rgb_hierarchical = (
             hasattr(model_to_check, 'rgb_extractor') or
             model_to_check.__class__.__name__ in ['HierarchicalRGBSegmentationModel', 'MultiScaleRGBSegmentationModel'] or
-            (hasattr(model_to_check, 'segmentation_head') and 
+            (hasattr(model_to_check, 'segmentation_head') and
              hasattr(model_to_check.segmentation_head, '__class__') and
              'HierarchicalSegmentationHeadUNetV2' in model_to_check.segmentation_head.__class__.__name__)
         )
-        
+
         if is_rgb_hierarchical:
             # RGB hierarchical models take images as input
             print("Detected RGB hierarchical model - using image input")
@@ -284,20 +302,20 @@ class AdvancedONNXExporter:
                 [100, 100, 300, 300],
                 [200, 200, 400, 400]
             ]).float()
-            
+
             class RGBHierarchicalWrapper(nn.Module):
                 def __init__(self, model, include_auxiliary=False):
                     super().__init__()
                     self.model = model
                     self.include_auxiliary = include_auxiliary
-                    
+
                 def forward(self, images, rois):
                     output = self.model(images, rois)
                     if isinstance(output, tuple) and self.include_auxiliary:
                         # Extract main output and auxiliary outputs
                         masks = output[0]
                         aux_dict = output[1] if len(output) > 1 else {}
-                        
+
                         # Return specific outputs in the expected order
                         if isinstance(aux_dict, dict):
                             bg_fg_logits = aux_dict.get('bg_fg_logits', torch.zeros_like(masks)[:, :2])
@@ -308,10 +326,10 @@ class AdvancedONNXExporter:
                     elif isinstance(output, tuple):
                         return output[0]  # Return only logits
                     return output
-            
+
             wrapper = RGBHierarchicalWrapper(self.model, self.include_auxiliary)
             wrapper.eval()
-            
+
             try:
                 # Determine output names and dynamic axes
                 if self.include_auxiliary:
@@ -319,7 +337,7 @@ class AdvancedONNXExporter:
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois'},
+                        'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)},
                         'bg_fg_logits': {0: 'num_rois'},
                         'target_nontarget_logits': {0: 'num_rois'}
                     }
@@ -328,9 +346,9 @@ class AdvancedONNXExporter:
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois'}
+                        'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
                     }
-                
+
                 torch.onnx.export(
                     wrapper,
                     (dummy_image, dummy_rois),
@@ -342,31 +360,31 @@ class AdvancedONNXExporter:
                     do_constant_folding=True,
                     verbose=False
                 )
-                
+
                 print("Export successful!")
-                
+
                 if ONNXSIM_AVAILABLE:
                     self._simplify_model(output_path)
-                    
+
                 if verify:
                     print("Verification skipped for RGB hierarchical models.")
-                
+
                 return True
-                
+
             except Exception as e:
                 print(f"Export failed: {e}")
                 import traceback
                 traceback.print_exc()
                 return False
-        
+
         # Non-RGB hierarchical models need hierarchical_head
         if not hasattr(self.model, 'hierarchical_head'):
             print("Model does not have hierarchical head")
             return False
-            
+
         # Create dummy inputs based on the base model structure
         dummy_features = {}
-        
+
         # Determine the feature structure from base model
         if hasattr(self.model, 'base_model') and hasattr(self.model.base_model, 'extractor'):
             # Variable ROI model structure
@@ -382,7 +400,7 @@ class AdvancedONNXExporter:
             dummy_features['layer_3'] = torch.randn(batch_size, 256, 160, 160).to(self.device)
             dummy_features['layer_22'] = torch.randn(batch_size, 512, 80, 80).to(self.device)
             dummy_features['layer_34'] = torch.randn(batch_size, 1024, 80, 80).to(self.device)
-        
+
         num_rois = 2
         dummy_rois = torch.zeros(num_rois, 5).to(self.device)
         dummy_rois[:, 0] = torch.arange(num_rois) % batch_size
@@ -390,39 +408,39 @@ class AdvancedONNXExporter:
             [100, 100, 300, 300],
             [200, 200, 400, 400]
         ]).float()
-        
+
         print(f"Exporting to {output_path}")
         print(f"Feature layers: {list(dummy_features.keys())}")
-        
+
         # Check if this model has integrated feature extractor (MultiScaleSegmentationModel)
         has_integrated_extractor = (
-            hasattr(self.model, 'base_model') and 
+            hasattr(self.model, 'base_model') and
             hasattr(self.model.base_model, 'feature_extractor') and
             not hasattr(self.model.base_model, 'extractor')  # Variable ROI has 'extractor'
         )
-        
+
         if has_integrated_extractor:
             # For models with integrated feature extractor, use image input
             print("Model has integrated feature extractor - using image input")
             dummy_image = torch.randn(batch_size, 3, 640, 640).to(self.device)
-            
+
             class HierarchicalImageWrapper(nn.Module):
                 def __init__(self, model):
                     super().__init__()
                     self.model = model
-                    
+
                 def forward(self, images, rois):
                     output = self.model(images, rois)
                     if isinstance(output, tuple):
                         return output[0]  # Return only logits for ONNX
                     return output
-            
+
             wrapper = HierarchicalImageWrapper(self.model)
             wrapper.eval()
-            
+
             export_inputs = (dummy_image, dummy_rois)
             input_names = ['images', 'rois']
-            
+
             try:
                 torch.onnx.export(
                     wrapper,
@@ -433,26 +451,26 @@ class AdvancedONNXExporter:
                     dynamic_axes={
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois'}
+                        'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
                     },
                     opset_version=opset_version,
                     do_constant_folding=True,
                     verbose=False
                 )
-                
+
                 print("Export successful!")
-                
+
                 if ONNXSIM_AVAILABLE:
                     self._simplify_model(output_path)
-                    
+
                 return True
-                
+
             except Exception as e:
                 print(f"Export failed: {e}")
                 import traceback
                 traceback.print_exc()
                 return False
-        
+
         # Check if this is a V3 model and if we should use static version for ONNX
         use_static_v3 = False
         if hasattr(self.model, 'hierarchical_head'):
@@ -460,7 +478,7 @@ class AdvancedONNXExporter:
             if 'V3' in head_class_name and 'Static' not in head_class_name:
                 print("Detected V3 model - will use static version for clean ONNX export")
                 use_static_v3 = True
-                
+
                 # Create static V3 head
                 from .advanced.hierarchical_segmentation_unet import HierarchicalSegmentationHeadUNetV3Static
                 in_channels = self.model.hierarchical_head.shared_features[0].in_channels
@@ -470,19 +488,19 @@ class AdvancedONNXExporter:
                     num_classes=3,
                     mask_size=56
                 )
-                
+
                 # Move static head to the same device as the original model
                 static_head = static_head.to(self.device)
-                
+
                 # Copy weights from original to static model
                 # This is a simplified weight copy - in production you'd want more careful mapping
                 print("Note: Weight transfer from dynamic to static V3 not implemented")
                 print("For production use, implement proper weight mapping or train static model directly")
-                
+
                 # Replace the head temporarily
                 original_head = self.model.hierarchical_head
                 self.model.hierarchical_head = static_head
-        
+
         # Create wrapper that calls the hierarchical model properly
         class HierarchicalWrapper(nn.Module):
             def __init__(self, model, layer_names, include_auxiliary=False):
@@ -490,22 +508,22 @@ class AdvancedONNXExporter:
                 self.model = model
                 self.layer_names = sorted(layer_names)
                 self.include_auxiliary = include_auxiliary
-                
+
             def forward(self, *args):
                 # Last argument is rois
                 feature_tensors = args[:-1]
                 rois = args[-1]
-                
+
                 # Reconstruct feature dictionary
                 features = {name: tensor for name, tensor in zip(self.layer_names, feature_tensors)}
-                
+
                 # Call hierarchical model - it returns (logits, aux_outputs)
                 output = self.model(features, rois)
                 if isinstance(output, tuple) and self.include_auxiliary:
                     # Extract main output and auxiliary outputs
                     masks = output[0]
                     aux_dict = output[1] if len(output) > 1 else {}
-                    
+
                     # Return specific outputs in the expected order
                     if isinstance(aux_dict, dict):
                         bg_fg_logits = aux_dict.get('bg_fg_logits', torch.zeros_like(masks)[:, :2])
@@ -516,15 +534,15 @@ class AdvancedONNXExporter:
                 elif isinstance(output, tuple):
                     return output[0]  # Return only logits for ONNX
                 return output
-        
+
         wrapper = HierarchicalWrapper(self.model, list(dummy_features.keys()), self.include_auxiliary)
         wrapper.eval()
-        
+
         # Prepare inputs
         feature_tensors = [dummy_features[name] for name in sorted(dummy_features.keys())]
         export_inputs = tuple(feature_tensors + [dummy_rois])
         input_names = [f'features_{name}' for name in sorted(dummy_features.keys())] + ['rois']
-        
+
         try:
             # Determine output names and dynamic axes
             if self.include_auxiliary:
@@ -532,7 +550,7 @@ class AdvancedONNXExporter:
                 dynamic_axes = {
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois'},
+                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)},
                     'bg_fg_logits': {0: 'num_rois'},
                     'target_nontarget_logits': {0: 'num_rois'}
                 }
@@ -541,9 +559,9 @@ class AdvancedONNXExporter:
                 dynamic_axes = {
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois'}
+                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
                 }
-            
+
             torch.onnx.export(
                 wrapper,
                 export_inputs,
@@ -555,33 +573,33 @@ class AdvancedONNXExporter:
                 do_constant_folding=True,
                 verbose=False
             )
-            
+
             print("Export successful!")
-            
+
             if ONNXSIM_AVAILABLE:
                 self._simplify_model(output_path)
-                
+
             if verify:
                 print("Verification skipped for hierarchical models due to complexity.")
-            
+
             # Restore original head if we used static V3
             if use_static_v3:
                 self.model.hierarchical_head = original_head
                 print("Restored original V3 head after export")
-                
+
             return True
-            
+
         except Exception as e:
             print(f"Export failed: {e}")
             import traceback
             traceback.print_exc()
-            
+
             # Restore original head on error too
             if use_static_v3 and 'original_head' in locals():
                 self.model.hierarchical_head = original_head
-                
+
             return False
-    
+
     def _export_class_specific(
         self,
         output_path: str,
@@ -591,12 +609,12 @@ class AdvancedONNXExporter:
     ) -> bool:
         """Export class-specific decoder model."""
         print("Exporting class-specific decoder model...")
-        
+
         self.model.eval()
-        
+
         # Class-specific models are similar to variable ROI but with custom decoder
         return self._export_variable_roi_core(output_path, batch_size, opset_version, verify)
-    
+
     def _export_variable_roi(
         self,
         output_path: str,
@@ -608,9 +626,9 @@ class AdvancedONNXExporter:
         print("Exporting variable ROI model with ONNX-compatible operations...")
 
         self.model.eval()
-        
+
         return self._export_variable_roi_core(output_path, batch_size, opset_version, verify)
-    
+
     def _export_variable_roi_core(
         self,
         output_path: str,
@@ -648,7 +666,7 @@ class AdvancedONNXExporter:
                 'layer_22': 512,
                 'layer_34': 1024
             }
-        
+
         # Check if this is an RGB enhanced model
         is_rgb_enhanced = hasattr(self.model, 'rgb_encoder') and self.model.rgb_encoder is not None
         if is_rgb_enhanced and hasattr(orig_seg_head, 'rgb_enhanced_layers'):
@@ -689,44 +707,44 @@ class AdvancedONNXExporter:
         if is_rgb_enhanced:
             # RGB enhanced model - export decoder only
             print("RGB enhanced model detected - exporting decoder only")
-            
+
             # Create wrapper that includes RGB encoder
             class RGBEnhancedDecoderWrapper(nn.Module):
                 def __init__(self, rgb_encoder, seg_head):
                     super().__init__()
                     self.rgb_encoder = rgb_encoder
                     self.seg_head = seg_head
-                    
+
                 def forward(self, *args):
                     # Args: features for each layer + rgb_images + rois
                     # The order matches the sorted layer names
                     *feature_tensors, rgb_images, rois = args
-                    
+
                     # Extract RGB features from raw images
                     rgb_features = self.rgb_encoder(rgb_images)
-                    
+
                     # Reconstruct feature dictionary
                     layer_names = sorted(self.seg_head.var_roi_align.feature_strides.keys())
                     features = {name: tensor for name, tensor in zip(layer_names, feature_tensors)}
-                    
+
                     # Call segmentation head with RGB features
                     return self.seg_head(features, rois, rgb_features)
-            
+
             # Get RGB encoder from the model
             rgb_encoder = self.model.rgb_encoder
             rgb_encoder.eval()
-            
+
             wrapper = RGBEnhancedDecoderWrapper(rgb_encoder, onnx_seg_head)
-            
+
             # Prepare dummy inputs for decoder
             # RGB images (B, 3, 640, 640)
             dummy_rgb_images = torch.randn(batch_size, 3, 640, 640).to(self.device)
-            
+
             # Feature tensors + RGB images + ROIs
             feature_tensors = [dummy_features[name] for name in sorted(dummy_features.keys())]
             export_inputs = tuple(feature_tensors + [dummy_rgb_images, dummy_rois])
             input_names = [f'features_{name}' for name in sorted(dummy_features.keys())] + ['rgb_images', 'rois']
-            
+
         else:
             # Standard variable ROI model
             class VariableROIWrapper(nn.Module):
@@ -743,9 +761,9 @@ class AdvancedONNXExporter:
                     # Reconstruct feature dictionary
                     features = {name: tensor for name, tensor in zip(self.layer_names, feature_tensors)}
                     return self.seg_head(features, rois)
-            
+
             wrapper = VariableROIWrapper(onnx_seg_head, list(dummy_features.keys()))
-            
+
             # Standard model uses pre-extracted features
             feature_tensors = [dummy_features[name] for name in sorted(dummy_features.keys())]
             export_inputs = tuple(feature_tensors + [dummy_rois])
@@ -761,16 +779,16 @@ class AdvancedONNXExporter:
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rgb_images': {0: 'batch_size'},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois'}
+                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
                 }
             else:
                 # For standard model
                 dynamic_axes = {
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois'}
+                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
                 }
-            
+
             # Export with fixed opset version
             torch.onnx.export(
                 wrapper,
@@ -807,18 +825,19 @@ class AdvancedONNXExporter:
             import sys
             import io
             import contextlib
-            
+
             model_onnx = onnx.load(model_path)
-            
-            # Suppress onnxsim output by redirecting stdout
-            f = io.StringIO()
-            with contextlib.redirect_stdout(f):
+
+            # Suppress onnxsim output by redirecting stdout and stderr
+            f_stdout = io.StringIO()
+            f_stderr = io.StringIO()
+            with contextlib.redirect_stdout(f_stdout), contextlib.redirect_stderr(f_stderr):
                 # Try to use the imported simplify function
                 if 'onnxsim_simplify' in globals():
                     model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
                 else:
                     model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
-                    
+
             if check:
                 onnx.save(model_simp, model_path)
                 print("Model simplified successfully!")
@@ -937,7 +956,7 @@ def export_checkpoint_to_onnx_advanced(
     # Check model type from config
     if config and isinstance(config, dict):
         model_config = config.get('model', {})
-        
+
         # Check for new architecture types first
         if model_config.get('use_hierarchical', False) or any(model_config.get(attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
             model_type = 'hierarchical'
@@ -980,10 +999,10 @@ def export_checkpoint_to_onnx_advanced(
 
         model_config = config.get('model', {}) if config else {}
         multiscale_config = config.get('multiscale', {}) if config else {}
-        
+
         # Check if RGB enhancement is enabled
         use_rgb_enhancement = model_config.get('use_rgb_enhancement', False)
-        
+
         if use_rgb_enhancement:
             model = create_rgb_enhanced_variable_roi_model(
                 onnx_model_path=model_config.get('onnx_model', 'ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx'),
@@ -1008,14 +1027,14 @@ def export_checkpoint_to_onnx_advanced(
     elif model_type == 'hierarchical' or model_type == 'class_specific':
         # Use the same model building logic as in train_advanced.py
         from train_advanced import build_model
-        
+
         # Convert config dict to ExperimentConfig object if needed
         from .experiments.config_manager import ExperimentConfig
         if isinstance(config, ExperimentConfig):
             exp_config = config
         else:
             exp_config = ExperimentConfig.from_dict(config)
-        
+
         # Build model
         model, _ = build_model(exp_config, device)
 
@@ -1031,8 +1050,20 @@ def export_checkpoint_to_onnx_advanced(
         print(f"Error: {e}")
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
 
+    # Extract mask_size from config
+    mask_size = None
+    if config:
+        if isinstance(config, dict):
+            model_config = config.get('model', {})
+            if isinstance(model_config, dict):
+                mask_size = model_config.get('mask_size', 56)
+            elif hasattr(model_config, 'mask_size'):
+                mask_size = model_config.mask_size
+        elif hasattr(config, 'model') and hasattr(config.model, 'mask_size'):
+            mask_size = config.model.mask_size
+    
     # Create exporter
-    exporter = AdvancedONNXExporter(model, model_type=model_type, device=device, include_auxiliary=include_auxiliary)
+    exporter = AdvancedONNXExporter(model, model_type=model_type, device=device, include_auxiliary=include_auxiliary, mask_size=mask_size)
 
     # Export to ONNX
     success = exporter.export(
@@ -1052,7 +1083,7 @@ def export_checkpoint_to_onnx_advanced(
             'epoch': checkpoint.get('epoch', -1),
             'best_miou': checkpoint.get('best_miou', -1)
         }
-        
+
         # Convert config to dict if it's not already
         if config:
             if isinstance(config, dict):
@@ -1083,7 +1114,7 @@ def export_checkpoint_to_onnx_advanced(
                     is_rgb_enhanced = model_config.get('use_rgb_enhancement', False)
                 elif hasattr(model_config, 'use_rgb_enhancement'):
                     is_rgb_enhanced = model_config.use_rgb_enhancement
-            
+
             if is_rgb_enhanced:
                 # RGB enhanced model includes RGB encoder
                 metadata['input_format'] = {
