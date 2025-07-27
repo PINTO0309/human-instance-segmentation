@@ -230,6 +230,7 @@ class ValidationVisualizerWithAuxiliary:
         all_panel2_images = []  # Enhanced Heatmap
         all_panel3_images = []  # Enhanced UNet FG/BG
         all_panel4_images = []  # Predictions
+        all_panel5_images = []  # Full-image UNet Output
 
         with torch.no_grad():
             # Synchronize CUDA to ensure clean state
@@ -282,16 +283,20 @@ class ValidationVisualizerWithAuxiliary:
                 # Panel 4: Predictions
                 panel4_img = self._create_panel_predictions(image_np, anns, predictions, orig_width, orig_height)
 
+                # Panel 5: Full-image UNet Output (if available)
+                panel5_img = self._create_panel_full_image_unet(image_np, unet_outputs)
+                
                 # Add to lists
                 all_panel1_images.append(panel1_img)
                 all_panel2_images.append(panel2_img)
                 all_panel3_images.append(panel3_img)
                 all_panel4_images.append(panel4_img)
+                all_panel5_images.append(panel5_img)
 
-        # Create combined 4x4 grid image
+        # Create combined 5x4 grid image
         if all_panel1_images:
-            self._create_combined_4x4_image(
-                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, epoch
+            self._create_combined_5x4_image(
+                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, all_panel5_images, epoch
             )
 
     def _get_predictions(
@@ -851,10 +856,48 @@ class ValidationVisualizerWithAuxiliary:
             img[:, :, c] = img[:, :, c] * (1 - mask_alpha) + mask_rgb[:, :, c] * mask_alpha
 
         return Image.fromarray(img.astype(np.uint8))
+    
+    def _create_panel_full_image_unet(self, image_np: np.ndarray, unet_outputs: Dict) -> Image.Image:
+        """Create panel showing full-image UNet output.
+        
+        Args:
+            image_np: Original image
+            unet_outputs: Dictionary containing UNet outputs
+            
+        Returns:
+            Panel image with full-image UNet output visualization
+        """
+        img = image_np.copy()
+        
+        # Check if full_image_logits is available in unet_outputs
+        if 'full_image_logits' in unet_outputs:
+            full_image_logits = unet_outputs['full_image_logits']
+            
+            # Convert to numpy if tensor
+            if isinstance(full_image_logits, torch.Tensor):
+                segment = full_image_logits.detach().cpu().numpy()
+            else:
+                segment = full_image_logits
+            
+            # Apply the exact rendering requested by user
+            image_height, image_width = img.shape[:2]
+            mask = np.zeros((image_height, image_width), dtype=np.uint8)
+            resized_segment = cv2.resize(segment[0, 0], (image_width, image_height))
+            mask[resized_segment > 0] = 255
+            
+            # Create green mask colored
+            mask_colored = np.zeros_like(img)
+            mask_colored[:, :, 1] = mask  # Green component
+            
+            # Overlay with 0.3 opacity as requested
+            img = cv2.addWeighted(img, 0.7, mask_colored, 0.3, 0)
+        
+        return Image.fromarray(img.astype(np.uint8))
 
-    def _create_combined_4x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
-                                  panel3_images: List[Image.Image], panel4_images: List[Image.Image], epoch: int):
-        """Create combined 4x4 grid visualization."""
+    def _create_combined_5x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
+                                  panel3_images: List[Image.Image], panel4_images: List[Image.Image],
+                                  panel5_images: List[Image.Image], epoch: int):
+        """Create combined 5x4 grid visualization."""
         n_images = len(panel1_images)
         if n_images == 0:
             return
@@ -868,14 +911,14 @@ class ValidationVisualizerWithAuxiliary:
         # Add extra space for title at the top
         title_height = 80
 
-        # Create combined image (4 rows x n_images columns)
+        # Create combined image (5 rows x n_images columns)
         # Set margins
         label_padding = 30  # Changed to 30px as requested
         right_margin = 30   # Right margin
         bottom_margin = 30  # New bottom margin
         # Account for wider heatmap panels
         combined_width = label_padding + n_images * heatmap_width + (n_images - 1) * padding + right_margin
-        combined_height = title_height + 4 * img_height + 3 * padding + bottom_margin
+        combined_height = title_height + 5 * img_height + 4 * padding + bottom_margin
         combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
 
         # Add title text
@@ -905,6 +948,9 @@ class ValidationVisualizerWithAuxiliary:
 
             # Row 4: Predictions (standard width)
             combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
+            
+            # Row 5: Full-image UNet Output (standard width)
+            combined_img.paste(panel5_images[col], (x_offset, title_height + 4 * (img_height + padding)))
 
         # Draw main title
         title_text = f"Validation Results with Auxiliary Task - Epoch {epoch+1:04d}"
@@ -918,7 +964,8 @@ class ValidationVisualizerWithAuxiliary:
             ("Ground Truth", (255, 102, 102)),  # Light red
             ("Binary Mask Heatmap", (102, 178, 255)),  # Light blue
             ("Enhanced UNet FG/BG", (102, 102, 255)),  # Light blue (matching UNet)
-            ("Predictions", (0, 153, 0))  # Green
+            ("Predictions", (0, 153, 0)),  # Green
+            ("Full UNet Output", (0, 204, 102))  # Light green
         ]
 
         # Draw row labels on top of images
@@ -1125,7 +1172,27 @@ class ValidationVisualizerWithAuxiliary:
                             rois = torch.cat(roi_tensors, dim=0)
                             batch_pred = self.model(roi_features, rois)
                         else:
-                            batch_pred = self.model(roi_features)
+                            # Check if this is a full-image UNet model
+                            model_name = self.model.__class__.__name__
+                            if 'FullImagePretrainedUNet' in model_name:
+                                # Full-image UNet model needs full image and ROIs
+                                image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
+                                image_tensor = image_tensor.unsqueeze(0).to(self.device)
+                                
+                                # Prepare ROIs in the correct format
+                                roi_tensors = []
+                                for roi in batch_rois:
+                                    x1, y1, x2, y2 = roi
+                                    roi_tensor = torch.tensor(
+                                        [[0, x1, y1, x2, y2]],
+                                        dtype=torch.float32, device=self.device
+                                    )
+                                    roi_tensors.append(roi_tensor)
+                                rois = torch.cat(roi_tensors, dim=0)
+                                
+                                batch_pred = self.model(image_tensor, rois)
+                            else:
+                                batch_pred = self.model(roi_features)
             else:
                 # Integrated model or RGB hierarchical model
                 # Check if it's an RGB hierarchical or multi-scale RGB model
@@ -1166,6 +1233,10 @@ class ValidationVisualizerWithAuxiliary:
                     # Convert to foreground probability
                     fg_probs = torch.softmax(bg_fg_logits, dim=1)[:, 1:2, :, :]  # Take foreground channel
                     aux_probs = fg_probs.cpu().numpy()
+                
+                # Check for full-image UNet output
+                if 'full_image_logits' in aux_outputs:
+                    unet_outputs['full_image_logits'] = aux_outputs['full_image_logits']
 
                 # Process each auxiliary prediction if we have any
                 if aux_probs is not None:

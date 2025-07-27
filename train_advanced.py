@@ -132,6 +132,11 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             # Normalization configuration
             normalization_type=getattr(config.model, 'normalization_type', 'layernorm2d'),
             normalization_groups=getattr(config.model, 'normalization_groups', 8),
+            # Pre-trained model configuration
+            use_pretrained_unet=getattr(config.model, 'use_pretrained_unet', False),
+            pretrained_weights_path=getattr(config.model, 'pretrained_weights_path', ''),
+            freeze_pretrained_weights=getattr(config.model, 'freeze_pretrained_weights', False),
+            use_full_image_unet=getattr(config.model, 'use_full_image_unet', False),
         )
         
         feature_extractor = None  # RGB model doesn't need external feature extractor
@@ -904,7 +909,7 @@ def main():
             visualize_auxiliary=config.auxiliary_task.visualize
         )
     # Use HierarchicalUNetVisualizer for hierarchical UNet models
-    elif any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
+    elif any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical', 'use_pretrained_unet', 'use_full_image_unet']):
         from src.human_edge_detection.advanced.hierarchical_unet_visualizer import HierarchicalUNetVisualizer
         visualizer = HierarchicalUNetVisualizer(
             model=model,

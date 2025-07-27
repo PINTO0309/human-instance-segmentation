@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Optional, Tuple, Union
+import os
 
 from ..model import LayerNorm2d
 from .attention_modules import ChannelAttentionModule, SpatialAttentionModule
@@ -11,20 +12,20 @@ from .attention_modules import ChannelAttentionModule, SpatialAttentionModule
 
 class ResidualBlock(nn.Module):
     """Residual block with configurable normalization."""
-    
-    def __init__(self, channels: int, normalization_type: str = 'layernorm2d', 
+
+    def __init__(self, channels: int, normalization_type: str = 'layernorm2d',
                  normalization_groups: int = 8):
         super().__init__()
         from .normalization_comparison import get_normalization_layer
-        
+
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm1 = get_normalization_layer(normalization_type, channels, 
+        self.norm1 = get_normalization_layer(normalization_type, channels,
                                            num_groups=min(normalization_groups, channels))
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
         self.norm2 = get_normalization_layer(normalization_type, channels,
                                            num_groups=min(normalization_groups, channels))
         self.relu = nn.ReLU(inplace=True)
-        
+
     def forward(self, x):
         residual = x
         out = self.relu(self.norm1(self.conv1(x)))
@@ -146,7 +147,7 @@ class EnhancedUNetONNX(nn.Module):
         """Initialize enhanced UNet for fixed depth=3."""
         super().__init__()
         self.depth = 3  # Fixed depth
-        
+
         # Encoder path - depth 3
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, base_channels, 3, padding=1),
@@ -155,7 +156,7 @@ class EnhancedUNetONNX(nn.Module):
             ResidualBlock(base_channels)
         )
         self.pool1 = nn.MaxPool2d(2)
-        
+
         self.enc2 = nn.Sequential(
             nn.Conv2d(base_channels, base_channels * 2, 3, padding=1),
             LayerNorm2d(base_channels * 2),
@@ -163,7 +164,7 @@ class EnhancedUNetONNX(nn.Module):
             ResidualBlock(base_channels * 2)
         )
         self.pool2 = nn.MaxPool2d(2)
-        
+
         self.enc3 = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels * 4, 3, padding=1),
             LayerNorm2d(base_channels * 4),
@@ -171,7 +172,7 @@ class EnhancedUNetONNX(nn.Module):
             ResidualBlock(base_channels * 4)
         )
         self.pool3 = nn.MaxPool2d(2)
-        
+
         # Bottleneck
         self.bottleneck = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 8, 3, padding=1),
@@ -180,7 +181,7 @@ class EnhancedUNetONNX(nn.Module):
             ResidualBlock(base_channels * 8),
             ResidualBlock(base_channels * 8)
         )
-        
+
         # Decoder path
         self.up3 = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, 2, stride=2)
         self.dec3 = nn.Sequential(
@@ -189,7 +190,7 @@ class EnhancedUNetONNX(nn.Module):
             nn.ReLU(inplace=True),
             ResidualBlock(base_channels * 4)
         )
-        
+
         self.up2 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, 2, stride=2)
         self.dec2 = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 2, 3, padding=1),
@@ -197,7 +198,7 @@ class EnhancedUNetONNX(nn.Module):
             nn.ReLU(inplace=True),
             ResidualBlock(base_channels * 2)
         )
-        
+
         self.up1 = nn.ConvTranspose2d(base_channels * 2, base_channels, 2, stride=2)
         self.dec1 = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
@@ -205,38 +206,38 @@ class EnhancedUNetONNX(nn.Module):
             nn.ReLU(inplace=True),
             ResidualBlock(base_channels)
         )
-        
+
         # Final output
         self.final = nn.Conv2d(base_channels, 2, 1)
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with fixed sizes for 28x28 input."""
         # Encoder
         enc1 = self.enc1(x)  # 28x28
         x = self.pool1(enc1)
-        
+
         enc2 = self.enc2(x)  # 14x14
         x = self.pool2(enc2)
-        
+
         enc3 = self.enc3(x)  # 7x7
         x = self.pool3(enc3)
-        
+
         # Bottleneck at 3x3
         x = self.bottleneck(x)
-        
+
         # Decoder with fixed interpolation sizes
         x = self.up3(x)
         x = F.interpolate(x, size=(7, 7), mode='bilinear', align_corners=False)
         x = self.dec3(torch.cat([x, enc3], dim=1))
-        
+
         x = self.up2(x)
         x = F.interpolate(x, size=(14, 14), mode='bilinear', align_corners=False)
         x = self.dec2(torch.cat([x, enc2], dim=1))
-        
+
         x = self.up1(x)
         x = F.interpolate(x, size=(28, 28), mode='bilinear', align_corners=False)
         x = self.dec1(torch.cat([x, enc1], dim=1))
-        
+
         # Final output
         return self.final(x)
 
@@ -258,7 +259,7 @@ class EnhancedUNet(nn.Module):
         """
         super().__init__()
         self.depth = depth
-        
+
         # Import normalization utilities
         from .normalization_comparison import get_normalization_layer
 
@@ -546,7 +547,7 @@ def create_hierarchical_model_unet(base_model: nn.Module) -> nn.Module:
                     # Extract features using the model's feature extractor
                     features = self.base_model.feature_extractor.extract_features(images)
                     # Now continue with the regular flow using extracted features
-                    
+
                 # Images passed in - need to extract features first
                 elif hasattr(self.base_model, 'extractor'):
                     # Variable ROI model has integrated extractor
@@ -751,7 +752,7 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
 
         # Branch 2: Target vs Non-target (modulated by foreground attention)
         gated_features = shared * fg_attention
-        
+
         if self.use_attention_module:
             # Apply modules sequentially for attention version
             x = gated_features
@@ -761,7 +762,7 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         else:
             # Original sequential processing
             target_nontarget_logits = self.target_vs_nontarget_branch(gated_features)
-        
+
         # Always interpolate to exact mask size (will be no-op if already correct size)
         # This avoids TracerWarning during ONNX export
         mask_h = int(self.mask_height) if not isinstance(self.mask_height, int) else self.mask_height
@@ -810,14 +811,14 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
         self.num_classes = num_classes
         self.mask_size = mask_size
-        
+
         # Shared feature processing
         self.shared_conv = nn.Conv2d(in_channels, mid_channels, 3, padding=1)
         self.shared_norm = LayerNorm2d(mid_channels)
         self.shared_relu = nn.ReLU(inplace=True)
         self.shared_res1 = ResidualBlock(mid_channels)
         self.shared_res2 = ResidualBlock(mid_channels)
-        
+
         # Branch 1: Background vs Foreground - Static UNet
         # Encoder
         self.bg_enc1 = nn.Sequential(
@@ -827,7 +828,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             ResidualBlock(96)
         )
         self.bg_pool1 = nn.MaxPool2d(2)
-        
+
         self.bg_enc2 = nn.Sequential(
             nn.Conv2d(96, 192, 3, padding=1),
             LayerNorm2d(192),
@@ -835,7 +836,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             ResidualBlock(192)
         )
         self.bg_pool2 = nn.MaxPool2d(2)
-        
+
         self.bg_enc3 = nn.Sequential(
             nn.Conv2d(192, 384, 3, padding=1),
             LayerNorm2d(384),
@@ -843,7 +844,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             ResidualBlock(384)
         )
         self.bg_pool3 = nn.MaxPool2d(2)
-        
+
         # Bottleneck
         self.bg_bottleneck = nn.Sequential(
             nn.Conv2d(384, 768, 3, padding=1),
@@ -852,7 +853,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             ResidualBlock(768),
             ResidualBlock(768)
         )
-        
+
         # Decoder
         self.bg_up3 = nn.ConvTranspose2d(768, 384, 2, stride=2)
         self.bg_dec3 = nn.Sequential(
@@ -861,7 +862,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             nn.ReLU(inplace=True),
             ResidualBlock(384)
         )
-        
+
         self.bg_up2 = nn.ConvTranspose2d(384, 192, 2, stride=2)
         self.bg_dec2 = nn.Sequential(
             nn.Conv2d(384, 192, 3, padding=1),
@@ -869,7 +870,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             nn.ReLU(inplace=True),
             ResidualBlock(192)
         )
-        
+
         self.bg_up1 = nn.ConvTranspose2d(192, 96, 2, stride=2)
         self.bg_dec1 = nn.Sequential(
             nn.Conv2d(192, 96, 3, padding=1),
@@ -877,9 +878,9 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             nn.ReLU(inplace=True),
             ResidualBlock(96)
         )
-        
+
         self.bg_final = nn.Conv2d(96, 2, 1)
-        
+
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(
             nn.ConvTranspose2d(2, 32, 2, stride=2),
@@ -887,7 +888,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 2, 1)
         )
-        
+
         # Branch 2: Target vs Non-target - Shallow static UNet
         self.target_enc1 = nn.Sequential(
             nn.Conv2d(mid_channels, 64, 3, padding=1),
@@ -895,7 +896,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             nn.ReLU(inplace=True)
         )
         self.target_pool1 = nn.MaxPool2d(2)
-        
+
         self.target_bottom = nn.Sequential(
             nn.Conv2d(64, 128, 3, padding=1),
             LayerNorm2d(128),
@@ -904,16 +905,16 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             LayerNorm2d(64),
             nn.ReLU(inplace=True)
         )
-        
+
         self.target_up1 = nn.ConvTranspose2d(64, 64, 2, stride=2)
         self.target_dec1 = nn.Sequential(
             nn.Conv2d(128, 64, 3, padding=1),
             LayerNorm2d(64),
             nn.ReLU(inplace=True)
         )
-        
+
         self.target_final = nn.Conv2d(64, 2, 1)
-        
+
         # Upsampling for target/non-target
         self.upsample_target = nn.Sequential(
             nn.ConvTranspose2d(2, 32, 2, stride=2),
@@ -921,7 +922,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 2, 1)
         )
-        
+
         # Attention gates
         self.fg_gate = nn.Sequential(
             nn.Conv2d(2, 64, 1),
@@ -929,14 +930,14 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             nn.Conv2d(64, mid_channels, 1),
             nn.Sigmoid()
         )
-        
+
         self.target_gate = nn.Sequential(
             nn.Conv2d(2, 32, 1),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 1, 1),
             nn.Sigmoid()
         )
-    
+
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Forward pass with fully static operations."""
         # Shared feature extraction
@@ -945,87 +946,87 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
         shared = self.shared_relu(shared)
         shared = self.shared_res1(shared)
         shared = self.shared_res2(shared)
-        
+
         # Branch 1: Background vs Foreground - Static UNet
         # Encoder
         bg_enc1 = self.bg_enc1(shared)  # 28x28
         bg_x = self.bg_pool1(bg_enc1)
-        
+
         bg_enc2 = self.bg_enc2(bg_x)  # 14x14
         bg_x = self.bg_pool2(bg_enc2)
-        
+
         bg_enc3 = self.bg_enc3(bg_x)  # 7x7
         bg_x = self.bg_pool3(bg_enc3)
-        
+
         # Bottleneck at 3x3
         bg_x = self.bg_bottleneck(bg_x)
-        
+
         # Decoder with fixed sizes
         bg_x = self.bg_up3(bg_x)
         bg_x = F.interpolate(bg_x, size=(7, 7), mode='bilinear', align_corners=False)
         bg_x = self.bg_dec3(torch.cat([bg_x, bg_enc3], dim=1))
-        
+
         bg_x = self.bg_up2(bg_x)
         bg_x = F.interpolate(bg_x, size=(14, 14), mode='bilinear', align_corners=False)
         bg_x = self.bg_dec2(torch.cat([bg_x, bg_enc2], dim=1))
-        
+
         bg_x = self.bg_up1(bg_x)
         bg_x = F.interpolate(bg_x, size=(28, 28), mode='bilinear', align_corners=False)
         bg_x = self.bg_dec1(torch.cat([bg_x, bg_enc1], dim=1))
-        
+
         bg_fg_logits_low = self.bg_final(bg_x)
         bg_fg_logits = self.upsample_bg_fg(bg_fg_logits_low)
         bg_fg_probs = F.softmax(bg_fg_logits, dim=1)
-        
+
         # Create foreground attention gate
         fg_attention = self.fg_gate(bg_fg_logits_low)
-        
+
         # Branch 2: Target vs Non-target - Static shallow UNet
         gated_features = shared * fg_attention
-        
+
         # Encoder
         target_enc1 = self.target_enc1(gated_features)  # 28x28
         target_x = self.target_pool1(target_enc1)  # 14x14
-        
+
         # Bottom
         target_x = self.target_bottom(target_x)
-        
+
         # Decoder
         target_x = self.target_up1(target_x)
         target_x = F.interpolate(target_x, size=(28, 28), mode='bilinear', align_corners=False)
         target_x = self.target_dec1(torch.cat([target_x, target_enc1], dim=1))
-        
+
         target_logits_low = self.target_final(target_x)
         target_nontarget_logits = self.upsample_target(target_logits_low)
-        
+
         # Additional gating from target branch
         target_attention = self.target_gate(target_logits_low)
-        
+
         # Upsample target attention to 56x56
         target_attention_upsampled = F.interpolate(
-            target_attention, 
+            target_attention,
             size=(56, 56),
-            mode='bilinear', 
+            mode='bilinear',
             align_corners=False
         )
-        
+
         # Combine predictions - avoid torch.zeros for cleaner ONNX
         # Background channel
         bg_channel = bg_fg_logits[:, 0:1]  # Keep dims
-        
+
         # Foreground channels with gating
         fg_mask = bg_fg_probs[:, 1:2]
         fg_base = bg_fg_logits[:, 1:2]
-        
+
         # Target channel
         target_channel = fg_base + target_nontarget_logits[:, 0:1] * fg_mask * target_attention_upsampled
-        
+
         # Non-target channel
         nontarget_channel = fg_base + target_nontarget_logits[:, 1:2] * fg_mask
-        
+
         # Stack channels
         final_logits = torch.cat([bg_channel, target_channel, nontarget_channel], dim=1)
-        
+
         aux_outputs = {
             'bg_fg_logits': bg_fg_logits,
             'bg_fg_logits_low': bg_fg_logits_low,
@@ -1034,7 +1035,7 @@ class HierarchicalSegmentationHeadUNetV3Static(nn.Module):
             'fg_attention': fg_attention,
             'target_attention': target_attention
         }
-        
+
         return final_logits, aux_outputs
 
 class HierarchicalSegmentationHeadUNetV3ONNX(nn.Module):
@@ -1051,7 +1052,7 @@ class HierarchicalSegmentationHeadUNetV3ONNX(nn.Module):
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
         self.num_classes = num_classes
         self.mask_size = mask_size
-        
+
         # Shared feature processing
         self.shared_features = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
@@ -1060,10 +1061,10 @@ class HierarchicalSegmentationHeadUNetV3ONNX(nn.Module):
             ResidualBlock(mid_channels),
             ResidualBlock(mid_channels),
         )
-        
+
         # Branch 1: Background vs Foreground using ONNX-compatible Enhanced UNet
         self.bg_vs_fg_unet = EnhancedUNetONNX(mid_channels, base_channels=96)
-        
+
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(
             nn.ConvTranspose2d(2, 32, 2, stride=2),
@@ -1071,10 +1072,10 @@ class HierarchicalSegmentationHeadUNetV3ONNX(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 2, 1)
         )
-        
+
         # Branch 2: Target vs Non-target using Shallow UNet
         self.target_nontarget_unet = ShallowUNet(mid_channels, base_channels=64)
-        
+
         # Upsampling for target/non-target
         self.upsample_target = nn.Sequential(
             nn.ConvTranspose2d(2, 32, 2, stride=2),
@@ -1082,7 +1083,7 @@ class HierarchicalSegmentationHeadUNetV3ONNX(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 2, 1)
         )
-        
+
         # Dual attention gates
         self.fg_gate = nn.Sequential(
             nn.Conv2d(2, mid_channels // 4, 1),
@@ -1090,63 +1091,63 @@ class HierarchicalSegmentationHeadUNetV3ONNX(nn.Module):
             nn.Conv2d(mid_channels // 4, mid_channels, 1),
             nn.Sigmoid()
         )
-        
+
         self.target_gate = nn.Sequential(
             nn.Conv2d(2, 32, 1),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 1, 1),
             nn.Sigmoid()
         )
-    
+
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Forward pass with dual UNet branches."""
         # Shared feature extraction
         shared = self.shared_features(features)
-        
+
         # Branch 1: Background vs Foreground with Enhanced UNet
         bg_fg_logits_low = self.bg_vs_fg_unet(shared)
         bg_fg_logits = self.upsample_bg_fg(bg_fg_logits_low)
         bg_fg_probs = F.softmax(bg_fg_logits, dim=1)
-        
+
         # Create foreground attention gate
         fg_attention = self.fg_gate(bg_fg_logits_low)
-        
+
         # Branch 2: Target vs Non-target with Shallow UNet
         gated_features = shared * fg_attention
         target_logits_low = self.target_nontarget_unet(gated_features)
         target_nontarget_logits = self.upsample_target(target_logits_low)
-        
+
         # Additional gating from target branch
         target_attention = self.target_gate(target_logits_low)
-        
+
         # Upsample target attention to match final resolution (always 56x56)
         target_attention_upsampled = F.interpolate(
-            target_attention, 
+            target_attention,
             size=(56, 56),
-            mode='bilinear', 
+            mode='bilinear',
             align_corners=False
         )
-        
+
         # Combine predictions hierarchically with dual gating
         batch_size = features.shape[0]
-        
+
         # Initialize output tensor with fixed size
         final_logits = torch.zeros(batch_size, 3, 56, 56, dtype=features.dtype, device=features.device)
-        
+
         # Direct assignment without indexing
         final_logits[:, 0] = bg_fg_logits[:, 0]
-        
+
         # Compute foreground components
         fg_mask = bg_fg_probs[:, 1:2]
         fg_base = bg_fg_logits[:, 1:2]
-        
+
         # Compute target and non-target with consistent dimensions
         target_component = target_nontarget_logits[:, 0:1] * fg_mask * target_attention_upsampled
         nontarget_component = target_nontarget_logits[:, 1:2] * fg_mask
-        
+
         final_logits[:, 1] = (fg_base + target_component).squeeze(1)
         final_logits[:, 2] = (fg_base + nontarget_component).squeeze(1)
-        
+
         aux_outputs = {
             'bg_fg_logits': bg_fg_logits,
             'bg_fg_logits_low': bg_fg_logits_low,
@@ -1155,7 +1156,7 @@ class HierarchicalSegmentationHeadUNetV3ONNX(nn.Module):
             'fg_attention': fg_attention,
             'target_attention': target_attention
         }
-        
+
         return final_logits, aux_outputs
 
 class HierarchicalSegmentationHeadUNetV3(nn.Module):
@@ -1241,34 +1242,34 @@ class HierarchicalSegmentationHeadUNetV3(nn.Module):
 
         # Additional gating from target branch
         target_attention = self.target_gate(target_logits_low)
-        
+
         # Upsample target attention to match final resolution
         # Use fixed size to avoid dynamic shape operations
         target_attention_upsampled = F.interpolate(
-            target_attention, 
+            target_attention,
             size=(56, 56),  # Use fixed mask_size instead of self.mask_size
-            mode='bilinear', 
+            mode='bilinear',
             align_corners=False
         )
 
         # Combine predictions hierarchically with dual gating
         # Use shape[0] only once and reuse
         batch_size = features.shape[0]
-        
+
         # Initialize output tensor
         final_logits = torch.zeros(batch_size, 3, 56, 56, dtype=features.dtype, device=features.device)
 
         # Direct assignment without indexing
         final_logits[:, 0] = bg_fg_logits[:, 0]
-        
+
         # Compute foreground components
         fg_mask = bg_fg_probs[:, 1:2]
         fg_base = bg_fg_logits[:, 1:2]  # Keep dimensions
-        
+
         # Compute target and non-target with consistent dimensions
         target_component = target_nontarget_logits[:, 0:1] * fg_mask * target_attention_upsampled
         nontarget_component = target_nontarget_logits[:, 1:2] * fg_mask
-        
+
         final_logits[:, 1] = (fg_base + target_component).squeeze(1)
         final_logits[:, 2] = (fg_base + nontarget_component).squeeze(1)
 
@@ -1434,7 +1435,7 @@ def create_hierarchical_model_unet_v2(base_model: nn.Module) -> nn.Module:
                     # Extract features using the model's feature extractor
                     features = self.base_model.feature_extractor.extract_features(images)
                     # Now continue with the regular flow using extracted features
-                    
+
                 # Images passed in - need to extract features first
                 elif hasattr(self.base_model, 'extractor'):
                     # Variable ROI model has integrated extractor
@@ -1498,7 +1499,7 @@ def create_hierarchical_model_unet_v2(base_model: nn.Module) -> nn.Module:
                     output = self.base_model(features=features, rois=rois)
                     fused_features = output['features'] if isinstance(output, dict) else features
 
-            # Store fused features for auxiliary task  
+            # Store fused features for auxiliary task
             self.last_roi_features = fused_features
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
@@ -1572,7 +1573,7 @@ def create_hierarchical_model_unet_v3(base_model: nn.Module) -> nn.Module:
                 output = self.base_model(features, rois)
                 fused_features = output['features'] if isinstance(output, dict) else output
 
-            # Store fused features for auxiliary task  
+            # Store fused features for auxiliary task
             self.last_roi_features = fused_features
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
@@ -1646,9 +1647,221 @@ def create_hierarchical_model_unet_v4(base_model: nn.Module) -> nn.Module:
                 output = self.base_model(features, rois)
                 fused_features = output['features'] if isinstance(output, dict) else output
 
-            # Store fused features for auxiliary task  
+            # Store fused features for auxiliary task
             self.last_roi_features = fused_features
             logits, aux_outputs = self.hierarchical_head(fused_features)
             return logits, aux_outputs
 
     return HierarchicalSegmentationModelUNetV4(base_model)
+
+
+class PreTrainedPeopleSegmentationUNet(nn.Module):
+    """UNet model using pre-trained weights from people_segmentation repository.
+
+    This model uses the same architecture as https://github.com/PINTO0309/people_segmentation
+    with pre-trained weights from ext_extractor/2020-09-23a.pth.
+    """
+
+    def __init__(
+        self,
+        in_channels: int = 3,
+        classes: int = 1,
+        pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
+        mean: list = None,
+        std: list = None,
+        freeze_weights: bool = False
+    ):
+        """Initialize pre-trained UNet model.
+
+        Args:
+            in_channels: Number of input channels (3 for RGB)
+            classes: Number of output classes (1 for binary segmentation)
+            pretrained_weights_path: Path to pre-trained weights
+            mean: Mean values for normalization [0.485, 0.456, 0.406]
+            std: Std values for normalization [0.229, 0.224, 0.225]
+            freeze_weights: If True, freeze all model weights (no gradient updates)
+        """
+        super().__init__()
+        self.in_channels = in_channels
+        self.classes = classes
+        self.mean = mean if mean is not None else [0.485, 0.456, 0.406]
+        self.std = std if std is not None else [0.229, 0.224, 0.225]
+
+        # Import segmentation_models_pytorch - will need to add to dependencies
+        try:
+            import segmentation_models_pytorch as smp
+        except ImportError:
+            raise ImportError(
+                "Please install segmentation-models-pytorch: "
+                "uv add segmentation-models-pytorch"
+            )
+
+        # Create the same model architecture as people_segmentation
+        self.model = smp.Unet(
+            encoder_name="timm-efficientnet-b3",
+            classes=classes,
+            encoder_weights=None  # We'll load our own weights
+        )
+
+        # Load pre-trained weights if available
+        if pretrained_weights_path and os.path.exists(pretrained_weights_path):
+            print(f"Loading pre-trained weights from {pretrained_weights_path}")
+
+            # Use state_dict_from_disk approach for proper loading
+            state_dict = torch.load(pretrained_weights_path, map_location='cpu')
+
+            # Handle potential state dict wrapping
+            if 'state_dict' in state_dict:
+                state_dict = state_dict['state_dict']
+
+            # Apply corrections to remove 'model.' prefix
+            corrections = {"model.": ""}
+            new_state_dict = {}
+            for key, value in state_dict.items():
+                new_key = key
+                for old_name, new_name in corrections.items():
+                    if new_key.startswith(old_name):
+                        new_key = new_key.replace(old_name, new_name, 1)
+                        break
+                new_state_dict[new_key] = value
+
+            # Load weights
+            missing_keys, unexpected_keys = self.model.load_state_dict(new_state_dict, strict=False)
+            if missing_keys:
+                print(f"Warning: Missing keys in state dict: {len(missing_keys)} keys")
+                if len(missing_keys) <= 10:
+                    print(f"Missing keys: {missing_keys}")
+                else:
+                    print(f"First 5 missing keys: {missing_keys[:5]}")
+            if unexpected_keys:
+                print(f"Warning: Unexpected keys in state dict: {len(unexpected_keys)} keys")
+                if len(unexpected_keys) <= 10:
+                    print(f"Unexpected keys: {unexpected_keys}")
+                else:
+                    print(f"First 5 unexpected keys: {unexpected_keys[:5]}")
+
+            if not missing_keys and not unexpected_keys:
+                print("Pre-trained weights loaded successfully (all keys matched)")
+            else:
+                print(f"Pre-trained weights loaded with {len(missing_keys)} missing and {len(unexpected_keys)} unexpected keys")
+        else:
+            print(f"Warning: Pre-trained weights not found at {pretrained_weights_path}")
+
+        # Freeze weights if requested
+        if freeze_weights:
+            print("Freezing pre-trained UNet weights")
+            for param in self.model.parameters():
+                param.requires_grad = False
+            # Set model to eval mode to freeze BatchNorm statistics
+            self.model.eval()
+            # Store freeze state
+            self._freeze_bn = True
+        else:
+            self._freeze_bn = False
+
+        # Register normalization parameters as buffers
+        self.register_buffer('norm_mean', torch.tensor(self.mean).view(1, 3, 1, 1))
+        self.register_buffer('norm_std', torch.tensor(self.std).view(1, 3, 1, 1))
+
+    def normalize_input(self, x):
+        """Normalize input using pre-trained model's expected normalization."""
+        # Ensure input is in [0, 1] range
+        if x.max() > 1.0:
+            x = x / 255.0
+        return (x - self.norm_mean) / self.norm_std
+
+    def train(self, mode: bool = True):
+        """Override train method to keep model in eval mode when frozen."""
+        # Call parent's train method
+        super().train(mode)
+        # If weights are frozen, keep the internal model in eval mode
+        if hasattr(self, '_freeze_bn') and self._freeze_bn:
+            self.model.eval()
+        return self
+
+    def forward(self, x):
+        """Forward pass with normalization.
+
+        Args:
+            x: Input tensor (B, C, H, W)
+
+        Returns:
+            Binary segmentation logits (B, 1, H, W)
+        """
+        # Apply normalization
+        x_norm = self.normalize_input(x)
+
+        # Forward through model
+        logits = self.model(x_norm)
+
+        return logits
+
+
+class PreTrainedPeopleSegmentationUNetWrapper(nn.Module):
+    """Wrapper to make PreTrainedPeopleSegmentationUNet compatible with EnhancedUNet interface.
+
+    This wrapper adapts the pre-trained model to work with the hierarchical segmentation pipeline.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        base_channels: int = 64,  # Ignored, kept for compatibility
+        depth: int = 4,  # Ignored, kept for compatibility
+        groups: int = None,  # Ignored, kept for compatibility
+        normalization_type: str = 'layernorm2d',  # Ignored, kept for compatibility
+        normalization_groups: int = 8,  # Ignored, kept for compatibility
+        pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
+        freeze_weights: bool = False
+    ):
+        """Initialize wrapper with pre-trained model.
+
+        Args:
+            in_channels: Number of input channels
+            base_channels: Ignored, kept for API compatibility
+            depth: Ignored, kept for API compatibility
+            groups: Ignored, kept for API compatibility
+            normalization_type: Ignored, kept for API compatibility
+            normalization_groups: Ignored, kept for API compatibility
+            pretrained_weights_path: Path to pre-trained weights
+            freeze_weights: If True, freeze pre-trained model weights
+        """
+        super().__init__()
+
+        # Create the pre-trained model
+        self.model = PreTrainedPeopleSegmentationUNet(
+            in_channels=in_channels,
+            classes=1,  # Binary segmentation for foreground/background
+            pretrained_weights_path=pretrained_weights_path,
+            freeze_weights=freeze_weights
+        )
+
+        # Add a final conv to match the expected 2-channel output
+        # (background vs foreground for hierarchical segmentation)
+        self.output_conv = nn.Conv2d(1, 2, kernel_size=1)
+
+        # Initialize output conv weights
+        nn.init.xavier_uniform_(self.output_conv.weight)
+        nn.init.zeros_(self.output_conv.bias)
+
+    def forward(self, x):
+        """Forward pass compatible with EnhancedUNet interface.
+
+        Args:
+            x: Input tensor (B, C, H, W)
+
+        Returns:
+            Tuple of (logits, skip_connections)
+            - logits: (B, 2, H, W) for background vs foreground
+            - skip_connections: Empty list for compatibility
+        """
+        # Get single-channel output from pre-trained model
+        single_channel_logits = self.model(x)
+
+        # Convert to 2-channel output
+        # Channel 0: background (negative of person mask)
+        # Channel 1: foreground (person mask)
+        two_channel_logits = self.output_conv(single_channel_logits)
+
+        # Return with empty skip connections for compatibility
+        return two_channel_logits, []

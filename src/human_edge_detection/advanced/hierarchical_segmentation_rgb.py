@@ -234,6 +234,232 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         return predictions, aux_outputs
 
 
+class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
+    """Hierarchical segmentation model with pre-trained UNet from people_segmentation."""
+    
+    def __init__(
+        self,
+        roi_size: Union[int, Tuple[int, int]] = 28,
+        mask_size: Union[int, Tuple[int, int]] = 56,
+        pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
+        use_attention_module: bool = False,
+        freeze_pretrained_weights: bool = False,
+    ):
+        """Initialize hierarchical RGB segmentation model with pre-trained UNet.
+        
+        Args:
+            roi_size: Size of input ROIs
+            mask_size: Size of output masks
+            pretrained_weights_path: Path to pre-trained weights
+            use_attention_module: Whether to use attention in target/non-target branch
+            freeze_pretrained_weights: If True, freeze pre-trained UNet weights
+        """
+        super().__init__()
+        
+        # Handle both square and non-square sizes
+        if isinstance(roi_size, int):
+            self.roi_size = (roi_size, roi_size)
+        else:
+            self.roi_size = roi_size
+            
+        if isinstance(mask_size, int):
+            self.mask_size = (mask_size, mask_size)
+        else:
+            self.mask_size = mask_size
+        
+        # ROI alignment to extract RGB patches from full images
+        self.roi_align = DynamicRoIAlign(
+            spatial_scale=1.0,  # Images are already at target scale
+            sampling_ratio=2,
+            aligned=True
+        )
+        
+        # Import pre-trained model classes
+        from .hierarchical_segmentation_unet import (
+            PreTrainedPeopleSegmentationUNetWrapper,
+            HierarchicalSegmentationHeadUNetV2
+        )
+        
+        # Create pre-trained UNet for foreground/background segmentation
+        self.pretrained_unet = PreTrainedPeopleSegmentationUNetWrapper(
+            in_channels=3,
+            pretrained_weights_path=pretrained_weights_path,
+            freeze_weights=freeze_pretrained_weights
+        )
+        
+        # Feature dimension after ROI extraction (for hierarchical head)
+        # The pre-trained UNet outputs 2 channels (bg/fg), we'll process these
+        feature_dim = 256  # Intermediate feature dimension
+        
+        # Feature processor to convert UNet output to features for hierarchical head
+        self.feature_processor = nn.Sequential(
+            nn.Conv2d(2, 64, 3, padding=1),
+            LayerNorm2d(64),
+            nn.ReLU(inplace=True),
+            ResidualBlock(64),
+            nn.Conv2d(64, 128, 3, padding=1),
+            LayerNorm2d(128),
+            nn.ReLU(inplace=True),
+            ResidualBlock(128),
+            nn.Conv2d(128, feature_dim, 3, padding=1),
+            LayerNorm2d(feature_dim),
+            nn.ReLU(inplace=True),
+        )
+        
+        # Hierarchical segmentation head
+        self.segmentation_head = HierarchicalSegmentationHeadUNetV2(
+            in_channels=feature_dim,
+            mid_channels=256,
+            num_classes=3,
+            mask_size=self.mask_size[0] if self.mask_size[0] == self.mask_size[1] else self.mask_size,
+            use_attention_module=use_attention_module,
+        )
+        
+    def forward(self, images: torch.Tensor, rois: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
+        """Forward pass.
+        
+        Args:
+            images: Input images (B, 3, H, W)
+            rois: ROI boxes (N, 5) with [batch_idx, x1, y1, x2, y2]
+            
+        Returns:
+            predictions: Mask predictions (N, 3, mask_h, mask_w)
+            aux_outputs: Auxiliary outputs dict
+        """
+        # Extract ROI patches from images
+        roi_patches = self.roi_align(images, rois, self.roi_size[0], self.roi_size[1])
+        
+        # Get foreground/background predictions from pre-trained UNet
+        bg_fg_logits, _ = self.pretrained_unet(roi_patches)
+        
+        # Process UNet output to features
+        features = self.feature_processor(bg_fg_logits)
+        
+        # Apply hierarchical segmentation head
+        predictions, aux_outputs = self.segmentation_head(features)
+        
+        # Add pre-trained UNet output to auxiliary outputs
+        aux_outputs['pretrained_bg_fg_logits'] = bg_fg_logits
+        
+        return predictions, aux_outputs
+
+
+class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
+    """Hierarchical segmentation model that applies pre-trained UNet to full image first."""
+    
+    def __init__(
+        self,
+        roi_size: Union[int, Tuple[int, int]] = 28,
+        mask_size: Union[int, Tuple[int, int]] = 56,
+        pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
+        use_attention_module: bool = False,
+        freeze_pretrained_weights: bool = False,
+    ):
+        """Initialize hierarchical RGB segmentation model with full-image pre-trained UNet.
+        
+        Args:
+            roi_size: Size of input ROIs
+            mask_size: Size of output masks
+            pretrained_weights_path: Path to pre-trained weights
+            use_attention_module: Whether to use attention in target/non-target branch
+            freeze_pretrained_weights: If True, freeze pre-trained UNet weights
+        """
+        super().__init__()
+        
+        # Handle both square and non-square sizes
+        if isinstance(roi_size, int):
+            self.roi_size = (roi_size, roi_size)
+        else:
+            self.roi_size = roi_size
+            
+        if isinstance(mask_size, int):
+            self.mask_size = (mask_size, mask_size)
+        else:
+            self.mask_size = mask_size
+        
+        # Import pre-trained model classes
+        from .hierarchical_segmentation_unet import (
+            PreTrainedPeopleSegmentationUNet,
+            HierarchicalSegmentationHeadUNetV2
+        )
+        
+        # Create pre-trained UNet for full image processing
+        self.pretrained_unet = PreTrainedPeopleSegmentationUNet(
+            in_channels=3,
+            classes=1,  # Binary segmentation for person detection
+            pretrained_weights_path=pretrained_weights_path,
+            freeze_weights=freeze_pretrained_weights
+        )
+        
+        # ROI alignment to extract features from UNet output
+        self.roi_align = DynamicRoIAlign(
+            spatial_scale=1.0,  # UNet output is same scale as input
+            sampling_ratio=2,
+            aligned=True
+        )
+        
+        # Feature dimension after ROI extraction
+        feature_dim = 256  # Intermediate feature dimension
+        
+        # Feature processor to convert UNet output (1 channel) to features for hierarchical head
+        # We'll expand the single channel to create richer features
+        self.feature_processor = nn.Sequential(
+            nn.Conv2d(1, 32, 3, padding=1),
+            LayerNorm2d(32),
+            nn.ReLU(inplace=True),
+            ResidualBlock(32),
+            nn.Conv2d(32, 64, 3, padding=1),
+            LayerNorm2d(64),
+            nn.ReLU(inplace=True),
+            ResidualBlock(64),
+            nn.Conv2d(64, 128, 3, padding=1),
+            LayerNorm2d(128),
+            nn.ReLU(inplace=True),
+            ResidualBlock(128),
+            nn.Conv2d(128, feature_dim, 3, padding=1),
+            LayerNorm2d(feature_dim),
+            nn.ReLU(inplace=True),
+        )
+        
+        # Hierarchical segmentation head
+        self.segmentation_head = HierarchicalSegmentationHeadUNetV2(
+            in_channels=feature_dim,
+            mid_channels=256,
+            num_classes=3,
+            mask_size=self.mask_size[0] if self.mask_size[0] == self.mask_size[1] else self.mask_size,
+            use_attention_module=use_attention_module,
+        )
+        
+    def forward(self, images: torch.Tensor, rois: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
+        """Forward pass.
+        
+        Args:
+            images: Input images (B, 3, H, W)
+            rois: ROI boxes (N, 5) with [batch_idx, x1, y1, x2, y2]
+            
+        Returns:
+            predictions: Mask predictions (N, 3, mask_h, mask_w)
+            aux_outputs: Auxiliary outputs dict
+        """
+        # Apply pre-trained UNet to full images
+        full_image_logits = self.pretrained_unet(images)  # (B, 1, H, W)
+        
+        # Extract ROI features from UNet output
+        roi_features = self.roi_align(full_image_logits, rois, self.roi_size[0], self.roi_size[1])
+        
+        # Process UNet output to richer features
+        processed_features = self.feature_processor(roi_features)
+        
+        # Apply hierarchical segmentation head
+        predictions, aux_outputs = self.segmentation_head(processed_features)
+        
+        # Add full image UNet output to auxiliary outputs
+        aux_outputs['full_image_logits'] = full_image_logits
+        aux_outputs['roi_features'] = roi_features
+        
+        return predictions, aux_outputs
+
+
 class MultiScaleRGBSegmentationModel(nn.Module):
     """Multi-scale RGB segmentation model with hierarchical head."""
     
@@ -396,6 +622,12 @@ def create_rgb_hierarchical_model(
     use_contour_detection = kwargs.get('use_contour_detection', False)
     use_distance_transform = kwargs.get('use_distance_transform', False)
     
+    # Check for pre-trained UNet option
+    use_pretrained_unet = kwargs.get('use_pretrained_unet', False)
+    pretrained_weights_path = kwargs.get('pretrained_weights_path', '')
+    freeze_pretrained_weights = kwargs.get('freeze_pretrained_weights', False)
+    use_full_image_unet = kwargs.get('use_full_image_unet', False)  # New parameter
+    
     if multi_scale:
         roi_sizes = kwargs.get('roi_sizes', {'scale1': 56, 'scale2': 42, 'scale3': 28})
         fusion_method = kwargs.get('fusion_method', 'concat')
@@ -408,17 +640,38 @@ def create_rgb_hierarchical_model(
             # TODO: Add refinement support to MultiScaleRGBSegmentationModel
         )
     else:
-        return HierarchicalRGBSegmentationModel(
-            roi_size=roi_size,
-            mask_size=mask_size,
-            use_attention_module=use_attention_module,
-            # Binary mask refinement modules
-            use_boundary_refinement=use_boundary_refinement,
-            use_progressive_upsampling=use_progressive_upsampling,
-            use_subpixel_conv=use_subpixel_conv,
-            use_contour_detection=use_contour_detection,
-            use_distance_transform=use_distance_transform,
-            # Pass normalization config
-            normalization_type=normalization_type,
-            normalization_groups=normalization_groups,
-        )
+        if use_pretrained_unet:
+            if use_full_image_unet:
+                # Create model with full-image pre-trained UNet
+                return HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(
+                    roi_size=roi_size,
+                    mask_size=mask_size,
+                    pretrained_weights_path=pretrained_weights_path,
+                    use_attention_module=use_attention_module,
+                    freeze_pretrained_weights=freeze_pretrained_weights,
+                )
+            else:
+                # Create model with ROI-based pre-trained UNet
+                return HierarchicalRGBSegmentationModelWithPretrainedUNet(
+                    roi_size=roi_size,
+                    mask_size=mask_size,
+                    pretrained_weights_path=pretrained_weights_path,
+                    use_attention_module=use_attention_module,
+                    freeze_pretrained_weights=freeze_pretrained_weights,
+                )
+        else:
+            # Use standard model
+            return HierarchicalRGBSegmentationModel(
+                roi_size=roi_size,
+                mask_size=mask_size,
+                use_attention_module=use_attention_module,
+                # Binary mask refinement modules
+                use_boundary_refinement=use_boundary_refinement,
+                use_progressive_upsampling=use_progressive_upsampling,
+                use_subpixel_conv=use_subpixel_conv,
+                use_contour_detection=use_contour_detection,
+                use_distance_transform=use_distance_transform,
+                # Pass normalization config
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups,
+            )

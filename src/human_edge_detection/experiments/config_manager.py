@@ -150,6 +150,11 @@ class ModelConfig:
     normalization_type: str = 'layernorm2d'  # Options: 'layernorm2d', 'batchnorm', 'instancenorm', 'groupnorm', 'mixed'
     normalization_groups: int = 8  # For GroupNorm
     normalization_mix_ratio: float = 0.5  # For MixedNorm (BatchNorm vs InstanceNorm ratio)
+    # Pre-trained model configuration
+    use_pretrained_unet: bool = False  # Use pre-trained UNet from people_segmentation
+    pretrained_weights_path: str = ""  # Path to pre-trained weights
+    freeze_pretrained_weights: bool = False  # Freeze pre-trained weights during training
+    use_full_image_unet: bool = False  # Apply UNet to full image before ROI extraction
 
 
 @dataclass
@@ -2228,6 +2233,181 @@ class ConfigManager:
                 # BatchNorm configuration
                 normalization_type='batchnorm',
                 normalization_groups=8,  # Not used for BatchNorm but kept for compatibility
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+        # Pre-trained people segmentation model variant
+        'rgb_hierarchical_unet_v2_pretrained_peopleseg_r64x48m64x48': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_pretrained_peopleseg_r64x48m64x48',
+            description='RGB Hierarchical UNet V2 with Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:64x48 (H:W)',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                mask_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/2020-09-23a.pth",
+                freeze_pretrained_weights=True,  # Freeze the pre-trained UNet weights
+                # Refinement modules (disabled for pre-trained model)
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=False,
+                use_active_contour_loss=False,
+                use_distance_transform=False,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization type is ignored for pre-trained model
+                normalization_type='batchnorm',
+                normalization_groups=8,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+        # Pre-trained people segmentation model variant with frozen weights
+        'rgb_hierarchical_unet_v2_pretrained_peopleseg_frozen_r64x48m64x48': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_pretrained_peopleseg_frozen_r64x48m64x48',
+            description='RGB Hierarchical UNet V2 with Frozen Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:64x48 (H:W)',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                mask_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/2020-09-23a.pth",
+                freeze_pretrained_weights=True,  # Freeze the pre-trained UNet weights
+                # Refinement modules (disabled for pre-trained model)
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=False,
+                use_active_contour_loss=False,
+                use_distance_transform=False,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization type is ignored for pre-trained model
+                normalization_type='batchnorm',
+                normalization_groups=8,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4
+            ),
+            training=TrainingConfig(
+                learning_rate=5e-5,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.0001,
+                min_lr=1e-7,
+            ),
+        ),
+        # Full-image pre-trained people segmentation model variant
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48',
+            description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:64x48 (H:W)',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                mask_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/2020-09-23a.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,  # Apply UNet to full image first
+                # Refinement modules (disabled for pre-trained model)
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=False,
+                use_contour_detection=False,
+                use_active_contour_loss=False,
+                use_distance_transform=False,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization type is ignored for pre-trained model
+                normalization_type='batchnorm',
+                normalization_groups=8,
             ),
             multiscale=MultiScaleConfig(
                 enabled=False,
