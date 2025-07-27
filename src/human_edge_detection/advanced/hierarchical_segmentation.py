@@ -339,6 +339,23 @@ class HierarchicalLoss(nn.Module):
             self.consistency_weight * consistency_loss
         )
 
+        # Calculate auxiliary metrics for TensorBoard compatibility
+        # These metrics match what MultiTaskSegmentationModel would generate
+        with torch.no_grad():
+            # aux_fg_bg_loss is the background/foreground loss
+            aux_fg_bg_loss = bg_fg_loss.item()
+            
+            # aux_fg_accuracy: accuracy of bg/fg classification
+            bg_fg_preds = aux_outputs['bg_fg_logits'].argmax(dim=1)
+            aux_fg_accuracy = (bg_fg_preds == bg_fg_targets).float().mean().item()
+            
+            # aux_fg_iou: IoU for foreground prediction
+            fg_pred = (bg_fg_preds == 1).float()
+            fg_true = bg_fg_targets.float()
+            intersection = (fg_pred * fg_true).sum()
+            union = (fg_pred + fg_true).clamp(max=1).sum()
+            aux_fg_iou = (intersection / union.clamp(min=1)).item()
+        
         loss_dict = {
             'bg_fg_loss': bg_fg_loss.item(),
             'target_nontarget_loss': target_nontarget_loss.item(),
@@ -348,6 +365,10 @@ class HierarchicalLoss(nn.Module):
             # For compatibility with train_advanced.py
             'ce_loss': final_loss.item(),  # Cross-entropy is the main classification loss
             'dice_loss': dice_loss_value.item(),  # Now includes actual Dice loss
+            # Auxiliary metrics for TensorBoard
+            'aux_fg_bg_loss': aux_fg_bg_loss,
+            'aux_fg_accuracy': aux_fg_accuracy,
+            'aux_fg_iou': aux_fg_iou,
             # Debug weights
             'bg_weight': getattr(self, '_last_bg_weight', 1.0),
             'fg_weight': getattr(self, '_last_fg_weight', 1.0),
