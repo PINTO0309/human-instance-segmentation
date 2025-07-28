@@ -227,10 +227,9 @@ class ValidationVisualizerWithAuxiliary:
 
         # Collect all panel images for combined visualization
         all_panel1_images = []  # Ground Truth
-        all_panel2_images = []  # Enhanced Heatmap
-        all_panel3_images = []  # Enhanced UNet FG/BG
+        all_panel2_images = []  # Binary Mask Heatmap
+        all_panel3_images = []  # Full-image UNet Output
         all_panel4_images = []  # Predictions
-        all_panel5_images = []  # Full-image UNet Output
 
         with torch.no_grad():
             # Synchronize CUDA to ensure clean state
@@ -285,26 +284,22 @@ class ValidationVisualizerWithAuxiliary:
                         pretrained_unet_heatmap = pretrained_unet_probs[0, 0]  # Shape: (640, 640)
                 panel2_img = self._create_panel_heatmap(image_np, pretrained_unet_heatmap)
 
-                # Panel 3: Enhanced UNet FG/BG
-                panel3_img = self._create_panel_unet_fg_bg(image_np, unet_outputs)
+                # Panel 3: Full-image UNet Output (moved from panel 5)
+                panel3_img = self._create_panel_full_image_unet(image_np, unet_outputs)
 
                 # Panel 4: Predictions
                 panel4_img = self._create_panel_predictions(image_np, anns, predictions, orig_width, orig_height)
-
-                # Panel 5: Full-image UNet Output (if available)
-                panel5_img = self._create_panel_full_image_unet(image_np, unet_outputs)
 
                 # Add to lists
                 all_panel1_images.append(panel1_img)
                 all_panel2_images.append(panel2_img)
                 all_panel3_images.append(panel3_img)
                 all_panel4_images.append(panel4_img)
-                all_panel5_images.append(panel5_img)
 
-        # Create combined 5x4 grid image
+        # Create combined 4x4 grid image
         if all_panel1_images:
-            self._create_combined_5x4_image(
-                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, all_panel5_images, epoch
+            self._create_combined_4x4_image(
+                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, epoch
             )
 
     def _get_predictions(
@@ -811,13 +806,17 @@ class ValidationVisualizerWithAuxiliary:
         """Create predictions panel."""
         img = image_np.copy()
 
-        # Create prediction overlay
+        # Create separate overlays for different visualization layers
         pred_overlay = np.zeros((*image_np.shape[:2], 4))
+        error_overlay = np.zeros((*image_np.shape[:2], 4))
+        overlap_overlay = np.zeros((*image_np.shape[:2], 4))
+
         colors = plt.cm.tab10(np.linspace(0, 1, 10))
 
         # Track target masks count for overlap detection
         target_mask_count = np.zeros(image_np.shape[:2], dtype=int)
 
+        # First pass: Render individual predictions
         for idx, ann in enumerate(annotations):
             if idx not in predictions:
                 continue
@@ -851,24 +850,18 @@ class ValidationVisualizerWithAuxiliary:
             # Apply colors
             color = colors[idx % 10]
 
-            # Create masks for target and non-target
+            # Create masks for target
             target_mask = pred_resized == 1
-            # nontarget_mask = pred_resized == 2  # Not needed since we're not rendering non-target
 
             # Count target overlaps
             target_mask_count[y1:y2, x1:x2] += target_mask.astype(int)
 
             # Class 1: Target (with increased transparency)
-            pred_overlay[y1:y2, x1:x2][target_mask] = [*color[:3], 0.6]  # Reduced from 0.8 to 0.6
+            pred_overlay[y1:y2, x1:x2][target_mask] = [*color[:3], 0.6]
 
-            # Class 2: Non-target - skip rendering
-            # pred_overlay[y1:y2, x1:x2][nontarget_mask] = [*color[:3], 0.3]  # Commented out - not rendering non-target
-
+        # Second pass: Find overlaps and errors
         # Find areas where multiple targets overlap (count > 1)
         target_overlap_mask = target_mask_count > 1
-
-        # Render target overlap areas in yellow with slight transparency
-        pred_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.65]  # Yellow with slight transparency (alpha = 0.65)
 
         # Reconstruct full prediction and GT target masks
         full_pred_target_mask = np.zeros(image_np.shape[:2], dtype=bool)
@@ -879,7 +872,7 @@ class ValidationVisualizerWithAuxiliary:
             if 'segmentation' in ann:
                 gt_mask = self.coco.annToMask(ann)
                 gt_mask_resized = cv2.resize(gt_mask, (640, 640), interpolation=cv2.INTER_NEAREST)
-                full_gt_target_mask[gt_mask_resized > 0] = True  # Mark as target in GT
+                full_gt_target_mask[gt_mask_resized > 0] = True
 
         # Collect all target predictions
         for idx, ann in enumerate(annotations):
@@ -915,24 +908,36 @@ class ValidationVisualizerWithAuxiliary:
             # Mark target predictions
             full_pred_target_mask[y1:y2, x1:x2] |= (pred_resized == 1)
 
-        # Find where GT is target but prediction is not (missed targets)
+        # Find errors
         missed_target_mask = full_gt_target_mask & (~full_pred_target_mask)
-
-        # Find where prediction is target but GT is background (false positives)
         false_positive_mask = full_pred_target_mask & (~full_gt_target_mask)
-
-        # Combine both error types (missed targets and false positives)
         error_mask = missed_target_mask | false_positive_mask
 
-        # Render all error areas in red with slight transparency
-        pred_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red with slight transparency (alpha = 0.65)
+        # Render overlaps and errors in separate overlays
+        overlap_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.55]  # Yellow
+        error_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red
 
-        # Apply overlay
+        # Apply overlays in order: first predictions, then overlaps, then errors
+        # This ensures errors are always visible on top
         mask_rgb = (pred_overlay[:, :, :3] * 255).astype(np.uint8)
         mask_alpha = pred_overlay[:, :, 3]
 
         for c in range(3):
             img[:, :, c] = img[:, :, c] * (1 - mask_alpha) + mask_rgb[:, :, c] * mask_alpha
+
+        # Apply overlap overlay
+        overlap_rgb = (overlap_overlay[:, :, :3] * 255).astype(np.uint8)
+        overlap_alpha = overlap_overlay[:, :, 3]
+
+        for c in range(3):
+            img[:, :, c] = img[:, :, c] * (1 - overlap_alpha) + overlap_rgb[:, :, c] * overlap_alpha
+
+        # Apply error overlay last (highest priority)
+        error_rgb = (error_overlay[:, :, :3] * 255).astype(np.uint8)
+        error_alpha = error_overlay[:, :, 3]
+
+        for c in range(3):
+            img[:, :, c] = img[:, :, c] * (1 - error_alpha) + error_rgb[:, :, c] * error_alpha
 
         return Image.fromarray(img.astype(np.uint8))
 
@@ -973,10 +978,10 @@ class ValidationVisualizerWithAuxiliary:
 
         return Image.fromarray(img.astype(np.uint8))
 
-    def _create_combined_5x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
+    def _create_combined_4x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
                                   panel3_images: List[Image.Image], panel4_images: List[Image.Image],
-                                  panel5_images: List[Image.Image], epoch: int):
-        """Create combined 5x4 grid visualization."""
+                                  epoch: int):
+        """Create combined 4x4 grid visualization."""
         n_images = len(panel1_images)
         if n_images == 0:
             return
@@ -990,14 +995,14 @@ class ValidationVisualizerWithAuxiliary:
         # Add extra space for title at the top
         title_height = 80
 
-        # Create combined image (5 rows x n_images columns)
+        # Create combined image (4 rows x n_images columns)
         # Set margins
         label_padding = 30  # Changed to 30px as requested
         right_margin = 30   # Right margin
         bottom_margin = 30  # New bottom margin
         # Account for wider heatmap panels
         combined_width = label_padding + n_images * heatmap_width + (n_images - 1) * padding + right_margin
-        combined_height = title_height + 5 * img_height + 4 * padding + bottom_margin
+        combined_height = title_height + 4 * img_height + 3 * padding + bottom_margin
         combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
 
         # Add title text
@@ -1022,14 +1027,11 @@ class ValidationVisualizerWithAuxiliary:
             # Row 2: Binary Mask Heatmap (wider due to colorbar)
             combined_img.paste(panel2_images[col], (x_offset, title_height + img_height + padding))
 
-            # Row 3: Enhanced UNet FG/BG (standard width)
+            # Row 3: Full-image UNet Output (standard width)
             combined_img.paste(panel3_images[col], (x_offset, title_height + 2 * (img_height + padding)))
 
             # Row 4: Predictions (standard width)
             combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
-
-            # Row 5: Full-image UNet Output (standard width)
-            combined_img.paste(panel5_images[col], (x_offset, title_height + 4 * (img_height + padding)))
 
         # Draw main title
         title_text = f"Validation Results with Auxiliary Task - Epoch {epoch+1:04d}"
@@ -1042,9 +1044,8 @@ class ValidationVisualizerWithAuxiliary:
         labels = [
             ("Ground Truth", (255, 102, 102)),  # Light red
             ("Binary Mask Heatmap", (102, 178, 255)),  # Light blue
-            ("Enhanced UNet FG/BG", (102, 102, 255)),  # Light blue (matching UNet)
-            ("Predictions", (0, 153, 0)),  # Green
-            ("Full UNet Output", (0, 204, 102))  # Light green
+            ("Full UNet Output", (0, 204, 102)),  # Light green
+            ("Predictions", (0, 153, 0))  # Green
         ]
 
         # Draw row labels on top of images
@@ -1569,7 +1570,7 @@ class ValidationVisualizerWithAuxiliary:
         target_overlap_mask = target_mask_count > 1
 
         # Render target overlap areas in yellow with slight transparency
-        pred_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.65]  # Yellow with slight transparency (alpha = 0.65)
+        pred_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.55]  # Yellow with slight transparency (alpha = 0.55)
 
         # Reconstruct full prediction and GT target masks
         full_pred_target_mask = np.zeros(image_np.shape[:2], dtype=bool)
