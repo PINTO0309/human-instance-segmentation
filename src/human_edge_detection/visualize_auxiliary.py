@@ -983,11 +983,11 @@ class ValidationVisualizerWithAuxiliary:
         # Render overlaps and errors in separate overlays
         # First mark errors in red
         error_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red
-        
+
         # Then overwrite with yellow for overlaps (higher priority)
         # This ensures overlap areas are not shown as errors
-        overlap_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.55]  # Yellow
-        
+        overlap_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.45]  # Yellow
+
         # Remove error marking from overlap areas
         error_overlay[target_overlap_mask] = [0.0, 0.0, 0.0, 0.0]  # Clear error in overlap areas
 
@@ -1707,7 +1707,7 @@ class ValidationVisualizerWithAuxiliary:
         target_overlap_mask = target_mask_count > 1
 
         # Render target overlap areas in yellow with slight transparency
-        pred_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.55]  # Yellow with slight transparency (alpha = 0.55)
+        pred_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.45]  # Yellow with slight transparency (alpha = 0.55)
 
         # Reconstruct full prediction and GT target masks
         full_pred_target_mask = np.zeros(image_np.shape[:2], dtype=bool)
