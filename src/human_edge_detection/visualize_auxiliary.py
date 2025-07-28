@@ -982,7 +982,7 @@ class ValidationVisualizerWithAuxiliary:
 
         # Render overlaps and errors in separate overlays
         # First mark errors in red
-        error_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red
+        error_overlay[error_mask] = [1.0, 0.0, 0.0, 0.55]  # Red
 
         # Then overwrite with yellow for overlaps (higher priority)
         # This ensures overlap areas are not shown as errors
@@ -1587,7 +1587,7 @@ class ValidationVisualizerWithAuxiliary:
         # If we have masks, visualize them
         if combined_fg_mask.any() or combined_bg_mask.any():
             # Foreground in red (overwrites background)
-            mask_overlay[combined_fg_mask] = [1.0, 0.0, 0.0, 0.65]  # Red with alpha
+            mask_overlay[combined_fg_mask] = [1.0, 0.0, 0.0, 0.55]  # Red with alpha
 
             ax.imshow(image_np)
             ax.imshow(mask_overlay)
@@ -1765,6 +1765,6 @@ class ValidationVisualizerWithAuxiliary:
         error_mask = missed_target_mask | false_positive_mask
 
         # Render all error areas in red with slight transparency
-        pred_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red with slight transparency (alpha = 0.65)
+        pred_overlay[error_mask] = [1.0, 0.0, 0.0, 0.55]  # Red with slight transparency (alpha = 0.55)
 
         ax.imshow(pred_overlay)
