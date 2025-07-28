@@ -1,6 +1,6 @@
 """RGB-based Hierarchical Segmentation Models.
 
-This module implements hierarchical segmentation models that work directly 
+This module implements hierarchical segmentation models that work directly
 with RGB image inputs instead of pre-extracted YOLOv9 features.
 """
 
@@ -20,7 +20,7 @@ from .hierarchical_segmentation_unet import (
 
 class PretrainedUNetGuidedSegmentationHead(nn.Module):
     """Segmentation head that uses pre-trained UNet output directly for bg/fg separation."""
-    
+
     def __init__(
         self,
         in_channels: int,
@@ -33,7 +33,7 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
         normalization_groups: int = 8
     ):
         """Initialize pre-trained UNet guided segmentation head.
-        
+
         Args:
             in_channels: Input feature channels
             mid_channels: Intermediate channel count
@@ -45,22 +45,22 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
         super().__init__()
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
         self.num_classes = num_classes
-        
+
         # Support non-square mask sizes
         if isinstance(mask_size, (tuple, list)):
             self.mask_height = int(mask_size[0])
             self.mask_width = int(mask_size[1])
         else:
             self.mask_height = self.mask_width = int(mask_size)
-            
+
         self.use_attention_module = use_attention_module
-        
+
         # Input adjustment layer to combine features with fg_prob
         self.input_adjust = nn.Conv2d(in_channels + 1, in_channels, 1)
-        
+
         from .normalization_comparison import get_normalization_layer
         from .hierarchical_segmentation_refinement import ResidualBlock as FlexibleResidualBlock
-        
+
         # Feature processing for target/non-target branch
         self.feature_processor = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
@@ -71,7 +71,7 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
             nn.Dropout2d(dropout_rate),
             FlexibleResidualBlock(mid_channels, normalization_type, normalization_groups),
         )
-        
+
         # Direct 3-class prediction branch
         self.final_classifier = nn.Sequential(
             nn.Conv2d(mid_channels, mid_channels // 2, 3, padding=1),
@@ -79,7 +79,7 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_channels // 2, num_classes, 1)  # Direct 3-class output
         )
-        
+
         # Optional attention module
         if use_attention_module:
             self.attention_module = nn.Sequential(
@@ -88,28 +88,31 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
                 nn.Conv2d(mid_channels // 4, 1, 1),
                 nn.Sigmoid()
             )
-        
+
         # Initialize final classifier bias based on expected class distribution
         with torch.no_grad():
             # Set bias to reflect typical distribution
             self.final_classifier[-1].bias.data[0] = 0.0   # Background
             self.final_classifier[-1].bias.data[1] = 0.0   # Target
             self.final_classifier[-1].bias.data[2] = -0.5  # Non-target (less common)
-    
+
     def forward(self, features: torch.Tensor, bg_fg_mask: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
         """Forward pass using pre-trained UNet output for guidance.
-        
+
         Args:
             features: Processed features from ROI (N, C, H, W)
             bg_fg_mask: Pre-trained UNet output for each ROI (N, 1, H, W)
-            
+
         Returns:
             final_logits: Direct 3-class predictions
             aux_outputs: Auxiliary outputs
         """
         # Apply sigmoid to bg_fg_mask to get foreground probability
+        # Note: The pre-trained UNet outputs logits where x > 0 indicates foreground.
+        # While x > 0 gives the same binary result as sigmoid(x) > 0.5, we need
+        # the sigmoid here to get continuous probability values for soft gating.
         fg_prob = torch.sigmoid(bg_fg_mask)  # (N, 1, H, W)
-        
+
         # Downsample fg_prob to match feature size if needed
         feature_h, feature_w = features.shape[2:]
         if fg_prob.shape[2:] != (feature_h, feature_w):
@@ -121,16 +124,16 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
             )
         else:
             fg_prob_downsampled = fg_prob
-        
+
         # Concatenate features with fg_prob to provide guidance
         combined_features = torch.cat([features, fg_prob_downsampled], dim=1)
-        
+
         # Adjust input channels
         adjusted_features = self.input_adjust(combined_features)
-        
+
         # Process features
         processed = self.feature_processor(adjusted_features)
-        
+
         # Apply additional attention if enabled
         if self.use_attention_module:
             attention = self.attention_module(processed)
@@ -138,10 +141,10 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
             # This ensures attention focuses on relevant regions
             attention_combined = attention * (0.5 + 0.5 * fg_prob_downsampled)
             processed = processed * attention_combined
-        
+
         # Get final 3-class predictions directly
         final_logits = self.final_classifier(processed)
-        
+
         # Upsample predictions to mask size if needed
         if final_logits.shape[2:] != (self.mask_height, self.mask_width):
             final_logits = F.interpolate(
@@ -150,7 +153,7 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
                 mode='bilinear',
                 align_corners=False
             )
-        
+
         # Ensure bg_fg_mask matches output size
         if bg_fg_mask.shape[2:] != (self.mask_height, self.mask_width):
             bg_fg_mask = F.interpolate(
@@ -160,7 +163,7 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
                 align_corners=False
             )
             fg_prob = torch.sigmoid(bg_fg_mask)
-        
+
         # Create auxiliary outputs for loss computation
         # Convert bg_fg_mask to 2-channel format for hierarchical loss
         bg_prob = 1 - fg_prob
@@ -168,13 +171,13 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
             torch.log(bg_prob + 1e-7),
             torch.log(fg_prob + 1e-7)
         ], dim=1)
-        
+
         # Extract target/non-target logits from final predictions for auxiliary loss
         # Don't mask with fg_prob as it prevents learning when UNet output is poor
         target_logits = final_logits[:, 1:2]
         nontarget_logits = final_logits[:, 2:3]
         target_nontarget_logits = torch.cat([target_logits, nontarget_logits], dim=1)
-        
+
         aux_outputs = {
             'bg_fg_logits': bg_fg_logits,  # For hierarchical loss
             'target_nontarget_logits': target_nontarget_logits,  # For consistency
@@ -182,13 +185,13 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
             'pretrained_bg_fg_mask': bg_fg_mask,
             'attention': attention if self.use_attention_module else None
         }
-        
+
         return final_logits, aux_outputs
 
 
 class RGBFeatureExtractor(nn.Module):
     """Extract features from RGB ROI images."""
-    
+
     def __init__(
         self,
         in_channels: int = 3,
@@ -199,7 +202,7 @@ class RGBFeatureExtractor(nn.Module):
         normalization_groups: int = 8
     ):
         """Initialize RGB feature extractor.
-        
+
         Args:
             in_channels: Number of input channels (3 for RGB)
             out_channels: Number of output feature channels
@@ -208,29 +211,29 @@ class RGBFeatureExtractor(nn.Module):
         """
         super().__init__()
         self.roi_size = roi_size
-        
+
         # Build feature extraction layers
         layers = []
         channels = [in_channels, 64, 128, 192, out_channels][:num_layers + 1]
-        
+
         # Import normalization utilities
         from .normalization_comparison import get_normalization_layer
-        
+
         for i in range(len(channels) - 1):
             # No strided convolutions - keep spatial size constant
             out_ch = channels[i + 1]
-            
+
             # Ensure channels are compatible with GroupNorm
             if normalization_type.lower() == 'groupnorm' and out_ch % normalization_groups != 0:
                 out_ch = ((out_ch + normalization_groups - 1) // normalization_groups) * normalization_groups
                 channels[i + 1] = out_ch
-            
+
             layers.extend([
                 nn.Conv2d(channels[i], out_ch, 3, padding=1, stride=1),
                 get_normalization_layer(normalization_type, out_ch, num_groups=normalization_groups),
                 nn.ReLU(inplace=True)
             ])
-            
+
             # Add residual blocks for deeper features
             if i >= 1:
                 # Create normalization-compatible ResidualBlock
@@ -243,18 +246,18 @@ class RGBFeatureExtractor(nn.Module):
                     layers.append(FlexibleResidualBlock(out_ch, normalization_type, normalization_groups))
                 else:
                     layers.append(ResidualBlock(out_ch))
-        
+
         self.features = nn.Sequential(*layers)
-        
+
         # Output size is same as input size (no downsampling)
         self.output_size = roi_size
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Extract features from RGB ROIs.
-        
+
         Args:
             x: Input tensor of shape (B, 3, H, W)
-            
+
         Returns:
             Features tensor of shape (B, out_channels, H', W')
         """
@@ -263,7 +266,7 @@ class RGBFeatureExtractor(nn.Module):
 
 class HierarchicalRGBSegmentationModel(nn.Module):
     """Hierarchical segmentation model with RGB input."""
-    
+
     def __init__(
         self,
         roi_size: Union[int, Tuple[int, int]] = 28,
@@ -280,7 +283,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         **kwargs  # For additional configuration like normalization
     ):
         """Initialize RGB-based hierarchical segmentation model.
-        
+
         Args:
             roi_size: Size of input ROIs - int for square or (height, width) tuple for non-square
             mask_size: Size of output masks - int for square or (height, width) tuple for non-square
@@ -294,7 +297,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             use_distance_transform: Enable distance transform prediction
         """
         super().__init__()
-        
+
         # Support non-square ROI sizes
         if isinstance(roi_size, (tuple, list)):
             self.roi_height = int(roi_size[0])
@@ -302,7 +305,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             self.roi_size = roi_size[0]  # For compatibility
         else:
             self.roi_height = self.roi_width = self.roi_size = int(roi_size)
-            
+
         # Support non-square mask sizes
         if isinstance(mask_size, (tuple, list)):
             self.mask_height = int(mask_size[0])
@@ -311,12 +314,12 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         else:
             self.mask_height = self.mask_width = int(mask_size)
             self.mask_size = mask_size
-        
+
         # RGB feature extractor
         # Get normalization configuration
         normalization_type = kwargs.get('normalization_type', 'layernorm2d')
         normalization_groups = kwargs.get('normalization_groups', 8)
-        
+
         self.rgb_extractor = RGBFeatureExtractor(
             in_channels=3,
             out_channels=feature_channels,
@@ -325,7 +328,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             normalization_type=normalization_type,
             normalization_groups=normalization_groups
         )
-        
+
         # Check if any refinement modules are enabled
         use_refinement = any([
             use_boundary_refinement,
@@ -334,14 +337,14 @@ class HierarchicalRGBSegmentationModel(nn.Module):
             use_contour_detection,
             use_distance_transform
         ])
-        
+
         if use_refinement:
             # Use refined hierarchical segmentation head
             from .hierarchical_segmentation_refinement import RefinedHierarchicalSegmentationHead
             # Get normalization configuration
             normalization_type = kwargs.get('normalization_type', 'layernorm2d')
             normalization_groups = kwargs.get('normalization_groups', 8)
-            
+
             self.segmentation_head = RefinedHierarchicalSegmentationHead(
                 in_channels=feature_channels,
                 mid_channels=256,
@@ -365,26 +368,26 @@ class HierarchicalRGBSegmentationModel(nn.Module):
                 mask_size=mask_size,
                 use_attention_module=use_attention_module
             )
-        
+
         # Dynamic ROI Align for extracting regions from full images
         self.roi_align = DynamicRoIAlign(
             spatial_scale=(640.0, 640.0),  # ROIs are normalized [0,1], features are (H,W)
             sampling_ratio=2,
             aligned=False
         )
-        
+
     def forward(
-        self, 
-        images: torch.Tensor, 
+        self,
+        images: torch.Tensor,
         rois: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Forward pass with RGB images and ROIs.
-        
+
         Args:
             images: Full RGB images of shape (B, 3, H, W)
             rois: ROI coordinates of shape (N, 5) where each row is [batch_idx, x1, y1, x2, y2]
                   Coordinates should be in the same scale as images
-            
+
         Returns:
             Tuple of:
                 - Final predictions of shape (N, num_classes, mask_size, mask_size)
@@ -392,19 +395,19 @@ class HierarchicalRGBSegmentationModel(nn.Module):
         """
         # Extract ROI regions from images using DynamicRoIAlign
         roi_features = self.roi_align(images, rois, self.roi_height, self.roi_width)
-        
+
         # Extract features from RGB ROIs
         features = self.rgb_extractor(roi_features)
-        
+
         # Apply hierarchical segmentation head
         predictions, aux_outputs = self.segmentation_head(features)
-        
+
         return predictions, aux_outputs
 
 
 class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
     """Hierarchical segmentation model with pre-trained UNet from people_segmentation."""
-    
+
     def __init__(
         self,
         roi_size: Union[int, Tuple[int, int]] = 28,
@@ -416,7 +419,7 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
         normalization_groups: int = 8,
     ):
         """Initialize hierarchical RGB segmentation model with pre-trained UNet.
-        
+
         Args:
             roi_size: Size of input ROIs
             mask_size: Size of output masks
@@ -425,46 +428,46 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
             freeze_pretrained_weights: If True, freeze pre-trained UNet weights
         """
         super().__init__()
-        
+
         # Handle both square and non-square sizes
         if isinstance(roi_size, int):
             self.roi_size = (roi_size, roi_size)
         else:
             self.roi_size = roi_size
-            
+
         if isinstance(mask_size, int):
             self.mask_size = (mask_size, mask_size)
         else:
             self.mask_size = mask_size
-        
+
         # ROI alignment to extract RGB patches from full images
         self.roi_align = DynamicRoIAlign(
             spatial_scale=640.0,  # ROIs are normalized [0,1], images are 640x640
             sampling_ratio=2,
             aligned=True
         )
-        
+
         # Import pre-trained model classes
         from .hierarchical_segmentation_unet import (
             PreTrainedPeopleSegmentationUNetWrapper,
             HierarchicalSegmentationHeadUNetV2
         )
-        
+
         # Create pre-trained UNet for foreground/background segmentation
         self.pretrained_unet = PreTrainedPeopleSegmentationUNetWrapper(
             in_channels=3,
             pretrained_weights_path=pretrained_weights_path,
             freeze_weights=freeze_pretrained_weights
         )
-        
+
         # Feature dimension after ROI extraction (for hierarchical head)
         # The pre-trained UNet outputs 2 channels (bg/fg), we'll process these
         feature_dim = 256  # Intermediate feature dimension
-        
+
         # Import FlexibleResidualBlock and normalization layer for normalization support
         from .hierarchical_segmentation_refinement import ResidualBlock as FlexibleResidualBlock
         from .normalization_comparison import get_normalization_layer
-        
+
         # Feature processor to convert UNet output to features for hierarchical head
         self.feature_processor = nn.Sequential(
             nn.Conv2d(2, 64, 3, padding=1),
@@ -479,7 +482,7 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
             get_normalization_layer(normalization_type, feature_dim, num_groups=min(normalization_groups, feature_dim)),
             nn.ReLU(inplace=True),
         )
-        
+
         # Hierarchical segmentation head
         self.segmentation_head = HierarchicalSegmentationHeadUNetV2(
             in_channels=feature_dim,
@@ -488,39 +491,39 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
             mask_size=self.mask_size[0] if self.mask_size[0] == self.mask_size[1] else self.mask_size,
             use_attention_module=use_attention_module,
         )
-        
+
     def forward(self, images: torch.Tensor, rois: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
         """Forward pass.
-        
+
         Args:
             images: Input images (B, 3, H, W)
             rois: ROI boxes (N, 5) with [batch_idx, x1, y1, x2, y2]
-            
+
         Returns:
             predictions: Mask predictions (N, 3, mask_h, mask_w)
             aux_outputs: Auxiliary outputs dict
         """
         # Extract ROI patches from images
         roi_patches = self.roi_align(images, rois, self.roi_size[0], self.roi_size[1])
-        
+
         # Get foreground/background predictions from pre-trained UNet
         bg_fg_logits, _ = self.pretrained_unet(roi_patches)
-        
+
         # Process UNet output to features
         features = self.feature_processor(bg_fg_logits)
-        
+
         # Apply hierarchical segmentation head
         predictions, aux_outputs = self.segmentation_head(features)
-        
+
         # Add pre-trained UNet output to auxiliary outputs
         aux_outputs['pretrained_bg_fg_logits'] = bg_fg_logits
-        
+
         return predictions, aux_outputs
 
 
 class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
     """Hierarchical segmentation model that applies pre-trained UNet to full image first."""
-    
+
     def __init__(
         self,
         roi_size: Union[int, Tuple[int, int]] = 28,
@@ -539,7 +542,7 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         normalization_groups: int = 8,
     ):
         """Initialize hierarchical RGB segmentation model with full-image pre-trained UNet.
-        
+
         Args:
             roi_size: Size of input ROIs
             mask_size: Size of output masks
@@ -555,24 +558,24 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             normalization_groups: Number of groups for group normalization
         """
         super().__init__()
-        
+
         # Handle both square and non-square sizes
         if isinstance(roi_size, int):
             self.roi_size = (roi_size, roi_size)
         else:
             self.roi_size = roi_size
-            
+
         if isinstance(mask_size, int):
             self.mask_size = (mask_size, mask_size)
         else:
             self.mask_size = mask_size
-        
+
         # Import pre-trained model classes
         from .hierarchical_segmentation_unet import (
             PreTrainedPeopleSegmentationUNet,
             HierarchicalSegmentationHeadUNetV2
         )
-        
+
         # Create pre-trained UNet for full image processing
         self.pretrained_unet = PreTrainedPeopleSegmentationUNet(
             in_channels=3,
@@ -580,28 +583,28 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             pretrained_weights_path=pretrained_weights_path,
             freeze_weights=freeze_pretrained_weights
         )
-        
+
         # ROI alignment to extract bg/fg masks from UNet output
         self.roi_align_mask = DynamicRoIAlign(
             spatial_scale=640.0,  # ROIs are normalized [0,1], UNet output is 640x640
             sampling_ratio=2,
             aligned=True
         )
-        
+
         # ROI alignment to extract RGB features from original images
         self.roi_align_rgb = DynamicRoIAlign(
             spatial_scale=640.0,  # ROIs are normalized [0,1], RGB features are 640x640
             sampling_ratio=2,
             aligned=True
         )
-        
+
         # Feature dimension after ROI extraction
         feature_dim = 256  # Intermediate feature dimension
-        
+
         # Import flexible ResidualBlock that supports normalization types
         from .hierarchical_segmentation_refinement import ResidualBlock as FlexibleResidualBlock
         from .normalization_comparison import get_normalization_layer
-        
+
         # RGB feature extractor for ROI patches
         self.rgb_feature_extractor = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1),
@@ -620,12 +623,12 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             get_normalization_layer(normalization_type, feature_dim, num_groups=min(normalization_groups, feature_dim)),
             nn.ReLU(inplace=True),
         )
-        
+
         # Since we need to incorporate pre-trained UNet bg/fg masks,
         # we'll concatenate them with features, so adjust input channels
         # feature_dim (256) + 1 channel for bg/fg mask = 257
         combined_feature_dim = feature_dim + 1
-        
+
         # Check if any refinement modules are enabled
         use_refinement = any([
             use_boundary_refinement,
@@ -634,14 +637,14 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             use_contour_detection,
             use_distance_transform
         ])
-        
+
         if use_refinement:
             # Use refined hierarchical segmentation head with refinement modules
             from .hierarchical_segmentation_refinement import RefinedHierarchicalSegmentationHead
-            
+
             # Adapter to combine features with bg/fg masks before refinement head
             self.feature_combiner = nn.Conv2d(combined_feature_dim, feature_dim, 1)
-            
+
             self.segmentation_head = RefinedHierarchicalSegmentationHead(
                 in_channels=feature_dim,
                 mid_channels=256,
@@ -664,31 +667,33 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
                 num_classes=3,
                 mask_size=self.mask_size[0] if self.mask_size[0] == self.mask_size[1] else self.mask_size,
                 use_attention_module=use_attention_module,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups,
             )
-        
+
     def forward(self, images: torch.Tensor, rois: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
         """Forward pass.
-        
+
         Args:
             images: Input images (B, 3, H, W)
             rois: ROI boxes (N, 5) with [batch_idx, x1, y1, x2, y2]
-            
+
         Returns:
             predictions: Mask predictions (N, 3, mask_h, mask_w)
             aux_outputs: Auxiliary outputs dict
         """
         # Apply pre-trained UNet to full images
         full_image_logits = self.pretrained_unet(images)  # (B, 1, H, W)
-        
+
         # Extract bg/fg masks for each ROI from UNet output
         roi_bg_fg_masks = self.roi_align_mask(full_image_logits, rois, self.roi_size[0], self.roi_size[1])
-        
+
         # Extract RGB patches from original images for feature extraction
         roi_rgb_patches = self.roi_align_rgb(images, rois, self.roi_size[0], self.roi_size[1])
-        
+
         # Extract rich features from RGB patches
         rgb_features = self.rgb_feature_extractor(roi_rgb_patches)
-        
+
         # Apply hierarchical segmentation head with pre-trained UNet output as guidance
         if hasattr(self, 'feature_combiner'):
             # For refined segmentation head, combine features with bg/fg masks
@@ -698,17 +703,17 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         else:
             # For PretrainedUNetGuidedSegmentationHead, pass both features and masks
             predictions, aux_outputs = self.segmentation_head(rgb_features, roi_bg_fg_masks)
-        
+
         # Add full image UNet output to auxiliary outputs
         aux_outputs['full_image_logits'] = full_image_logits
         aux_outputs['roi_features'] = roi_bg_fg_masks
-        
+
         return predictions, aux_outputs
 
 
 class MultiScaleRGBSegmentationModel(nn.Module):
     """Multi-scale RGB segmentation model with hierarchical head."""
-    
+
     def __init__(
         self,
         roi_sizes: Dict[str, int] = {'scale1': 56, 'scale2': 42, 'scale3': 28},
@@ -721,7 +726,7 @@ class MultiScaleRGBSegmentationModel(nn.Module):
         normalization_groups: int = 8
     ):
         """Initialize multi-scale RGB segmentation model.
-        
+
         Args:
             roi_sizes: Dictionary of scale names to ROI sizes
             mask_size: Size of output masks
@@ -731,12 +736,12 @@ class MultiScaleRGBSegmentationModel(nn.Module):
             use_attention_module: Whether to use attention modules
         """
         super().__init__()
-        
+
         self.roi_sizes = roi_sizes
         self.mask_size = mask_size
         self.fusion_method = fusion_method
         self.scales = list(roi_sizes.keys())
-        
+
         # Create RGB extractors for each scale
         self.rgb_extractors = nn.ModuleDict({
             scale: RGBFeatureExtractor(
@@ -747,7 +752,7 @@ class MultiScaleRGBSegmentationModel(nn.Module):
             )
             for scale, roi_size in roi_sizes.items()
         })
-        
+
         # Dynamic ROI Align for each scale
         self.roi_aligns = nn.ModuleDict({
             scale: DynamicRoIAlign(
@@ -757,26 +762,26 @@ class MultiScaleRGBSegmentationModel(nn.Module):
             )
             for scale, roi_size in roi_sizes.items()
         })
-        
+
         # Feature fusion
         if fusion_method == 'concat':
             fused_channels = feature_channels * len(roi_sizes)
         else:
             fused_channels = feature_channels
-            
+
         if fusion_method == 'adaptive':
             self.fusion_weights = nn.Parameter(torch.ones(len(roi_sizes)))
-            
+
         # Import normalization layer
         from .normalization_comparison import get_normalization_layer
-        
+
         # Project fused features to expected input size
         self.fusion_proj = nn.Sequential(
             nn.Conv2d(fused_channels, feature_channels, 1),
             get_normalization_layer(normalization_type, feature_channels, num_groups=min(normalization_groups, feature_channels)),
             nn.ReLU(inplace=True)
         )
-        
+
         # Hierarchical segmentation head
         self.segmentation_head = HierarchicalSegmentationHeadUNetV2(
             in_channels=feature_channels,
@@ -785,43 +790,43 @@ class MultiScaleRGBSegmentationModel(nn.Module):
             mask_size=mask_size,
             use_attention_module=use_attention_module
         )
-        
+
     def forward(
         self,
         images: torch.Tensor,
         rois: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Forward pass with multi-scale RGB extraction.
-        
+
         Args:
             images: Full RGB images of shape (B, 3, H, W)
             rois: ROI coordinates of shape (N, 5)
-            
+
         Returns:
             Tuple of predictions and auxiliary outputs
         """
         # Extract features at multiple scales
         scale_features = []
-        
+
         for scale in self.scales:
             # Extract ROIs at this scale
             roi_size = self.roi_sizes[scale]
             roi_regions = self.roi_aligns[scale](images, rois, roi_size, roi_size)
-            
+
             # Extract features
             features = self.rgb_extractors[scale](roi_regions)
-            
+
             # Resize to common size if needed
             if features.shape[-1] != 28:
                 features = F.interpolate(
-                    features, 
-                    size=(28, 28), 
-                    mode='bilinear', 
+                    features,
+                    size=(28, 28),
+                    mode='bilinear',
                     align_corners=False
                 )
-            
+
             scale_features.append(features)
-        
+
         # Fuse multi-scale features
         if self.fusion_method == 'concat':
             fused = torch.cat(scale_features, dim=1)
@@ -832,13 +837,13 @@ class MultiScaleRGBSegmentationModel(nn.Module):
             fused = sum(w * f for w, f in zip(weights, scale_features))
         else:
             raise ValueError(f"Unknown fusion method: {self.fusion_method}")
-        
+
         # Project to expected channels
         fused = self.fusion_proj(fused)
-        
+
         # Apply hierarchical segmentation head
         predictions, aux_outputs = self.segmentation_head(fused)
-        
+
         return predictions, aux_outputs
 
 
@@ -853,36 +858,36 @@ def create_rgb_hierarchical_model(
     **kwargs
 ) -> nn.Module:
     """Create RGB-based hierarchical segmentation model.
-    
+
     Args:
         roi_size: Size of input ROIs - int for square or (height, width) tuple for non-square
         mask_size: Size of output masks - int for square or (height, width) tuple for non-square
         multi_scale: Whether to use multi-scale feature extraction
         **kwargs: Additional arguments
-        
+
     Returns:
         Hierarchical segmentation model
     """
     # Extract common parameters
     use_attention_module = kwargs.get('use_attention_module', False)
-    
+
     # Extract refinement parameters
     use_boundary_refinement = kwargs.get('use_boundary_refinement', False)
     use_progressive_upsampling = kwargs.get('use_progressive_upsampling', False)
     use_subpixel_conv = kwargs.get('use_subpixel_conv', False)
     use_contour_detection = kwargs.get('use_contour_detection', False)
     use_distance_transform = kwargs.get('use_distance_transform', False)
-    
+
     # Check for pre-trained UNet option
     use_pretrained_unet = kwargs.get('use_pretrained_unet', False)
     pretrained_weights_path = kwargs.get('pretrained_weights_path', '')
     freeze_pretrained_weights = kwargs.get('freeze_pretrained_weights', False)
     use_full_image_unet = kwargs.get('use_full_image_unet', False)  # New parameter
-    
+
     if multi_scale:
         roi_sizes = kwargs.get('roi_sizes', {'scale1': 56, 'scale2': 42, 'scale3': 28})
         fusion_method = kwargs.get('fusion_method', 'concat')
-        
+
         return MultiScaleRGBSegmentationModel(
             roi_sizes=roi_sizes,
             mask_size=mask_size,
