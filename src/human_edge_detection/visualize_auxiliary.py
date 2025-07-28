@@ -939,7 +939,73 @@ class ValidationVisualizerWithAuxiliary:
         for c in range(3):
             img[:, :, c] = img[:, :, c] * (1 - error_alpha) + error_rgb[:, :, c] * error_alpha
 
-        return Image.fromarray(img.astype(np.uint8))
+        # Add legend within the image (bottom-right corner)
+        # Convert to PIL for drawing legend
+        pil_img = Image.fromarray(img.astype(np.uint8))
+        draw = ImageDraw.Draw(pil_img)
+        
+        # Try to load font
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+            font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+        except:
+            font = ImageFont.load_default()
+            font_bold = font
+        
+        # Legend dimensions and position
+        legend_width = 130
+        legend_height = 80  # Reduced height since no title
+        legend_margin = 10
+        legend_x = img.shape[1] - legend_width - legend_margin
+        legend_y = img.shape[0] - legend_height - legend_margin
+        
+        # Draw semi-transparent background for legend
+        legend_bg = Image.new('RGBA', (legend_width, legend_height), (240, 240, 240, 230))
+        legend_draw = ImageDraw.Draw(legend_bg)
+        
+        # Draw border
+        legend_draw.rectangle(
+            [0, 0, legend_width-1, legend_height-1],
+            fill=None,
+            outline=(100, 100, 100, 255),
+            width=2
+        )
+        
+        # Draw legend items (no title)
+        # Calculate vertical centering
+        item_height = 22
+        num_items = 3
+        # Total height needed: (num_items - 1) * item_height + box height
+        total_items_height = (num_items - 1) * item_height + 12
+        vertical_padding = (legend_height - total_items_height) // 2
+        item_y = vertical_padding  # Start with centered vertical padding
+        
+        # Error (Red)
+        legend_draw.rectangle([10, item_y, 20, item_y + 12], 
+                            fill=(255, 0, 0, 255), outline=(0, 0, 0, 255))
+        legend_draw.text((25, item_y), "Error (FP/FN)", fill=(0, 0, 0, 255), font=font)
+        
+        # Overlap (Yellow)
+        item_y += item_height
+        legend_draw.rectangle([10, item_y, 20, item_y + 12], 
+                            fill=(255, 255, 0, 255), outline=(0, 0, 0, 255))
+        legend_draw.text((25, item_y), "Overlap", fill=(0, 0, 0, 255), font=font)
+        
+        # Person prediction (sample color)
+        item_y += item_height
+        sample_color = tuple(int(c * 255) for c in colors[0][:3]) + (255,)
+        legend_draw.rectangle([10, item_y, 20, item_y + 12], 
+                            fill=sample_color, outline=(0, 0, 0, 255))
+        legend_draw.text((25, item_y), "Person pred.", fill=(0, 0, 0, 255), font=font)
+        
+        # Paste legend onto main image
+        pil_img_rgba = pil_img.convert('RGBA')
+        pil_img_rgba.paste(legend_bg, (legend_x, legend_y), legend_bg)
+        
+        # Convert back to RGB
+        final_img = pil_img_rgba.convert('RGB')
+        
+        return final_img
 
     def _create_panel_full_image_unet(self, image_np: np.ndarray, unet_outputs: Dict) -> Image.Image:
         """Create panel showing full-image UNet output.
