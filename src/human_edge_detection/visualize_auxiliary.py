@@ -867,8 +867,65 @@ class ValidationVisualizerWithAuxiliary:
         # Find areas where multiple targets overlap (count > 1)
         target_overlap_mask = target_mask_count > 1
 
-        # Render target overlap areas in solid red
-        pred_overlay[target_overlap_mask] = [1.0, 0.0, 0.0, 1.0]  # Red with no transparency (alpha = 1.0)
+        # Render target overlap areas in yellow with slight transparency
+        pred_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.65]  # Yellow with slight transparency (alpha = 0.65)
+
+        # Reconstruct full prediction and GT target masks
+        full_pred_target_mask = np.zeros(image_np.shape[:2], dtype=bool)
+        full_gt_target_mask = np.zeros(image_np.shape[:2], dtype=bool)
+
+        # Collect all GT target masks
+        for ann in annotations:
+            if 'segmentation' in ann:
+                gt_mask = self.coco.annToMask(ann)
+                gt_mask_resized = cv2.resize(gt_mask, (640, 640), interpolation=cv2.INTER_NEAREST)
+                full_gt_target_mask[gt_mask_resized > 0] = True  # Mark as target in GT
+
+        # Collect all target predictions
+        for idx, ann in enumerate(annotations):
+            if idx not in predictions:
+                continue
+
+            pred_mask = predictions[idx]
+            x, y, w, h = ann['bbox']
+
+            # Scale bbox to resized image
+            x = x * 640 / orig_width
+            y = y * 640 / orig_height
+            w = w * 640 / orig_width
+            h = h * 640 / orig_height
+
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                (640, 640)
+            )
+
+            if roi is None:
+                continue
+
+            x1, y1, x2, y2 = roi
+
+            # Resize prediction to ROI size
+            pred_resized = cv2.resize(
+                pred_mask.astype(np.uint8),
+                (x2 - x1, y2 - y1),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+            # Mark target predictions
+            full_pred_target_mask[y1:y2, x1:x2] |= (pred_resized == 1)
+
+        # Find where GT is target but prediction is not (missed targets)
+        missed_target_mask = full_gt_target_mask & (~full_pred_target_mask)
+
+        # Find where prediction is target but GT is background (false positives)
+        false_positive_mask = full_pred_target_mask & (~full_gt_target_mask)
+
+        # Combine both error types (missed targets and false positives)
+        error_mask = missed_target_mask | false_positive_mask
+
+        # Render all error areas in red with slight transparency
+        pred_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red with slight transparency (alpha = 0.65)
 
         # Apply overlay
         mask_rgb = (pred_overlay[:, :, :3] * 255).astype(np.uint8)
@@ -1511,7 +1568,65 @@ class ValidationVisualizerWithAuxiliary:
         # Find areas where multiple targets overlap (count > 1)
         target_overlap_mask = target_mask_count > 1
 
-        # Render target overlap areas in solid red
-        pred_overlay[target_overlap_mask] = [1.0, 0.0, 0.0, 1.0]  # Red with no transparency (alpha = 1.0)
+        # Render target overlap areas in yellow with slight transparency
+        pred_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.65]  # Yellow with slight transparency (alpha = 0.65)
+
+        # Reconstruct full prediction and GT target masks
+        full_pred_target_mask = np.zeros(image_np.shape[:2], dtype=bool)
+        full_gt_target_mask = np.zeros(image_np.shape[:2], dtype=bool)
+
+        # Collect all GT target masks
+        for ann in annotations:
+            if 'segmentation' in ann:
+                mask = self.coco.annToMask(ann)
+                # Resize mask to 640x640
+                mask_resized = cv2.resize(mask, (640, 640), interpolation=cv2.INTER_NEAREST)
+                full_gt_target_mask[mask_resized > 0] = True  # Mark as target in GT
+
+        # Collect all target predictions
+        for idx, ann in enumerate(annotations):
+            if idx not in predictions:
+                continue
+
+            pred_mask = predictions[idx]
+            x, y, w, h = ann['bbox']
+
+            # Scale bbox to resized image
+            x = x * 640 / orig_width
+            y = y * 640 / orig_height
+            w = w * 640 / orig_width
+            h = h * 640 / orig_height
+
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                (640, 640)
+            )
+
+            if roi is None:
+                continue
+
+            x1, y1, x2, y2 = roi
+
+            # Resize prediction to ROI size
+            pred_resized = cv2.resize(
+                pred_mask.astype(np.uint8),
+                (x2 - x1, y2 - y1),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+            # Mark target predictions
+            full_pred_target_mask[y1:y2, x1:x2] |= (pred_resized == 1)
+
+        # Find where GT is target but prediction is not (missed targets)
+        missed_target_mask = full_gt_target_mask & (~full_pred_target_mask)
+
+        # Find where prediction is target but GT is background (false positives)
+        false_positive_mask = full_pred_target_mask & (~full_gt_target_mask)
+
+        # Combine both error types (missed targets and false positives)
+        error_mask = missed_target_mask | false_positive_mask
+
+        # Render all error areas in red with slight transparency
+        pred_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red with slight transparency (alpha = 0.65)
 
         ax.imshow(pred_overlay)

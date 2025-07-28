@@ -979,14 +979,27 @@ def main():
         val_metrics = evaluate_model(
             model, val_loader, loss_fn, device,
             feature_extractor=feature_extractor,
-            config=config
+            config=config,
+            epoch=0,
+            output_dir=exp_dirs['checkpoints']
         )
 
         print(f"\nValidation Results:")
         print(f"  Total Loss: {val_metrics['total_loss']:.4f}")
-        print(f"  mIoU: {val_metrics['miou']:.4f}")
+        print(f"\n  Primary Metrics:")
+        print(f"    Target IoU (mIoU): {val_metrics['target_iou']:.4f}")
+        print(f"    Detection Rate (IoU > 0.5): {val_metrics['detection_rate_0.5']:.2%}")
+        print(f"    Detection Rate (IoU > 0.7): {val_metrics['detection_rate_0.7']:.2%}")
+        print(f"\n  Class-wise IoU:")
         for i in range(config.model.num_classes):
-            print(f"  IoU class {i}: {val_metrics[f'iou_class_{i}']:.4f}")
+            class_name = ['Background', 'Target', 'Non-target'][i]
+            print(f"    {class_name}: {val_metrics[f'iou_class_{i}']:.4f}")
+        print(f"\n  Target Performance:")
+        print(f"    Precision: {val_metrics.get('target_precision', 0):.4f}")
+        print(f"    Recall: {val_metrics.get('target_recall', 0):.4f}")
+        print(f"    F1 Score: {val_metrics.get('target_f1', 0):.4f}")
+        print(f"\n  Instance Separation:")
+        print(f"    Instance Separation Accuracy: {val_metrics.get('instance_separation_accuracy', 0):.4f}")
         return
 
     # Save untrained model at the beginning (only if not resuming)
@@ -1096,61 +1109,101 @@ def main():
                 epoch, config, feature_extractor, scaler, writer, text_logger
             )
 
-            # Log training metrics
-            writer.add_scalar('train/total_loss', train_metrics['total_loss'], epoch)
-            writer.add_scalar('train/ce_loss', train_metrics['ce_loss'], epoch)
-            writer.add_scalar('train/dice_loss', train_metrics['dice_loss'], epoch)
-            writer.add_scalar('train/learning_rate', optimizer.param_groups[0]['lr'], epoch)
+            # Log training metrics with hierarchical naming
             
-            # Log auxiliary metrics if available
+            # 01. Primary Training Metrics
+            writer.add_scalar('train/01_primary/total_loss', train_metrics['total_loss'], epoch)
+            writer.add_scalar('train/01_primary/learning_rate', optimizer.param_groups[0]['lr'], epoch)
+            
+            # 02. Loss Components
+            writer.add_scalar('train/02_loss_components/ce_loss', train_metrics['ce_loss'], epoch)
+            writer.add_scalar('train/02_loss_components/dice_loss', train_metrics['dice_loss'], epoch)
+            
+            # 03. Auxiliary Task Metrics (if available)
             if 'aux_fg_bg_loss' in train_metrics:
-                writer.add_scalar('train/aux_fg_bg_loss', train_metrics['aux_fg_bg_loss'], epoch)
-                writer.add_scalar('train/aux_fg_accuracy', train_metrics['aux_fg_accuracy'], epoch)
-                writer.add_scalar('train/aux_fg_iou', train_metrics['aux_fg_iou'], epoch)
+                writer.add_scalar('train/03_auxiliary/fg_bg_loss', train_metrics['aux_fg_bg_loss'], epoch)
+                writer.add_scalar('train/03_auxiliary/fg_accuracy', train_metrics['aux_fg_accuracy'], epoch)
+                writer.add_scalar('train/03_auxiliary/fg_iou', train_metrics['aux_fg_iou'], epoch)
             
-            # Log refinement losses if available
+            # 04. Refinement Losses (if available)
             if 'active_contour' in train_metrics:
-                writer.add_scalar('train/active_contour', train_metrics['active_contour'], epoch)
+                writer.add_scalar('train/04_refinement/active_contour', train_metrics['active_contour'], epoch)
             if 'boundary_aware' in train_metrics:
-                writer.add_scalar('train/boundary_aware', train_metrics['boundary_aware'], epoch)
+                writer.add_scalar('train/04_refinement/boundary_aware', train_metrics['boundary_aware'], epoch)
             if 'contour' in train_metrics:
-                writer.add_scalar('train/contour', train_metrics['contour'], epoch)
+                writer.add_scalar('train/04_refinement/contour', train_metrics['contour'], epoch)
             if 'distance_transform' in train_metrics:
-                writer.add_scalar('train/distance_transform', train_metrics['distance_transform'], epoch)
+                writer.add_scalar('train/04_refinement/distance_transform', train_metrics['distance_transform'], epoch)
+            
+            # 05. Other Metrics
+            if 'grad_norm' in train_metrics:
+                writer.add_scalar('train/05_other/gradient_norm', train_metrics['grad_norm'], epoch)
 
             # Validation
             if epoch % config.training.validate_every == 0:
                 val_metrics = evaluate_model(
                     model, val_loader, loss_fn, device,
                     feature_extractor=feature_extractor,
-                    config=config
+                    config=config,
+                    epoch=epoch,
+                    output_dir=exp_dirs['checkpoints']
                 )
 
-                # Log validation metrics
-                writer.add_scalar('val/total_loss', val_metrics['total_loss'], epoch)
-                writer.add_scalar('val/miou', val_metrics['miou'], epoch)
+                # Log validation metrics with hierarchical naming for better organization
+                
+                # 01. Primary Metrics (most important)
+                writer.add_scalar('val/01_primary/target_iou', val_metrics['target_iou'], epoch)
+                writer.add_scalar('val/01_primary/detection_rate_0.5', val_metrics['detection_rate_0.5'], epoch)
+                writer.add_scalar('val/01_primary/detection_rate_0.7', val_metrics['detection_rate_0.7'], epoch)
+                
+                # 02. Target Performance
+                writer.add_scalar('val/02_target/precision', val_metrics.get('target_precision', 0), epoch)
+                writer.add_scalar('val/02_target/recall', val_metrics.get('target_recall', 0), epoch)
+                writer.add_scalar('val/02_target/f1_score', val_metrics.get('target_f1', 0), epoch)
+                
+                # 03. Instance Separation
+                writer.add_scalar('val/03_instance/separation_accuracy', 
+                                val_metrics.get('instance_separation_accuracy', 0), epoch)
+                
+                # 04. Class-wise IoU
+                class_names = ['background', 'target', 'nontarget']
                 for i in range(config.model.num_classes):
-                    writer.add_scalar(f'val/iou_class_{i}', val_metrics[f'iou_class_{i}'], epoch)
+                    writer.add_scalar(f'val/04_class_iou/{i}_{class_names[i]}', 
+                                    val_metrics[f'iou_class_{i}'], epoch)
                 
-                # Log validation auxiliary metrics if available
+                # 05. Loss Components
+                writer.add_scalar('val/05_loss/total', val_metrics['total_loss'], epoch)
+                writer.add_scalar('val/05_loss/ce', val_metrics.get('ce_loss', 0), epoch)
+                writer.add_scalar('val/05_loss/dice', val_metrics.get('dice_loss', 0), epoch)
+                
+                # 06. Overall Metrics
+                writer.add_scalar('val/06_overall/accuracy', val_metrics.get('overall_accuracy', 0), epoch)
+                
+                # Legacy metric for backward compatibility
+                writer.add_scalar('val/miou', val_metrics['miou'], epoch)
+                
+                # 07. Auxiliary Task Metrics (if available)
                 if 'aux_fg_bg_loss' in val_metrics:
-                    writer.add_scalar('val/aux_fg_bg_loss', val_metrics['aux_fg_bg_loss'], epoch)
-                    writer.add_scalar('val/aux_fg_accuracy', val_metrics['aux_fg_accuracy'], epoch)
-                    writer.add_scalar('val/aux_fg_iou', val_metrics['aux_fg_iou'], epoch)
+                    writer.add_scalar('val/07_auxiliary/fg_bg_loss', val_metrics['aux_fg_bg_loss'], epoch)
+                    writer.add_scalar('val/07_auxiliary/fg_accuracy', val_metrics['aux_fg_accuracy'], epoch)
+                    writer.add_scalar('val/07_auxiliary/fg_iou', val_metrics['aux_fg_iou'], epoch)
                 
-                # Log validation refinement losses if available
+                # 08. Refinement Losses (if available)
                 if 'active_contour' in val_metrics:
-                    writer.add_scalar('val/active_contour', val_metrics['active_contour'], epoch)
+                    writer.add_scalar('val/08_refinement/active_contour', val_metrics['active_contour'], epoch)
                 if 'boundary_aware' in val_metrics:
-                    writer.add_scalar('val/boundary_aware', val_metrics['boundary_aware'], epoch)
+                    writer.add_scalar('val/08_refinement/boundary_aware', val_metrics['boundary_aware'], epoch)
                 if 'contour' in val_metrics:
-                    writer.add_scalar('val/contour', val_metrics['contour'], epoch)
+                    writer.add_scalar('val/08_refinement/contour', val_metrics['contour'], epoch)
                 if 'distance_transform' in val_metrics:
-                    writer.add_scalar('val/distance_transform', val_metrics['distance_transform'], epoch)
+                    writer.add_scalar('val/08_refinement/distance_transform', val_metrics['distance_transform'], epoch)
 
                 print(f"\nEpoch {epoch+1} - Validation:")
                 print(f"  Loss: {val_metrics['total_loss']:.4f}")
-                print(f"  mIoU: {val_metrics['miou']:.4f}")
+                print(f"  Target IoU (mIoU): {val_metrics['target_iou']:.4f}")
+                print(f"  Detection Rates: IoU>0.5: {val_metrics['detection_rate_0.5']:.2%}, IoU>0.7: {val_metrics['detection_rate_0.7']:.2%}")
+                print(f"  Target Metrics: Prec={val_metrics.get('target_precision', 0):.3f}, Rec={val_metrics.get('target_recall', 0):.3f}, F1={val_metrics.get('target_f1', 0):.3f}")
+                print(f"  Instance Separation: {val_metrics.get('instance_separation_accuracy', 0):.3f}")
                 
                 # Log epoch summary to text file
                 text_logger.log_epoch_summary(

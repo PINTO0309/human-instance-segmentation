@@ -52,12 +52,12 @@ class TextLogger:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         with open(self.log_path, 'a') as f:
-            f.write(f"{'='*40}\n")
+            f.write(f"{'='*60}\n")
             f.write(f"[{timestamp}] Epoch {epoch+1} Summary\n")
             f.write(f"Learning Rate: {learning_rate:.6f}\n")
             
             # Log training metrics
-            f.write("Training Metrics:\n")
+            f.write("\nTraining Metrics:\n")
             for key, value in sorted(train_metrics.items()):
                 if isinstance(value, (int, float)):
                     f.write(f"  {key}: {value:.4f}\n")
@@ -65,11 +65,43 @@ class TextLogger:
             # Log validation metrics if available
             if val_metrics is not None:
                 f.write("\nValidation Metrics:\n")
+                
+                # Primary metrics
+                f.write("  Primary:\n")
+                f.write(f"    target_iou (mIoU): {val_metrics.get('target_iou', 0):.4f}\n")
+                f.write(f"    detection_rate_0.5: {val_metrics.get('detection_rate_0.5', 0):.4f}\n")
+                f.write(f"    detection_rate_0.7: {val_metrics.get('detection_rate_0.7', 0):.4f}\n")
+                
+                # Instance separation metrics
+                f.write("  Instance Separation:\n")
+                f.write(f"    target_precision: {val_metrics.get('target_precision', 0):.4f}\n")
+                f.write(f"    target_recall: {val_metrics.get('target_recall', 0):.4f}\n")
+                f.write(f"    instance_separation_accuracy: {val_metrics.get('instance_separation_accuracy', 0):.4f}\n")
+                
+                # Class-wise IoU
+                f.write("  Class IoU:\n")
+                for i in range(3):
+                    class_name = ['background', 'target', 'non-target'][i]
+                    f.write(f"    iou_class_{i} ({class_name}): {val_metrics.get(f'iou_class_{i}', 0):.4f}\n")
+                
+                # Loss metrics
+                f.write("  Losses:\n")
+                f.write(f"    total_loss: {val_metrics.get('total_loss', 0):.4f}\n")
+                f.write(f"    ce_loss: {val_metrics.get('ce_loss', 0):.4f}\n")
+                f.write(f"    dice_loss: {val_metrics.get('dice_loss', 0):.4f}\n")
+                
+                # Other metrics
+                f.write("  Other:\n")
                 for key, value in sorted(val_metrics.items()):
-                    if isinstance(value, (int, float)):
-                        f.write(f"  {key}: {value:.4f}\n")
+                    if isinstance(value, (int, float)) and key not in [
+                        'target_iou', 'miou', 'detection_rate_0.5', 'detection_rate_0.7',
+                        'target_precision', 'target_recall', 'instance_separation_accuracy',
+                        'iou_class_0', 'iou_class_1', 'iou_class_2',
+                        'total_loss', 'ce_loss', 'dice_loss', 'overall_accuracy'
+                    ]:
+                        f.write(f"    {key}: {value:.4f}\n")
             
-            f.write(f"{'='*40}\n\n")
+            f.write(f"{'='*60}\n\n")
     
     
     def log_best_model(
@@ -82,7 +114,7 @@ class TextLogger:
         
         Args:
             epoch: Epoch number
-            miou: Best mIoU value
+            miou: Best mIoU value (now target IoU)
             checkpoint_path: Path to saved checkpoint
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -91,7 +123,7 @@ class TextLogger:
             f.write(f"{'*'*60}\n")
             f.write(f"[{timestamp}] NEW BEST MODEL\n")
             f.write(f"Epoch: {epoch+1}\n")
-            f.write(f"mIoU: {miou:.4f}\n")
+            f.write(f"Target IoU (mIoU): {miou:.4f}\n")
             f.write(f"Saved to: {checkpoint_path}\n")
             f.write(f"{'*'*60}\n\n")
     
