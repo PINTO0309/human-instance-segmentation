@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, Union
 import numpy as np
 import json
+import warnings
+
+# Suppress TracerWarning messages during ONNX export
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.jit._trace")
 
 from .model import create_model, ROISegmentationHead
 from .advanced.multi_scale_model import MultiScaleSegmentationModel

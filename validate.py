@@ -5,6 +5,12 @@ import json
 import torch
 from pathlib import Path
 from typing import Dict, Optional
+import warnings
+
+# Suppress warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.jit._trace")
+warnings.filterwarnings("ignore", message="Converting a tensor to a Python boolean might cause the trace to be incorrect")
 
 from src.human_edge_detection.feature_extractor import YOLOv9FeatureExtractor
 from src.human_edge_detection.model import create_model, ROIBatchProcessor

@@ -36,6 +36,12 @@ def check_for_nan_gradients(model):
 # Suppress FutureWarning messages
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# Suppress TracerWarning messages from PyTorch
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.jit._trace")
+
+# Also suppress warnings about tensor conversion in tracing
+warnings.filterwarnings("ignore", message="Converting a tensor to a Python boolean might cause the trace to be incorrect")
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
