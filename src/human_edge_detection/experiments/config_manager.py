@@ -2440,67 +2440,8 @@ class ConfigManager:
                 gradient_clip=1.0,
                 dice_weight=1.0,
                 ce_weight=1.0,
-                weight_decay=0.0001,
-                min_lr=1e-6,
-            ),
-        ),
-
-        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48_refined': ExperimentConfig(
-            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48_refined',
-            description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model with Refinement - ROI:64x48 (H:W), Mask:64x48 (H:W)',
-            model=ModelConfig(
-                use_rgb_hierarchical=True,
-                use_external_features=False,
-                use_attention_module=True,
-                roi_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
-                mask_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
-                onnx_model=None,
-                # Pre-trained model configuration
-                use_pretrained_unet=True,
-                pretrained_weights_path="ext_extractor/2020-09-23a.pth",
-                freeze_pretrained_weights=True,
-                use_full_image_unet=True,  # Apply UNet to full image first
-                # Refinement modules (enabled for target/non-target branches)
-                use_boundary_refinement=True,      # Post-process refinement on final masks
-                use_boundary_aware_loss=True,      # Loss function enhancement
-                use_contour_detection=True,        # Auxiliary branch from shared features
-                use_active_contour_loss=True,      # Loss function for smooth boundaries
-                use_distance_transform=True,       # Auxiliary branch from shared features
-                use_progressive_upsampling=False,  # Disabled - replaces decoder
-                use_subpixel_conv=False,          # Disabled - replaces decoder
-                # Normalization type for refinement modules (pre-trained UNet keeps its original normalization)
-                normalization_type='batchnorm',
-                normalization_groups=8,
-            ),
-            multiscale=MultiScaleConfig(
-                enabled=False,
-                target_layers=None,
-                fusion_method='concat'
-            ),
-            auxiliary_task=AuxiliaryTaskConfig(
-                enabled=True,
-                weight=0.3,
-                mid_channels=128,
-                visualize=True
-            ),
-            data=DataConfig(
-                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
-                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
-                data_stats="data_analyze_full.json",
-                roi_padding=0.0,
-                num_workers=4
-            ),
-            training=TrainingConfig(
-                learning_rate=1e-5,  # Lower LR for stability with refinement modules
-                warmup_epochs=5,    # More warmup for stable training
-                scheduler='cosine',
-                num_epochs=100,
-                batch_size=2,
-                gradient_clip=1.0,
-                dice_weight=1.0,
-                ce_weight=1.0,
                 weight_decay=0.01,
-                min_lr=1e-7,
+                min_lr=1e-6,
             ),
         ),
 

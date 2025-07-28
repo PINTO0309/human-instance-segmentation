@@ -236,7 +236,7 @@ class ValidationVisualizerWithAuxiliary:
             # Synchronize CUDA to ensure clean state
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
-                
+
             for img_info in images_to_visualize:
                 filename = img_info['filename']
                 image_path = self.image_dir / filename
@@ -293,7 +293,7 @@ class ValidationVisualizerWithAuxiliary:
 
                 # Panel 5: Full-image UNet Output (if available)
                 panel5_img = self._create_panel_full_image_unet(image_np, unet_outputs)
-                
+
                 # Add to lists
                 all_panel1_images.append(panel1_img)
                 all_panel2_images.append(panel2_img)
@@ -368,7 +368,7 @@ class ValidationVisualizerWithAuxiliary:
             if features is not None:
                 # External features
                 roi_features = self._extract_roi_features(features, batch_rois)
-                
+
                 # Check if this is an auxiliary wrapped model
                 if hasattr(self.model, 'aux_head'):
                     # Need to prepare ROIs for auxiliary model
@@ -405,7 +405,7 @@ class ValidationVisualizerWithAuxiliary:
                     else:
                         # Direct model call with ROI features
                         batch_pred = self.model(roi_features)
-                    
+
                     # Synchronize CUDA after model inference
                     if torch.cuda.is_available():
                         torch.cuda.synchronize()
@@ -417,7 +417,7 @@ class ValidationVisualizerWithAuxiliary:
                     # RGB hierarchical model needs full image and ROIs
                     image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
                     image_tensor = image_tensor.unsqueeze(0).to(self.device)
-                    
+
                     # Prepare ROIs in the correct format
                     roi_tensors = []
                     for roi in batch_rois:
@@ -429,13 +429,13 @@ class ValidationVisualizerWithAuxiliary:
                         )
                         roi_tensors.append(roi_tensor)
                     rois = torch.cat(roi_tensors, dim=0)
-                    
+
                     batch_pred = self.model(image_tensor, rois)
                 else:
                     # Standard integrated model
                     batch_tensor = self._prepare_batch_tensor(image_np, batch_rois)
                     batch_pred = self.model(batch_tensor)
-                
+
                 # Synchronize CUDA after model inference
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
@@ -454,7 +454,7 @@ class ValidationVisualizerWithAuxiliary:
                 if main_pred.is_cuda:
                     main_pred = main_pred.cpu()
                 batch_masks = torch.argmax(main_pred, dim=1).numpy()
-                
+
                 # Store predictions
                 for j, idx in enumerate(batch_indices):
                     if j < len(batch_masks):
@@ -469,25 +469,25 @@ class ValidationVisualizerWithAuxiliary:
         if auxiliary_preds:
             # Create a single heatmap by placing each prediction in its ROI location
             auxiliary_heatmap = np.zeros((640, 640), dtype=np.float32)
-            
+
             for i, (roi, aux_pred) in enumerate(zip(roi_list, auxiliary_preds)):
                 x1, y1, x2, y2 = roi
                 # Resize auxiliary prediction to ROI size
                 if isinstance(aux_pred, torch.Tensor):
                     aux_pred = aux_pred.cpu().numpy()
-                
+
                 aux_resized = cv2.resize(
                     aux_pred.squeeze(),
                     (x2 - x1, y2 - y1),
                     interpolation=cv2.INTER_LINEAR
                 )
-                
+
                 # Place in heatmap
                 auxiliary_heatmap[y1:y2, x1:x2] = np.maximum(
                     auxiliary_heatmap[y1:y2, x1:x2],
                     aux_resized
                 )
-            
+
             auxiliary_pred = auxiliary_heatmap
 
         return predictions, auxiliary_pred
@@ -725,15 +725,15 @@ class ValidationVisualizerWithAuxiliary:
     def _create_panel_heatmap(self, image_np: np.ndarray, auxiliary_pred: Optional[np.ndarray]) -> Image.Image:
         """Create auxiliary heatmap panel with colorbar."""
         img = image_np.copy()
-        
+
         # Create wider canvas to accommodate colorbar
         colorbar_width = 60
         canvas_width = img.shape[1] + colorbar_width
         canvas = np.ones((img.shape[0], canvas_width, 3), dtype=np.uint8) * 255
-        
+
         # Always create the colorbar for consistency
         cmap = plt.colormaps['hot']
-        
+
         if auxiliary_pred is not None and auxiliary_pred.max() > 0:
             # Create heatmap overlay
             heatmap = cmap(auxiliary_pred)[:, :, :3]  # Remove alpha channel
@@ -742,44 +742,44 @@ class ValidationVisualizerWithAuxiliary:
             # Blend with original image
             alpha = 0.6
             img = cv2.addWeighted(heatmap, alpha, img, 1 - alpha, 0)
-            
+
         # Place the image (with or without heatmap) on canvas
         canvas[:, :img.shape[1]] = img
-        
+
         # Always create colorbar for consistency
         colorbar_height = int(img.shape[0] * 0.8)  # 80% of image height
         colorbar_y_start = int((img.shape[0] - colorbar_height) / 2)
-        
+
         # Generate colorbar gradient
         gradient = np.linspace(1, 0, colorbar_height).reshape(-1, 1)
         gradient = np.repeat(gradient, 20, axis=1)  # Width of colorbar
         colorbar_img = cmap(gradient)[:, :, :3]
         colorbar_img = (colorbar_img * 255).astype(np.uint8)
-        
+
         # Place colorbar on canvas
         colorbar_x_start = img.shape[1] + 15
-        canvas[colorbar_y_start:colorbar_y_start + colorbar_height, 
+        canvas[colorbar_y_start:colorbar_y_start + colorbar_height,
                colorbar_x_start:colorbar_x_start + 20] = colorbar_img
-        
+
         # Add colorbar labels
         pil_canvas = Image.fromarray(canvas)
         draw = ImageDraw.Draw(pil_canvas)
-        
+
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
         except:
             font = ImageFont.load_default()
-        
+
         # Add text labels
         draw.text((colorbar_x_start + 25, colorbar_y_start - 5), "1.0", fill='black', font=font)
         draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height - 15), "0.0", fill='black', font=font)
         draw.text((colorbar_x_start + 25, colorbar_y_start + colorbar_height // 2 - 8), "0.5", fill='black', font=font)
-        
+
         # Add border around colorbar
-        draw.rectangle([colorbar_x_start-1, colorbar_y_start-1, 
-                       colorbar_x_start + 20, colorbar_y_start + colorbar_height], 
+        draw.rectangle([colorbar_x_start-1, colorbar_y_start-1,
+                       colorbar_x_start + 20, colorbar_y_start + colorbar_height],
                       outline='black', width=1)
-        
+
         return pil_canvas
 
     def _create_panel_unet_fg_bg(self, image_np: np.ndarray, unet_outputs: Dict[str, np.ndarray]) -> Image.Image:
@@ -815,6 +815,9 @@ class ValidationVisualizerWithAuxiliary:
         pred_overlay = np.zeros((*image_np.shape[:2], 4))
         colors = plt.cm.tab10(np.linspace(0, 1, 10))
 
+        # Track target masks count for overlap detection
+        target_mask_count = np.zeros(image_np.shape[:2], dtype=int)
+
         for idx, ann in enumerate(annotations):
             if idx not in predictions:
                 continue
@@ -848,13 +851,24 @@ class ValidationVisualizerWithAuxiliary:
             # Apply colors
             color = colors[idx % 10]
 
-            # Class 1: Target (full opacity)
+            # Create masks for target and non-target
             target_mask = pred_resized == 1
-            pred_overlay[y1:y2, x1:x2][target_mask] = [*color[:3], 0.8]
+            # nontarget_mask = pred_resized == 2  # Not needed since we're not rendering non-target
 
-            # Class 2: Non-target (lighter)
-            nontarget_mask = pred_resized == 2
-            pred_overlay[y1:y2, x1:x2][nontarget_mask] = [*color[:3], 0.4]
+            # Count target overlaps
+            target_mask_count[y1:y2, x1:x2] += target_mask.astype(int)
+
+            # Class 1: Target (with increased transparency)
+            pred_overlay[y1:y2, x1:x2][target_mask] = [*color[:3], 0.6]  # Reduced from 0.8 to 0.6
+
+            # Class 2: Non-target - skip rendering
+            # pred_overlay[y1:y2, x1:x2][nontarget_mask] = [*color[:3], 0.3]  # Commented out - not rendering non-target
+
+        # Find areas where multiple targets overlap (count > 1)
+        target_overlap_mask = target_mask_count > 1
+
+        # Render target overlap areas in solid red
+        pred_overlay[target_overlap_mask] = [1.0, 0.0, 0.0, 1.0]  # Red with no transparency (alpha = 1.0)
 
         # Apply overlay
         mask_rgb = (pred_overlay[:, :, :3] * 255).astype(np.uint8)
@@ -864,42 +878,42 @@ class ValidationVisualizerWithAuxiliary:
             img[:, :, c] = img[:, :, c] * (1 - mask_alpha) + mask_rgb[:, :, c] * mask_alpha
 
         return Image.fromarray(img.astype(np.uint8))
-    
+
     def _create_panel_full_image_unet(self, image_np: np.ndarray, unet_outputs: Dict) -> Image.Image:
         """Create panel showing full-image UNet output.
-        
+
         Args:
             image_np: Original image
             unet_outputs: Dictionary containing UNet outputs
-            
+
         Returns:
             Panel image with full-image UNet output visualization
         """
         img = image_np.copy()
-        
+
         # Check if full_image_logits is available in unet_outputs
         if 'full_image_logits' in unet_outputs:
             full_image_logits = unet_outputs['full_image_logits']
-            
+
             # Convert to numpy if tensor
             if isinstance(full_image_logits, torch.Tensor):
                 segment = full_image_logits.detach().cpu().numpy()
             else:
                 segment = full_image_logits
-            
+
             # Apply the exact rendering requested by user
             image_height, image_width = img.shape[:2]
             mask = np.zeros((image_height, image_width), dtype=np.uint8)
             resized_segment = cv2.resize(segment[0, 0], (image_width, image_height))
             mask[resized_segment > 0] = 255
-            
+
             # Create green mask colored
             mask_colored = np.zeros_like(img)
             mask_colored[:, :, 1] = mask  # Green component
-            
+
             # Overlay with 0.3 opacity as requested
             img = cv2.addWeighted(img, 0.7, mask_colored, 0.3, 0)
-        
+
         return Image.fromarray(img.astype(np.uint8))
 
     def _create_combined_5x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
@@ -956,7 +970,7 @@ class ValidationVisualizerWithAuxiliary:
 
             # Row 4: Predictions (standard width)
             combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
-            
+
             # Row 5: Full-image UNet Output (standard width)
             combined_img.paste(panel5_images[col], (x_offset, title_height + 4 * (img_height + padding)))
 
@@ -1019,7 +1033,7 @@ class ValidationVisualizerWithAuxiliary:
             # For multi-scale models, we need to handle this differently
             # Just return a dummy tensor for now since the model will handle ROI extraction internally
             return torch.zeros(len(rois), 1024, 7, 7).to(self.device)
-        
+
         # This is a simplified version - in practice, you'd use ROIAlign
         roi_features = []
 
@@ -1186,7 +1200,7 @@ class ValidationVisualizerWithAuxiliary:
                                 # Full-image UNet model needs full image and ROIs
                                 image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
                                 image_tensor = image_tensor.unsqueeze(0).to(self.device)
-                                
+
                                 # Prepare ROIs in the correct format
                                 roi_tensors = []
                                 for roi in batch_rois:
@@ -1197,7 +1211,7 @@ class ValidationVisualizerWithAuxiliary:
                                     )
                                     roi_tensors.append(roi_tensor)
                                 rois = torch.cat(roi_tensors, dim=0)
-                                
+
                                 batch_pred = self.model(image_tensor, rois)
                             else:
                                 batch_pred = self.model(roi_features)
@@ -1209,7 +1223,7 @@ class ValidationVisualizerWithAuxiliary:
                     # RGB hierarchical model needs full image and ROIs
                     image_tensor = torch.from_numpy(image_np).permute(2, 0, 1).float() / 255.0
                     image_tensor = image_tensor.unsqueeze(0).to(self.device)
-                    
+
                     # Prepare ROIs in the correct format
                     roi_tensors = []
                     for roi in batch_rois:
@@ -1221,7 +1235,7 @@ class ValidationVisualizerWithAuxiliary:
                         )
                         roi_tensors.append(roi_tensor)
                     rois = torch.cat(roi_tensors, dim=0)
-                    
+
                     batch_pred = self.model(image_tensor, rois)
                 else:
                     # Standard integrated model
@@ -1232,7 +1246,7 @@ class ValidationVisualizerWithAuxiliary:
             if isinstance(batch_pred, tuple):
                 main_pred, aux_outputs = batch_pred
                 aux_probs = None
-                
+
                 if 'fg_bg_binary' in aux_outputs:
                     aux_probs = torch.sigmoid(aux_outputs['fg_bg_binary']).cpu().numpy()
                 elif 'bg_fg_logits' in aux_outputs:
@@ -1241,7 +1255,7 @@ class ValidationVisualizerWithAuxiliary:
                     # Convert to foreground probability
                     fg_probs = torch.softmax(bg_fg_logits, dim=1)[:, 1:2, :, :]  # Take foreground channel
                     aux_probs = fg_probs.cpu().numpy()
-                
+
                 # Check for full-image UNet output
                 if 'full_image_logits' in aux_outputs:
                     unet_outputs['full_image_logits'] = aux_outputs['full_image_logits']
@@ -1282,7 +1296,7 @@ class ValidationVisualizerWithAuxiliary:
                 if main_pred.is_cuda:
                     main_pred = main_pred.cpu()
                 batch_masks = torch.argmax(main_pred, dim=1).numpy()
-                
+
                 # Store predictions
                 for j, idx in enumerate(batch_indices):
                     if j < len(batch_masks):
@@ -1444,6 +1458,9 @@ class ValidationVisualizerWithAuxiliary:
         pred_overlay = np.zeros((*image_np.shape[:2], 4))
         colors = plt.cm.tab10(np.linspace(0, 1, 10))
 
+        # Track target masks count for overlap detection
+        target_mask_count = np.zeros(image_np.shape[:2], dtype=int)
+
         for idx, ann in enumerate(annotations):
             if idx not in predictions:
                 continue
@@ -1478,10 +1495,23 @@ class ValidationVisualizerWithAuxiliary:
             color = colors[idx % 10]
             roi_overlay = pred_overlay[y1:y2, x1:x2]
 
-            # Class 1: Target (full opacity)
-            roi_overlay[pred_resized == 1] = [*color[:3], 0.8]
+            # Create masks for target and non-target
+            target_mask_roi = pred_resized == 1
+            # nontarget_mask_roi = pred_resized == 2  # Not needed since we're not rendering non-target
 
-            # Class 2: Non-target (lighter)
-            roi_overlay[pred_resized == 2] = [*color[:3], 0.4]
+            # Count target overlaps
+            target_mask_count[y1:y2, x1:x2] += target_mask_roi.astype(int)
+
+            # Class 1: Target (with increased transparency)
+            roi_overlay[target_mask_roi] = [*color[:3], 0.6]  # Reduced from 0.8 to 0.6
+
+            # Class 2: Non-target - skip rendering
+            # roi_overlay[nontarget_mask_roi] = [*color[:3], 0.3]  # Commented out - not rendering non-target
+
+        # Find areas where multiple targets overlap (count > 1)
+        target_overlap_mask = target_mask_count > 1
+
+        # Render target overlap areas in solid red
+        pred_overlay[target_overlap_mask] = [1.0, 0.0, 0.0, 1.0]  # Red with no transparency (alpha = 1.0)
 
         ax.imshow(pred_overlay)
