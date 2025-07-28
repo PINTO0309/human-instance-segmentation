@@ -857,7 +857,9 @@ class ValidationVisualizerWithAuxiliary:
             target_mask_count[y1:y2, x1:x2] += target_mask.astype(int)
 
             # Class 1: Target (with increased transparency)
-            pred_overlay[y1:y2, x1:x2][target_mask] = [*color[:3], 0.6]
+            # Store the target mask to apply later (excluding overlap areas)
+            roi_pred_overlay = pred_overlay[y1:y2, x1:x2]
+            roi_pred_overlay[target_mask] = [*color[:3], 0.6]
 
         # Second pass: Find overlaps and errors
         # Find areas where multiple targets overlap (count > 1)
@@ -979,6 +981,9 @@ class ValidationVisualizerWithAuxiliary:
 
         # Combine error types (but exclude areas with multiple target overlaps)
         error_mask = missed_target_mask | false_positive_mask | should_be_nontarget_mask
+
+        # Clear individual target colors from overlap areas first
+        pred_overlay[target_overlap_mask] = [0.0, 0.0, 0.0, 0.0]
 
         # Render overlaps and errors in separate overlays
         # First mark errors in red
