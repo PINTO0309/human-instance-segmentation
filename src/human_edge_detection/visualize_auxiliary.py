@@ -911,11 +911,85 @@ class ValidationVisualizerWithAuxiliary:
         # Find errors
         missed_target_mask = full_gt_target_mask & (~full_pred_target_mask)
         false_positive_mask = full_pred_target_mask & (~full_gt_target_mask)
-        error_mask = missed_target_mask | false_positive_mask
+
+        # Also find areas where we predicted target but GT says it should be non-target
+        # This requires checking each ROI individually
+        should_be_nontarget_mask = np.zeros(image_np.shape[:2], dtype=bool)
+
+        for idx, ann in enumerate(annotations):
+            if idx not in predictions:
+                continue
+
+            pred_mask = predictions[idx]
+            x, y, w, h = ann['bbox']
+
+            # Scale bbox to resized image
+            x = x * 640 / orig_width
+            y = y * 640 / orig_height
+            w = w * 640 / orig_width
+            h = h * 640 / orig_height
+
+            roi = self.extract_roi_from_bbox(
+                [x, y, x + w, y + h],
+                (640, 640)
+            )
+
+            if roi is None:
+                continue
+
+            x1, y1, x2, y2 = roi
+
+            # Resize prediction to ROI size
+            pred_resized = cv2.resize(
+                pred_mask.astype(np.uint8),
+                (x2 - x1, y2 - y1),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+            # Create GT mask for this ROI
+            roi_gt_mask = np.zeros((y2 - y1, x2 - x1), dtype=np.uint8)
+
+            # Mark current instance as target (class 1)
+            if 'segmentation' in ann:
+                instance_mask = self.coco.annToMask(ann)
+                instance_mask_resized = cv2.resize(instance_mask, (640, 640), interpolation=cv2.INTER_NEAREST)
+                roi_instance_mask = instance_mask_resized[y1:y2, x1:x2]
+                roi_gt_mask[roi_instance_mask > 0] = 1
+
+            # Mark other instances as non-target (class 2)
+            for other_idx, other_ann in enumerate(annotations):
+                if other_idx != idx and 'segmentation' in other_ann:
+                    other_mask = self.coco.annToMask(other_ann)
+                    other_mask_resized = cv2.resize(other_mask, (640, 640), interpolation=cv2.INTER_NEAREST)
+                    # Check if this other instance overlaps with our ROI
+                    roi_other_mask = other_mask_resized[y1:y2, x1:x2]
+                    roi_gt_mask[roi_other_mask > 0] = 2
+
+            # Find areas where we predicted target (1) but GT says non-target (2)
+            target_but_should_be_nontarget = (pred_resized == 1) & (roi_gt_mask == 2)
+            # Only mark as error if this area is NOT part of multiple target overlap
+            # (i.e., only this single instance is predicting target there)
+            for j in range(y2 - y1):
+                for i in range(x2 - x1):
+                    if target_but_should_be_nontarget[j, i]:
+                        global_y, global_x = y1 + j, x1 + i
+                        # Check if this pixel has multiple target predictions
+                        if target_mask_count[global_y, global_x] <= 1:
+                            should_be_nontarget_mask[global_y, global_x] = True
+
+        # Combine error types (but exclude areas with multiple target overlaps)
+        error_mask = missed_target_mask | false_positive_mask | should_be_nontarget_mask
 
         # Render overlaps and errors in separate overlays
-        overlap_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.55]  # Yellow
+        # First mark errors in red
         error_overlay[error_mask] = [1.0, 0.0, 0.0, 0.65]  # Red
+        
+        # Then overwrite with yellow for overlaps (higher priority)
+        # This ensures overlap areas are not shown as errors
+        overlap_overlay[target_overlap_mask] = [1.0, 1.0, 0.0, 0.55]  # Yellow
+        
+        # Remove error marking from overlap areas
+        error_overlay[target_overlap_mask] = [0.0, 0.0, 0.0, 0.0]  # Clear error in overlap areas
 
         # Apply overlays in order: first predictions, then overlaps, then errors
         # This ensures errors are always visible on top
@@ -943,7 +1017,7 @@ class ValidationVisualizerWithAuxiliary:
         # Convert to PIL for drawing legend
         pil_img = Image.fromarray(img.astype(np.uint8))
         draw = ImageDraw.Draw(pil_img)
-        
+
         # Try to load font
         try:
             font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
@@ -951,18 +1025,18 @@ class ValidationVisualizerWithAuxiliary:
         except:
             font = ImageFont.load_default()
             font_bold = font
-        
+
         # Legend dimensions and position
         legend_width = 130
         legend_height = 80  # Reduced height since no title
         legend_margin = 10
         legend_x = img.shape[1] - legend_width - legend_margin
         legend_y = img.shape[0] - legend_height - legend_margin
-        
+
         # Draw semi-transparent background for legend
         legend_bg = Image.new('RGBA', (legend_width, legend_height), (240, 240, 240, 230))
         legend_draw = ImageDraw.Draw(legend_bg)
-        
+
         # Draw border
         legend_draw.rectangle(
             [0, 0, legend_width-1, legend_height-1],
@@ -970,7 +1044,7 @@ class ValidationVisualizerWithAuxiliary:
             outline=(100, 100, 100, 255),
             width=2
         )
-        
+
         # Draw legend items (no title)
         # Calculate vertical centering
         item_height = 22
@@ -979,32 +1053,32 @@ class ValidationVisualizerWithAuxiliary:
         total_items_height = (num_items - 1) * item_height + 12
         vertical_padding = (legend_height - total_items_height) // 2
         item_y = vertical_padding  # Start with centered vertical padding
-        
+
         # Error (Red)
-        legend_draw.rectangle([10, item_y, 20, item_y + 12], 
+        legend_draw.rectangle([10, item_y, 20, item_y + 12],
                             fill=(255, 0, 0, 255), outline=(0, 0, 0, 255))
-        legend_draw.text((25, item_y), "Error (FP/FN)", fill=(0, 0, 0, 255), font=font)
-        
+        legend_draw.text((25, item_y), "Error", fill=(0, 0, 0, 255), font=font)
+
         # Overlap (Yellow)
         item_y += item_height
-        legend_draw.rectangle([10, item_y, 20, item_y + 12], 
+        legend_draw.rectangle([10, item_y, 20, item_y + 12],
                             fill=(255, 255, 0, 255), outline=(0, 0, 0, 255))
         legend_draw.text((25, item_y), "Overlap", fill=(0, 0, 0, 255), font=font)
-        
+
         # Person prediction (sample color)
         item_y += item_height
         sample_color = tuple(int(c * 255) for c in colors[0][:3]) + (255,)
-        legend_draw.rectangle([10, item_y, 20, item_y + 12], 
+        legend_draw.rectangle([10, item_y, 20, item_y + 12],
                             fill=sample_color, outline=(0, 0, 0, 255))
         legend_draw.text((25, item_y), "Person pred.", fill=(0, 0, 0, 255), font=font)
-        
+
         # Paste legend onto main image
         pil_img_rgba = pil_img.convert('RGBA')
         pil_img_rgba.paste(legend_bg, (legend_x, legend_y), legend_bg)
-        
+
         # Convert back to RGB
         final_img = pil_img_rgba.convert('RGB')
-        
+
         return final_img
 
     def _create_panel_full_image_unet(self, image_np: np.ndarray, unet_outputs: Dict) -> Image.Image:
@@ -1512,11 +1586,8 @@ class ValidationVisualizerWithAuxiliary:
 
         # If we have masks, visualize them
         if combined_fg_mask.any() or combined_bg_mask.any():
-            # Background in gray
-            mask_overlay[combined_bg_mask] = [0.5, 0.5, 0.5, 0.7]  # Gray with alpha
-
             # Foreground in red (overwrites background)
-            mask_overlay[combined_fg_mask] = [1.0, 0.0, 0.0, 0.7]  # Red with alpha
+            mask_overlay[combined_fg_mask] = [1.0, 0.0, 0.0, 0.65]  # Red with alpha
 
             ax.imshow(image_np)
             ax.imshow(mask_overlay)
