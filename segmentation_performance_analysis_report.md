@@ -249,7 +249,8 @@ class BoundaryAwareAugmentation:
 - **メインモデルクラス**: `HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet`
 - **実装ファイル**: `src/human_edge_detection/advanced/hierarchical_segmentation_rgb.py`
 - **設定ファイル**: `experiments/rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48/configs/config.json`
-- **学習スクリプト**: `src/human_edge_detection/advanced/train_advanced.py`
+- **学習スクリプト**: `run_experiments.py` (メインエントリーポイント)
+- **実験管理**: `src/human_edge_detection/experiments/config_manager.py`
 
 ```mermaid
 graph TB
@@ -299,6 +300,8 @@ graph TB
 #### 6.2.3 RGB Feature Extractor
 - **実装場所**: `src/human_edge_detection/advanced/hierarchical_segmentation_rgb.py:87-107`
 - **親クラス**: `HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet`内の`rgb_feature_extractor`
+- **ResidualBlock実装**: `src/human_edge_detection/advanced/hierarchical_segmentation_refinement.py` - `ResidualBlock`クラス
+- **正規化層の取得**: `src/human_edge_detection/advanced/normalization_comparison.py` - `get_normalization_layer`関数
 ```python
 nn.Sequential(
     Conv2d(3, 64, 3, padding=1),
@@ -352,8 +355,9 @@ nn.Sequential(
 
 ### 6.3 損失計算のパイプライン
 
-- **実装ファイル**: `src/human_edge_detection/advanced/hierarchical_loss.py`
-- **クラス名**: `HierarchicalSegmentationLoss`
+- **実装ファイル**: `src/human_edge_detection/advanced/hierarchical_segmentation.py`
+- **クラス名**: `HierarchicalLoss` (行151-395)
+- **Dice損失の実装**: `src/human_edge_detection/losses.py` - `DiceLoss`クラス
 
 ```python
 # メイン損失: 3クラスCrossEntropy + Dice
