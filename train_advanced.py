@@ -828,20 +828,25 @@ def main():
             get_train_transforms, get_val_transforms, get_roi_safe_transforms
         )
         
-        # Check if this is an ROI-based model
-        is_roi_based = not config.model.use_full_image_unet  # Full image models don't use ROI
+        # Check if this model uses ROI coordinates
+        # Even "full-image" models in this project use ROI coordinates for segmentation
+        # So we should always use ROI-safe transforms to avoid coordinate misalignment
+        uses_roi_coordinates = True  # All models in this project use ROI coordinates
         
-        if is_roi_based:
-            # Use ROI-safe transforms for ROI-based models
+        # The original logic was incorrect - even models with use_full_image_unet=True
+        # still extract ROI regions for segmentation, so they need ROI-safe transforms
+        
+        if uses_roi_coordinates:
+            # Use ROI-safe transforms for all models (avoids geometric transform misalignment)
             train_transform = get_roi_safe_transforms(
                 input_size=(640, 640),
                 use_heavy_augmentation=config.data.use_heavy_augmentation
             )
             print(f"Data augmentation enabled (ROI-safe mode):")
             print(f"  - Heavy augmentation: {config.data.use_heavy_augmentation}")
-            print(f"  - Using ROI-safe transforms (no geometric transforms)")
+            print(f"  - Using ROI-safe transforms (no geometric transforms to avoid ROI misalignment)")
         else:
-            # Use standard transforms for full-image models
+            # This branch is kept for potential future models that don't use ROI coordinates
             train_transform = get_train_transforms(
                 input_size=(640, 640),
                 use_heavy_augmentation=config.data.use_heavy_augmentation

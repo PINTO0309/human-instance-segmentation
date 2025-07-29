@@ -2430,8 +2430,8 @@ class ConfigManager:
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
                 num_workers=4,
-                use_augmentation=False,
-                use_heavy_augmentation=False,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
             ),
             training=TrainingConfig(
                 learning_rate=1e-4,
@@ -2490,8 +2490,8 @@ class ConfigManager:
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
                 num_workers=4,
-                use_augmentation=False,
-                use_heavy_augmentation=False,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
             ),
             training=TrainingConfig(
                 learning_rate=1e-4,
