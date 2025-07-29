@@ -681,3 +681,115 @@ ModelConfig(
 - 最高の境界品質が必要
 - 十分な計算リソースがある
 - 複雑な境界形状を扱う（人物など）
+
+## データ拡張（Augmentation）仕様
+
+### ROI-safe Light Augmentation (`get_roi_safe_light_transforms`)
+
+軽量なデータ拡張設定。ROI座標の整合性を保つため、幾何学的変換は水平反転のみに制限。
+
+**構成要素**:
+
+1. **幾何学的変換**:
+   - `HorizontalFlip(p=0.5)`: 50%の確率で水平反転
+   - ※ROI座標は別途調整が必要
+
+2. **色彩変換** (80%の確率で以下のいずれか):
+   - `RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2)`: 
+     - 明度を±20%の範囲で調整
+     - コントラストを±20%の範囲で調整
+   - `HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=20)`:
+     - 色相を±10度の範囲で調整
+     - 彩度を±20%の範囲で調整
+     - 明度を±20%の範囲で調整
+
+3. **ぼかし効果**:
+   - `GaussianBlur(blur_limit=(3, 5), p=0.1)`: 10%の確率で3-5ピクセルのガウシアンブラー
+
+4. **正規化**:
+   - `Normalize(mean=[0.0, 0.0, 0.0], std=[1.0, 1.0, 1.0])`: 恒等変換（値の範囲はそのまま）
+
+**特徴**:
+- 計算負荷が軽い
+- 基本的な色彩とぼかしの変化のみ
+- ROI座標への影響は水平反転のみ
+- 高速な学習とテストに適している
+
+### ROI-safe Heavy Augmentation (`get_roi_safe_heavy_transforms`)
+
+より強力なデータ拡張設定。多様な環境条件を模擬しつつ、ROI座標の整合性を維持。
+
+**構成要素**:
+
+1. **幾何学的変換**:
+   - `HorizontalFlip(p=0.5)`: 50%の確率で水平反転
+   - ※回転や平行移動は無効化されている
+
+2. **色彩変換** (80%の確率で以下のいずれか):
+   - `ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)`: 
+     総合的な色調整
+   - `HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20)`: 
+     より強い色相・彩度・明度の変化
+   - `RGBShift(r_shift_limit=15, g_shift_limit=15, b_shift_limit=15)`: 
+     各色チャンネルを±15の範囲でシフト
+
+3. **照明条件** (50%の確率で以下のいずれか):
+   - `RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3)`: 
+     より強い明度・コントラスト変化
+   - `CLAHE(clip_limit=2.0, tile_grid_size=(8, 8))`: 
+     適応的ヒストグラム均等化
+   - `RandomGamma(gamma_limit=(80, 120))`: 
+     ガンマ補正（0.8-1.2の範囲）
+
+4. **環境効果** (10%の確率で以下のいずれか):
+   - `RandomRain(rain_type='drizzle')`: 
+     小雨効果（drop_length=20, brightness_coefficient=0.7）
+   - `RandomFog(alpha_coef=0.1)`: 
+     霧効果（透明度10%）
+   - `RandomSunFlare`: 
+     太陽フレア効果（上半分領域に白色光源）
+
+5. **ぼかし効果** (5%の確率で以下のいずれか):
+   - `MotionBlur(blur_limit=7)`: モーションブラー（最大7ピクセル）
+   - `GaussianBlur(blur_limit=(3, 7))`: ガウシアンブラー（3-7ピクセル）
+   - `MedianBlur(blur_limit=5)`: メディアンブラー（最大5ピクセル）
+
+6. **ノイズ** (5%の確率で以下のいずれか):
+   - `GaussNoise()`: ガウシアンノイズ
+   - `ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5))`: 
+     カメラのISOノイズをシミュレート
+
+7. **画質劣化** (10%の確率で以下のいずれか):
+   - `ImageCompression(quality_range=(70, 95))`: 
+     JPEG圧縮による劣化（品質70-95%）
+   - `Downscale(scale_range=(0.5, 0.9))`: 
+     ダウンスケール後アップスケール（解像度50-90%）
+
+8. **正規化**:
+   - `Normalize(mean=[0.0, 0.0, 0.0], std=[1.0, 1.0, 1.0])`: 恒等変換
+
+**特徴**:
+- 実世界の多様な撮影条件を模擬
+- 天候効果（雨、霧、太陽光）を含む
+- カメラの物理的特性（ノイズ、圧縮）を考慮
+- より汎化性能の高いモデル学習が可能
+
+### 使用上の注意点
+
+1. **ROI座標の調整**:
+   - 水平反転時は必ずROI座標も反転処理が必要
+   - `bbox_params=A.BboxParams(format='pascal_voc', label_fields=[])`により自動調整
+
+2. **計算コスト**:
+   - Light: 高速処理、リアルタイム学習に適する
+   - Heavy: 処理時間増加、バッチサイズの調整が必要な場合あり
+
+3. **学習戦略**:
+   - 初期段階: Light augmentationで安定した学習
+   - 中期段階: Heavy augmentationで汎化性能向上
+   - 微調整段階: augmentation無しまたはLightで精度追求
+
+4. **パラメータ調整**:
+   - 各変換の確率（p値）は経験的に設定
+   - データセットの特性に応じて調整推奨
+   - 過度な拡張は学習を不安定にする可能性あり
