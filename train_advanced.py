@@ -821,18 +821,55 @@ def main():
     else:
         mask_size = (config.model.mask_size, config.model.mask_size)
     
+    # Create transforms for training
+    train_transform = None
+    if config.data.use_augmentation:
+        from src.human_edge_detection.augmentations import (
+            get_train_transforms, get_val_transforms, get_roi_safe_transforms
+        )
+        
+        # Check if this is an ROI-based model
+        is_roi_based = not config.model.use_full_image_unet  # Full image models don't use ROI
+        
+        if is_roi_based:
+            # Use ROI-safe transforms for ROI-based models
+            train_transform = get_roi_safe_transforms(
+                input_size=(640, 640),
+                use_heavy_augmentation=config.data.use_heavy_augmentation
+            )
+            print(f"Data augmentation enabled (ROI-safe mode):")
+            print(f"  - Heavy augmentation: {config.data.use_heavy_augmentation}")
+            print(f"  - Using ROI-safe transforms (no geometric transforms)")
+        else:
+            # Use standard transforms for full-image models
+            train_transform = get_train_transforms(
+                input_size=(640, 640),
+                use_heavy_augmentation=config.data.use_heavy_augmentation
+            )
+            print(f"Data augmentation enabled (standard mode):")
+            print(f"  - Heavy augmentation: {config.data.use_heavy_augmentation}")
+        
+        val_transform = get_val_transforms(
+            input_size=(640, 640)  # Using fixed size as dataset handles resizing
+        )
+    else:
+        val_transform = None
+        print("Data augmentation disabled")
+    
     train_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.train_annotation,
         image_dir=config.data.train_img_dir,
         mask_size=mask_size,
-        roi_padding=config.data.roi_padding
+        roi_padding=config.data.roi_padding,
+        transform=train_transform
     )
 
     val_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.val_annotation,
         image_dir=config.data.val_img_dir,
         mask_size=mask_size,
-        roi_padding=config.data.roi_padding
+        roi_padding=config.data.roi_padding,
+        transform=val_transform
     )
 
     print(f"Training samples: {len(train_dataset)}")

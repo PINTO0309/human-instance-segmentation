@@ -371,7 +371,7 @@ class HierarchicalRGBSegmentationModel(nn.Module):
 
         # Dynamic ROI Align for extracting regions from full images
         self.roi_align = DynamicRoIAlign(
-            spatial_scale=(640.0, 640.0),  # ROIs are normalized [0,1], features are (H,W)
+            spatial_scale=640.0,  # ROIs are normalized [0,1], images are 640x640
             sampling_ratio=2,
             aligned=False
         )
@@ -401,6 +401,9 @@ class HierarchicalRGBSegmentationModel(nn.Module):
 
         # Apply hierarchical segmentation head
         predictions, aux_outputs = self.segmentation_head(features)
+        
+        # Add ROI features (RGB patches) for visualization
+        aux_outputs['roi_patches'] = roi_features
 
         return predictions, aux_outputs
 
@@ -442,7 +445,7 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
 
         # ROI alignment to extract RGB patches from full images
         self.roi_align = DynamicRoIAlign(
-            spatial_scale=640.0,  # ROIs are normalized [0,1], images are 640x640
+            spatial_scale=640.0,  # Convert from normalized [0,1] to pixel coordinates [0,640]
             sampling_ratio=2,
             aligned=True
         )
@@ -517,6 +520,9 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
 
         # Add pre-trained UNet output to auxiliary outputs
         aux_outputs['pretrained_bg_fg_logits'] = bg_fg_logits
+        
+        # Add ROI patches for visualization
+        aux_outputs['roi_patches'] = roi_patches
 
         return predictions, aux_outputs
 
@@ -586,14 +592,14 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
 
         # ROI alignment to extract bg/fg masks from UNet output
         self.roi_align_mask = DynamicRoIAlign(
-            spatial_scale=640.0,  # ROIs are normalized [0,1], UNet output is 640x640
+            spatial_scale=640.0,  # Convert from normalized [0,1] to pixel coordinates [0,640]
             sampling_ratio=2,
             aligned=True
         )
 
         # ROI alignment to extract RGB features from original images
         self.roi_align_rgb = DynamicRoIAlign(
-            spatial_scale=640.0,  # ROIs are normalized [0,1], RGB features are 640x640
+            spatial_scale=640.0,  # Convert from normalized [0,1] to pixel coordinates [0,640]
             sampling_ratio=2,
             aligned=True
         )
@@ -707,6 +713,9 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         # Add full image UNet output to auxiliary outputs
         aux_outputs['full_image_logits'] = full_image_logits
         aux_outputs['roi_features'] = roi_bg_fg_masks
+        
+        # Add ROI RGB patches for visualization
+        aux_outputs['roi_patches'] = roi_rgb_patches
 
         return predictions, aux_outputs
 
@@ -756,7 +765,7 @@ class MultiScaleRGBSegmentationModel(nn.Module):
         # Dynamic ROI Align for each scale
         self.roi_aligns = nn.ModuleDict({
             scale: DynamicRoIAlign(
-                spatial_scale=1.0,
+                spatial_scale=640.0,
                 sampling_ratio=2,
                 aligned=False
             )
@@ -843,6 +852,12 @@ class MultiScaleRGBSegmentationModel(nn.Module):
 
         # Apply hierarchical segmentation head
         predictions, aux_outputs = self.segmentation_head(fused)
+        
+        # Add ROI patches for visualization (use the first scale for display)
+        first_scale = self.scales[0]
+        roi_size = self.roi_sizes[first_scale]
+        roi_patches = self.roi_aligns[first_scale](images, rois, roi_size, roi_size)
+        aux_outputs['roi_patches'] = roi_patches
 
         return predictions, aux_outputs
 

@@ -1,4 +1,26 @@
-"""Visualization tools for validation results with auxiliary task support."""
+"""Visualization tools for validation results with auxiliary task support.
+
+To enable ROI patch visualization in the 5th row:
+1. Modify your model's forward method to return ROI patches in aux_outputs:
+   
+   Example for HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet:
+   ```python
+   def forward(self, images, rois):
+       # ... existing code ...
+       
+       # Extract ROI patches for visualization
+       roi_rgb_patches = self.roi_align_rgb(images, rois, self.roi_size[0], self.roi_size[1])
+       
+       # ... rest of processing ...
+       
+       # Add to aux_outputs
+       aux_outputs['roi_patches'] = roi_rgb_patches
+       
+       return predictions, aux_outputs
+   ```
+
+2. The visualization will automatically detect and display these patches in the ROI Comparison panel.
+"""
 
 import numpy as np
 import torch
@@ -230,6 +252,7 @@ class ValidationVisualizerWithAuxiliary:
         all_panel2_images = []  # Binary Mask Heatmap
         all_panel3_images = []  # Full-image UNet Output
         all_panel4_images = []  # Predictions
+        all_panel5_images = []  # ROI Comparison
 
         with torch.no_grad():
             # Synchronize CUDA to ensure clean state
@@ -289,17 +312,21 @@ class ValidationVisualizerWithAuxiliary:
 
                 # Panel 4: Predictions
                 panel4_img = self._create_panel_predictions(image_np, anns, predictions, orig_width, orig_height)
+                
+                # Panel 5: ROI Comparison
+                panel5_img = self._create_panel_roi_comparison(image_np, anns, unet_outputs)
 
                 # Add to lists
                 all_panel1_images.append(panel1_img)
                 all_panel2_images.append(panel2_img)
                 all_panel3_images.append(panel3_img)
                 all_panel4_images.append(panel4_img)
+                all_panel5_images.append(panel5_img)
 
-        # Create combined 4x4 grid image
+        # Create combined 5x4 grid image
         if all_panel1_images:
-            self._create_combined_4x4_image(
-                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, epoch
+            self._create_combined_5x4_image(
+                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, all_panel5_images, epoch
             )
 
     def _get_predictions(
@@ -417,9 +444,10 @@ class ValidationVisualizerWithAuxiliary:
                     roi_tensors = []
                     for roi in batch_rois:
                         x1, y1, x2, y2 = roi
-                        # ROIs in image coordinates [batch_idx, x1, y1, x2, y2]
+                        # Normalize ROI coordinates to [0,1] range as expected by the model
+                        # The model uses spatial_scale=640 with normalized coordinates
                         roi_tensor = torch.tensor(
-                            [[0, x1, y1, x2, y2]],
+                            [[0, x1/640, y1/640, x2/640, y2/640]],
                             dtype=torch.float32, device=self.device
                         )
                         roi_tensors.append(roi_tensor)
@@ -1122,11 +1150,138 @@ class ValidationVisualizerWithAuxiliary:
             img = cv2.addWeighted(img, 0.7, mask_colored, 0.3, 0)
 
         return Image.fromarray(img.astype(np.uint8))
+    
+    def _create_panel_roi_comparison(self, image_np: np.ndarray, annotations: List[Dict], unet_outputs: Dict) -> Image.Image:
+        """Create panel showing ROI clipping comparison.
+        
+        Args:
+            image_np: Original image (640x640)
+            annotations: List of COCO annotations
+            unet_outputs: Dictionary containing ROI information
+            
+        Returns:
+            Panel image showing ROI comparison
+        """
+        panel_width = 700  # Wider to accommodate side-by-side ROIs
+        panel_height = 640
+        panel_img = Image.new('RGB', (panel_width, panel_height), color=(230, 230, 230))
+        draw = ImageDraw.Draw(panel_img)
+        
+        # Check if we have ROI coordinates
+        if 'roi_coordinates' not in unet_outputs or len(unet_outputs['roi_coordinates']) == 0:
+            # No ROIs to display
+            draw.text((panel_width//2 - 50, panel_height//2), "No ROIs", fill='black')
+            return panel_img
+        
+        roi_coordinates = unet_outputs['roi_coordinates']
+        num_rois = min(len(roi_coordinates), 4)  # Display up to 4 ROIs
+        
+        # Layout configuration
+        if num_rois == 1:
+            rows, cols = 1, 2
+        elif num_rois == 2:
+            rows, cols = 1, 4  # 2 ROIs side by side, each with original and aligned
+        elif num_rois <= 4:
+            rows, cols = 2, 4  # 2x2 grid, each cell split in half
+        else:
+            rows, cols = 2, 4
+        
+        # Calculate cell dimensions
+        cell_width = (panel_width - 20) // cols
+        cell_height = (panel_height - 40) // rows
+        
+        # Try to get font
+        try:
+            font_small = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 10)
+        except:
+            font_small = ImageFont.load_default()
+        
+        # Process each ROI
+        for idx in range(num_rois):
+            x1, y1, x2, y2 = roi_coordinates[idx]
+            
+            # Extract original ROI from image
+            roi_original = image_np[y1:y2, x1:x2]
+            roi_h, roi_w = roi_original.shape[:2]
+            
+            # Calculate position in grid
+            if num_rois <= 2:
+                row = 0
+                col_base = idx * 2
+            else:
+                row = idx // 2
+                col_base = (idx % 2) * 2
+            
+            # Position for this ROI pair
+            x_pos_orig = 10 + col_base * cell_width
+            x_pos_align = x_pos_orig + cell_width
+            y_pos = 30 + row * cell_height
+            
+            # Resize ROI to fit in cell (maintaining aspect ratio)
+            max_w = cell_width - 10
+            max_h = cell_height - 20
+            
+            if roi_w > 0 and roi_h > 0:
+                scale = min(max_w / roi_w, max_h / roi_h, 1.0)
+                new_w = int(roi_w * scale)
+                new_h = int(roi_h * scale)
+                
+                roi_resized = cv2.resize(roi_original, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                
+                # Convert to PIL Image
+                roi_pil = Image.fromarray(roi_resized)
+                
+                # Paste original ROI
+                panel_img.paste(roi_pil, (x_pos_orig, y_pos))
+                draw.text((x_pos_orig, y_pos - 15), f"ROI {idx+1} Original", fill='black', font=font_small)
+                draw.text((x_pos_orig, y_pos + new_h + 2), f"({roi_w}x{roi_h})", fill='gray', font=font_small)
+                
+                # For RoIAlign output, we need the model to return it
+                # For now, show the same ROI with a note
+                if 'roi_patches' in unet_outputs and idx < len(unet_outputs['roi_patches']):
+                    # If we have actual RoIAlign outputs
+                    roi_patch = unet_outputs['roi_patches'][idx]
+                    if isinstance(roi_patch, torch.Tensor):
+                        # Convert tensor to numpy
+                        roi_patch_np = roi_patch.cpu().numpy()
+                        if roi_patch_np.shape[0] == 3:  # CHW format
+                            roi_patch_np = np.transpose(roi_patch_np, (1, 2, 0))
+                        roi_patch_np = (roi_patch_np * 255).astype(np.uint8)
+                        
+                        # Resize to match display size
+                        roi_patch_resized = cv2.resize(roi_patch_np, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+                        roi_patch_pil = Image.fromarray(roi_patch_resized)
+                        
+                        panel_img.paste(roi_patch_pil, (x_pos_align, y_pos))
+                        draw.text((x_pos_align, y_pos - 15), f"RoIAlign Output", fill='blue', font=font_small)
+                        draw.text((x_pos_align, y_pos + new_h + 2), f"({roi_patch_np.shape[1]}x{roi_patch_np.shape[0]})", fill='gray', font=font_small)
+                    else:
+                        # Just show the same ROI with different label
+                        panel_img.paste(roi_pil, (x_pos_align, y_pos))
+                        draw.text((x_pos_align, y_pos - 15), f"RoIAlign (simulated)", fill='gray', font=font_small)
+                else:
+                    # No RoIAlign output available, show placeholder
+                    panel_img.paste(roi_pil, (x_pos_align, y_pos))
+                    draw.text((x_pos_align, y_pos - 15), f"RoIAlign (N/A)", fill='gray', font=font_small)
+                    
+                # Draw bounding box info
+                draw.rectangle([x_pos_orig-1, y_pos-1, x_pos_orig+new_w+1, y_pos+new_h+1], outline='red', width=1)
+                draw.rectangle([x_pos_align-1, y_pos-1, x_pos_align+new_w+1, y_pos+new_h+1], outline='blue', width=1)
+        
+        # Add title
+        try:
+            font_title = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 16)
+        except:
+            font_title = font_small
+            
+        draw.text((panel_width//2 - 80, 5), "ROI Clipping Comparison", fill='black', font=font_title)
+        
+        return panel_img
 
-    def _create_combined_4x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
+    def _create_combined_5x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
                                   panel3_images: List[Image.Image], panel4_images: List[Image.Image],
-                                  epoch: int):
-        """Create combined 4x4 grid visualization."""
+                                  panel5_images: List[Image.Image], epoch: int):
+        """Create combined 5x4 grid visualization."""
         n_images = len(panel1_images)
         if n_images == 0:
             return
@@ -1140,14 +1295,14 @@ class ValidationVisualizerWithAuxiliary:
         # Add extra space for title at the top
         title_height = 80
 
-        # Create combined image (4 rows x n_images columns)
+        # Create combined image (5 rows x n_images columns)
         # Set margins
         label_padding = 30  # Changed to 30px as requested
         right_margin = 30   # Right margin
         bottom_margin = 30  # New bottom margin
         # Account for wider heatmap panels
         combined_width = label_padding + n_images * heatmap_width + (n_images - 1) * padding + right_margin
-        combined_height = title_height + 4 * img_height + 3 * padding + bottom_margin
+        combined_height = title_height + 5 * img_height + 4 * padding + bottom_margin
         combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
 
         # Add title text
@@ -1177,6 +1332,9 @@ class ValidationVisualizerWithAuxiliary:
 
             # Row 4: Predictions (standard width)
             combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
+            
+            # Row 5: ROI Comparison (wider due to side-by-side display)
+            combined_img.paste(panel5_images[col], (x_offset, title_height + 4 * (img_height + padding)))
 
         # Draw main title
         title_text = f"Validation Results with Auxiliary Task - Epoch {epoch+1:04d}"
@@ -1190,7 +1348,8 @@ class ValidationVisualizerWithAuxiliary:
             ("Ground Truth", (255, 102, 102)),  # Light red
             ("Binary Mask Heatmap", (102, 178, 255)),  # Light blue
             ("Full UNet Output", (0, 204, 102)),  # Light green
-            ("Predictions", (0, 153, 0))  # Green
+            ("Predictions", (0, 153, 0)),  # Green
+            ("ROI Comparison", (255, 153, 51))  # Orange
         ]
 
         # Draw row labels on top of images
@@ -1294,7 +1453,9 @@ class ValidationVisualizerWithAuxiliary:
         unet_outputs = {
             'combined_fg_mask': np.zeros((640, 640), dtype=bool),
             'combined_bg_mask': np.zeros((640, 640), dtype=bool),
-            'all_auxiliary_preds': []  # Store all auxiliary predictions
+            'all_auxiliary_preds': [],  # Store all auxiliary predictions
+            'roi_coordinates': [],  # Store ROI coordinates for visualization
+            'roi_patches': []  # Store ROI patches if available
         }
 
         # Extract features once for all ROIs
@@ -1340,6 +1501,9 @@ class ValidationVisualizerWithAuxiliary:
 
         if not roi_list:
             return {}, None, unet_outputs
+        
+        # Store ROI coordinates for visualization
+        unet_outputs['roi_coordinates'] = roi_coordinates
 
         # Batch process ROIs
         predictions = {}
@@ -1408,8 +1572,9 @@ class ValidationVisualizerWithAuxiliary:
                                 roi_tensors = []
                                 for roi in batch_rois:
                                     x1, y1, x2, y2 = roi
+                                    # Normalize ROI coordinates to [0,1] range as expected by the model
                                     roi_tensor = torch.tensor(
-                                        [[0, x1, y1, x2, y2]],
+                                        [[0, x1/640, y1/640, x2/640, y2/640]],
                                         dtype=torch.float32, device=self.device
                                     )
                                     roi_tensors.append(roi_tensor)
@@ -1431,9 +1596,10 @@ class ValidationVisualizerWithAuxiliary:
                     roi_tensors = []
                     for roi in batch_rois:
                         x1, y1, x2, y2 = roi
-                        # ROIs in image coordinates [batch_idx, x1, y1, x2, y2]
+                        # Normalize ROI coordinates to [0,1] range as expected by the model
+                        # The model uses spatial_scale=640 with normalized coordinates
                         roi_tensor = torch.tensor(
-                            [[0, x1, y1, x2, y2]],
+                            [[0, x1/640, y1/640, x2/640, y2/640]],
                             dtype=torch.float32, device=self.device
                         )
                         roi_tensors.append(roi_tensor)
@@ -1462,6 +1628,10 @@ class ValidationVisualizerWithAuxiliary:
                 # Check for full-image UNet output
                 if 'full_image_logits' in aux_outputs:
                     unet_outputs['full_image_logits'] = aux_outputs['full_image_logits']
+                
+                # Check for ROI patches (if model returns them)
+                if 'roi_patches' in aux_outputs:
+                    unet_outputs['roi_patches'].extend(aux_outputs['roi_patches'])
 
                 # Process each auxiliary prediction if we have any
                 if aux_probs is not None:

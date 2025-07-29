@@ -174,7 +174,42 @@ class COCOInstanceSegmentationDataset(Dataset):
         
         # Apply transforms to image if provided
         if self.transform:
-            image_np = self.transform(image_np)
+            # Try albumentations-style call first
+            try:
+                # Check if transform has bbox processor (for ROI-safe transforms with HorizontalFlip)
+                if hasattr(self.transform, 'processors') and 'bboxes' in self.transform.processors:
+                    # Convert ROI to bbox format for albumentations (x1, y1, x2, y2)
+                    bbox = [[x1, y1, x2, y2]]
+                    class_labels = ['roi']
+                    
+                    # Apply transform with bbox
+                    transformed = self.transform(
+                        image=image_np,
+                        bboxes=bbox,
+                        class_labels=class_labels
+                    )
+                    image_np = transformed['image']
+                    
+                    # Update ROI coordinates if bbox was transformed
+                    if transformed['bboxes']:
+                        x1_new, y1_new, x2_new, y2_new = transformed['bboxes'][0]
+                        # Update ROI coordinates
+                        x1, y1, x2, y2 = int(x1_new), int(y1_new), int(x2_new), int(y2_new)
+                        
+                        # Update normalized ROI coordinates
+                        roi_norm = np.array([
+                            x1 / self.image_size[0],
+                            y1 / self.image_size[1],
+                            x2 / self.image_size[0],
+                            y2 / self.image_size[1]
+                        ], dtype=np.float32)
+                else:
+                    # Standard albumentations call without bbox
+                    transformed = self.transform(image=image_np)
+                    image_np = transformed['image']
+            except TypeError:
+                # Fallback to legacy transform (callable with single argument)
+                image_np = self.transform(image_np)
         else:
             # Default normalization
             image_np = image_np.astype(np.float32) / 255.0

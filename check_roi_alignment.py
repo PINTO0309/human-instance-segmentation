@@ -25,7 +25,7 @@ def visualize_roi_alignment():
         image_dir="data/images/val2017",
         image_size=(640, 640),
         mask_size=(64, 48),
-        roi_padding=0.2
+        roi_padding=0.0
     )
     
     # Get a sample

@@ -112,7 +112,7 @@ class DataConfig:
 
     # Augmentation
     use_augmentation: bool = True
-    augmentation_prob: float = 0.5
+    use_heavy_augmentation: bool = False  # If True, use heavy augmentation; if False, use light augmentation
 
 
 @dataclass
@@ -2429,7 +2429,9 @@ class ConfigManager:
                 val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4
+                num_workers=4,
+                use_augmentation=False,
+                use_heavy_augmentation=False,
             ),
             training=TrainingConfig(
                 learning_rate=1e-4,
@@ -2487,7 +2489,9 @@ class ConfigManager:
                 val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4
+                num_workers=4,
+                use_augmentation=False,
+                use_heavy_augmentation=False,
             ),
             training=TrainingConfig(
                 learning_rate=1e-4,

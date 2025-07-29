@@ -23,7 +23,7 @@ class FilteredCOCODataset(COCOInstanceSegmentationDataset):
         image_size: Tuple[int, int] = (640, 640),
         mask_size: Tuple[int, int] = (56, 56),
         augment: bool = False,
-        roi_padding: float = 0.2,
+        roi_padding: float = 0.0,
         max_instances: int = 1,
         min_bbox_width: int = 30,
         min_bbox_height: int = 30,
@@ -139,7 +139,7 @@ def create_filtered_dataset(
     image_size: Tuple[int, int] = (640, 640),
     mask_size: Tuple[int, int] = (64, 48),
     augment: bool = False,
-    roi_padding: float = 0.2,
+    roi_padding: float = 0.0,
     **filter_kwargs
 ) -> FilteredCOCODataset:
     """Create a filtered dataset with reasonable defaults.

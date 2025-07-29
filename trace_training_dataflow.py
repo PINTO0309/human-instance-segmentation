@@ -24,7 +24,7 @@ def trace_dataflow():
         image_dir="data/images/val2017",
         image_size=(640, 640),  # Default training size
         mask_size=(64, 48),     # Non-square mask size
-        roi_padding=0.2         # Default padding
+        roi_padding=0.0         # Default padding
     )
     
     print(f"Dataset size: {len(dataset)}")
