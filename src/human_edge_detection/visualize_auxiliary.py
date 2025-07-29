@@ -58,7 +58,8 @@ class ValidationVisualizerWithAuxiliary:
         output_dir: str = 'validation_results',
         device: str = 'cuda',
         roi_padding: float = 0.0,
-        visualize_auxiliary: bool = True
+        visualize_auxiliary: bool = True,
+        use_roi_comparison: bool = True
     ):
         """Initialize visualizer with auxiliary task support.
 
@@ -71,6 +72,7 @@ class ValidationVisualizerWithAuxiliary:
             device: Device to run inference on
             roi_padding: ROI padding ratio (0.0 = no padding, 0.1 = 10% padding)
             visualize_auxiliary: Whether to visualize auxiliary predictions
+            use_roi_comparison: Whether to show ROI Comparison row in visualization
         """
         self.model = model
         self.feature_extractor = feature_extractor
@@ -80,6 +82,7 @@ class ValidationVisualizerWithAuxiliary:
         self.device = device
         self.roi_padding = roi_padding
         self.visualize_auxiliary = visualize_auxiliary
+        self.use_roi_comparison = use_roi_comparison
 
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -333,21 +336,28 @@ class ValidationVisualizerWithAuxiliary:
                 # Panel 4: Predictions
                 panel4_img = self._create_panel_predictions(image_np, anns, predictions, orig_width, orig_height)
                 
-                # Panel 5: ROI Comparison
-                panel5_img = self._create_panel_roi_comparison(image_np, anns, unet_outputs)
+                # Panel 5: ROI Comparison (only if enabled)
+                if self.use_roi_comparison:
+                    panel5_img = self._create_panel_roi_comparison(image_np, anns, unet_outputs)
 
                 # Add to lists
                 all_panel1_images.append(panel1_img)
                 all_panel2_images.append(panel2_img)
                 all_panel3_images.append(panel3_img)
                 all_panel4_images.append(panel4_img)
-                all_panel5_images.append(panel5_img)
+                if self.use_roi_comparison:
+                    all_panel5_images.append(panel5_img)
 
-        # Create combined 5x4 grid image
+        # Create combined grid image (4x4 or 5x4 depending on use_roi_comparison)
         if all_panel1_images:
-            self._create_combined_5x4_image(
-                all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, all_panel5_images, epoch
-            )
+            if self.use_roi_comparison:
+                self._create_combined_5x4_image(
+                    all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, all_panel5_images, epoch
+                )
+            else:
+                self._create_combined_4x4_image(
+                    all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, epoch
+                )
 
     def _get_predictions(
         self,
@@ -1370,6 +1380,111 @@ class ValidationVisualizerWithAuxiliary:
             ("Full UNet Output", (0, 204, 102)),  # Light green
             ("Predictions", (0, 153, 0)),  # Green
             ("ROI Comparison", (255, 153, 51))  # Orange
+        ]
+
+        # Draw row labels on top of images
+        for idx, (text, color) in enumerate(labels):
+            y_pos = title_height + idx * (img_height + padding) + 5
+            # Draw background rectangle
+            bbox = draw.textbbox((0, 0), text, font=label_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+            # Increase padding for better visual balance (1.5x increase to match font)
+            vertical_padding = 23  # Increased from 15 to 23 (1.5x)
+            horizontal_padding = 30  # Increased from 20 to 30 (1.5x)
+
+            # Calculate box dimensions
+            box_height = text_height + 2 * vertical_padding
+
+            draw.rectangle(
+                [10, y_pos, 10 + text_width + 2 * horizontal_padding, y_pos + box_height],
+                fill=color
+            )
+
+            # Center text vertically within the box
+            # Account for text baseline by using bbox offset
+            text_y = y_pos + vertical_padding - bbox[1]
+            draw.text((10 + horizontal_padding, text_y), text, fill='white', font=label_font)
+
+        # Resize to 45% of original size
+        scale_factor = 0.45
+        new_width = int(combined_img.width * scale_factor)
+        new_height = int(combined_img.height * scale_factor)
+        combined_img_resized = combined_img.resize((new_width, new_height), Image.LANCZOS)
+
+        # Save combined image
+        output_path = self.output_dir / f'validation_all_images_epoch_{epoch+1:04d}.png'
+        combined_img_resized.save(output_path)
+        print(f"  Saved combined visualization: {output_path}")
+    
+    def _create_combined_4x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
+                                  panel3_images: List[Image.Image], panel4_images: List[Image.Image], epoch: int):
+        """Create combined 4x4 grid visualization (without ROI Comparison)."""
+        n_images = len(panel1_images)
+        if n_images == 0:
+            return
+
+        # Fixed dimensions
+        img_width = 640
+        img_height = 640
+        heatmap_width = 700  # Heatmap panel is wider due to colorbar
+        padding = 20
+
+        # Add extra space for title at the top
+        title_height = 80
+
+        # Create combined image (4 rows x n_images columns)
+        # Set margins
+        label_padding = 30  # Changed to 30px as requested
+        right_margin = 30   # Right margin
+        bottom_margin = 30  # New bottom margin
+        # Account for wider heatmap panels
+        combined_width = label_padding + n_images * heatmap_width + (n_images - 1) * padding + right_margin
+        combined_height = title_height + 4 * img_height + 3 * padding + bottom_margin
+        combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
+
+        # Add title text
+        draw = ImageDraw.Draw(combined_img)
+
+        # Try to load fonts
+        try:
+            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+            label_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)  # Increased from 30 to 45 (1.5x)
+        except:
+            title_font = ImageFont.load_default()
+            label_font = ImageFont.load_default()
+
+        # Paste images in grid first
+        for col in range(n_images):
+            # Use wider spacing to accommodate heatmap panels
+            x_offset = label_padding + col * (heatmap_width + padding)
+
+            # Row 1: Ground Truth (standard width)
+            combined_img.paste(panel1_images[col], (x_offset, title_height))
+
+            # Row 2: Binary Mask Heatmap (wider due to colorbar)
+            combined_img.paste(panel2_images[col], (x_offset, title_height + img_height + padding))
+
+            # Row 3: Full-image UNet Output (standard width)
+            combined_img.paste(panel3_images[col], (x_offset, title_height + 2 * (img_height + padding)))
+
+            # Row 4: Predictions (standard width)
+            combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
+
+        # Draw main title
+        title_text = f"Validation Results with Auxiliary Task - Epoch {epoch+1:04d}"
+        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+        title_width = title_bbox[2] - title_bbox[0]
+        title_x = (combined_width - title_width) // 2
+        draw.text((title_x, 20), title_text, fill='black', font=title_font)
+
+        # Row labels with colors matching hierarchical UNet visualizer (without ROI Comparison)
+        labels = [
+            ("Ground Truth", (255, 102, 102)),  # Light red
+            ("Binary Mask Heatmap", (102, 178, 255)),  # Light blue
+            ("Full UNet Output", (0, 204, 102)),  # Light green
+            ("Predictions", (0, 153, 0))  # Green
         ]
 
         # Draw row labels on top of images

@@ -114,6 +114,9 @@ class DataConfig:
     use_augmentation: bool = True
     use_heavy_augmentation: bool = False  # If True, use heavy augmentation; if False, use light augmentation
 
+    # Visualization
+    use_roi_comparison: bool = False  # If True, show ROI Comparison row in visualization
+
 
 @dataclass
 class ModelConfig:
