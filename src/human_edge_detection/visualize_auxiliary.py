@@ -91,6 +91,26 @@ class ValidationVisualizerWithAuxiliary:
 
         # ROI batch processor (static class, no constructor args)
         self.roi_processor = ROIBatchProcessor
+        
+        # Create custom color palette avoiding red and yellow
+        self._create_custom_colors()
+    
+    def _create_custom_colors(self):
+        """Create custom color palette avoiding red and yellow colors."""
+        # Define colors manually to avoid red and yellow
+        # Using blue, green, purple, cyan, pink, brown, olive, navy, teal, and gray
+        self.custom_colors = np.array([
+            [0.12, 0.47, 0.71],    # Blue
+            [0.17, 0.63, 0.17],    # Green
+            [0.44, 0.16, 0.89],    # Purple
+            [0.0, 0.75, 0.75],     # Cyan
+            [0.89, 0.41, 0.76],    # Pink
+            [0.55, 0.27, 0.07],    # Brown
+            [0.33, 0.42, 0.18],    # Olive
+            [0.0, 0.0, 0.5],       # Navy
+            [0.0, 0.5, 0.5],       # Teal
+            [0.5, 0.5, 0.5]        # Gray
+        ])
 
     def _find_fallback_images(self, missing_images: Dict[int, str]) -> Dict[int, Dict]:
         """Find fallback images with the same number of persons.
@@ -593,7 +613,7 @@ class ValidationVisualizerWithAuxiliary:
 
         # Create mask overlay
         mask_overlay = np.zeros((*image_np.shape[:2], 4))
-        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        colors = self.custom_colors
 
         for idx, ann in enumerate(annotations):
             if 'segmentation' not in ann:
@@ -613,7 +633,7 @@ class ValidationVisualizerWithAuxiliary:
 
         # Create prediction overlay
         pred_overlay = np.zeros((*image_np.shape[:2], 4))
-        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        colors = self.custom_colors
 
         for idx, ann in enumerate(annotations):
             if idx not in predictions:
@@ -699,7 +719,7 @@ class ValidationVisualizerWithAuxiliary:
 
         # Create mask overlay
         mask_overlay = np.zeros((*image_np.shape[:2], 4))
-        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        colors = self.custom_colors
 
         # First draw masks
         for idx, ann in enumerate(annotations):
@@ -839,7 +859,7 @@ class ValidationVisualizerWithAuxiliary:
         error_overlay = np.zeros((*image_np.shape[:2], 4))
         overlap_overlay = np.zeros((*image_np.shape[:2], 4))
 
-        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        colors = self.custom_colors
 
         # Track target masks count for overlap detection
         target_mask_count = np.zeros(image_np.shape[:2], dtype=int)
@@ -1709,7 +1729,7 @@ class ValidationVisualizerWithAuxiliary:
 
         # Create mask overlay
         mask_overlay = np.zeros((*image_np.shape[:2], 4))
-        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        colors = self.custom_colors
 
         for idx, ann in enumerate(annotations):
             # Draw bounding box
@@ -1826,7 +1846,7 @@ class ValidationVisualizerWithAuxiliary:
 
         # Create prediction overlay
         pred_overlay = np.zeros((*image_np.shape[:2], 4))
-        colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        colors = self.custom_colors
 
         # Track target masks count for overlap detection
         target_mask_count = np.zeros(image_np.shape[:2], dtype=int)
