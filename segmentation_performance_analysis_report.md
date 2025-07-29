@@ -69,176 +69,310 @@
 
 ### 3.1 前景/背景分離の改善（優先度：高）
 
-#### 改善案1: 解像度の向上
-```python
-# 推奨設定への変更
-roi_size = (112, 112)  # 現在の(64, 48)から変更
-mask_size = (112, 112)  # 現在の(64, 48)から変更
+#### 改善案1: 解像度の向上【設定変更のみで実装可能】
+```json
+// config.jsonでの変更
+"model": {
+    "roi_size": [112, 84],    // 段階的に変更（現在: [64, 48]）
+    "mask_size": [112, 84]    // または直接 [112, 112] へ
+}
 ```
+- **実装方法**: `experiments/*/configs/config.json`を編集するだけ
 - **期待効果**: カバレッジが34.1%から75.5%に向上し、詳細な特徴を捉えられる
 
-#### 改善案2: Pre-trained UNetの部分的なファインチューニング
+#### 改善案2: Pre-trained UNetのファインチューニング【設定変更のみで実装可能】
+```json
+// config.jsonでの変更
+"model": {
+    "freeze_pretrained_weights": false  // 現在: true
+}
+```
+- **実装方法**: 既に`PreTrainedPeopleSegmentationUNet`にfreeze_weightsパラメータが実装済み
+- **追加実装案**: 部分的なファインチューニング（最終層のみ）を行う場合
 ```python
-# 最終層のみ学習可能にする
-freeze_pretrained_weights = False
-# UNetの最後の数層のみ学習可能に
-for name, param in pretrained_unet.named_parameters():
-    if 'dec1' in name or 'final' in name:  # デコーダの最終段階
-        param.requires_grad = True
+# run_experiments.py または学習スクリプトで実装
+def selective_unfreeze(model, layers_to_unfreeze):
+    for name, param in model.pretrained_unet.named_parameters():
+        if any(layer in name for layer in layers_to_unfreeze):
+            param.requires_grad = True
 ```
 - **期待効果**: タスク特有の前景/背景分離を学習可能
 
-#### 改善案3: マルチスケール特徴の活用
+#### 改善案3: マルチスケール特徴の活用【新規実装が必要】
+- **現状**: Pre-trained UNetは最終出力のみを使用
+- **実装案**: UNetの中間特徴を抽出する仕組みを追加
 ```python
-# Pre-trained UNetの中間特徴を抽出して活用
-class EnhancedFeatureExtractor(nn.Module):
+# hierarchical_segmentation_unet.pyに追加実装
+class PreTrainedUNetWithIntermediateFeatures(PreTrainedPeopleSegmentationUNet):
     def forward(self, x):
-        # UNetの複数レイヤーから特徴を抽出
-        feat1 = self.unet.encoder1(x)  # 低レベル特徴
-        feat2 = self.unet.encoder2(feat1)  # 中レベル特徴
-        feat3 = self.unet.encoder3(feat2)  # 高レベル特徴
-        # 特徴を融合
-        return self.fusion([feat1, feat2, feat3])
+        # 既存のforward処理に加えて中間特徴を返す
+        features = []
+        # encoder段階での特徴を保存
+        x = self.model.encoder.conv_stem(x)
+        features.append(x)  # 低レベル特徴
+        # ... 各段階での特徴を収集
+        return output, features
 ```
 - **期待効果**: より豊富な特徴表現により、前景/背景の境界をより正確に捉える
 
-#### 改善案4: 損失関数の改善
+#### 改善案4: 損失関数の改善【一部は設定変更で可能】
+```json
+// config.jsonでの変更
+"auxiliary_task": {
+    "weight": 0.5    // 現在: 0.3
+}
+```
+- **実装方法**: Auxiliary lossの重みは設定で変更可能
+- **追加実装案**: 境界認識損失の実装
 ```python
-# Auxiliary lossの重みを増加
-auxiliary_task_weight = 0.5  # 現在の0.3から増加
+# distance_aware_loss.pyを活用または新規実装
+from .distance_aware_loss import DistanceAwareLoss
 
-# 境界領域に重点を置いた損失関数
-class BoundaryAwareLoss(nn.Module):
-    def __init__(self, boundary_width=3):
-        self.boundary_width = boundary_width
-
-    def forward(self, pred, target):
-        # 境界領域を検出
-        boundary_mask = self.get_boundary_mask(target)
-        # 境界領域の重みを増加
-        weights = torch.ones_like(target)
-        weights[boundary_mask] = 2.0
-        return F.cross_entropy(pred, target, weight=weights)
+# config.jsonで有効化
+"distance_loss": {
+    "enabled": true,
+    "boundary_width": 5,
+    "boundary_weight": 2.0
+}
 ```
 - **期待効果**: 境界領域の学習を強化し、前景/背景の分離精度向上
 
 ### 3.2 Target/Non-target分離の改善（優先度：中）
 
-#### 改善案5: 階層的予測の導入
+#### 改善案5: 階層的予測の強化【現在の実装を改良】
+- **現状**: `PretrainedUNetGuidedSegmentationHead`で直接3クラス予測
+- **改善案**: 既存の階層的構造（`HierarchicalLoss`）をより活用
 ```python
-class HierarchicalPredictionHead(nn.Module):
+# PretrainedUNetGuidedSegmentationHeadの改良
+class ImprovedHierarchicalHead(PretrainedUNetGuidedSegmentationHead):
     def forward(self, features, bg_fg_mask):
-        # Step 1: 前景/背景の精緻化
-        refined_fg_mask = self.refine_fg_bg(features, bg_fg_mask)
+        # 既存の処理に加えて、段階的な予測を強化
+        fg_prob = torch.sigmoid(bg_fg_mask)
 
-        # Step 2: 前景領域でのみtarget/non-target予測
-        fg_features = features * refined_fg_mask
-        target_nontarget = self.predict_target_nontarget(fg_features)
+        # Step 1: 前景領域の精緻化（現在は単純なsigmoid）
+        refined_fg_prob = self.refine_fg_mask(features, fg_prob)
 
-        # Step 3: 最終的な3クラス予測の構築
-        return self.combine_predictions(refined_fg_mask, target_nontarget)
+        # Step 2: マスクされた特徴での予測
+        masked_features = features * refined_fg_prob
+
+        # 既存の処理を継続...
 ```
 - **期待効果**: 段階的な予測により、各ステップでの最適化が容易
 
-#### 改善案6: インスタンス関係性のモデリング
+#### 改善案6: Attention機構の改良【既存実装の拡張】
+- **現状**: 単純なAttention module（`attention * (0.5 + 0.5 * fg_prob)`）
+- **改善案**: より洗練されたAttention機構
 ```python
-class RelationalAttentionModule(nn.Module):
-    def __init__(self, feature_dim):
-        self.self_attention = nn.MultiheadAttention(feature_dim, num_heads=8)
+# hierarchical_segmentation_rgb.pyの改良
+"use_attention_module": true,  # 既に有効
 
-    def forward(self, roi_features, roi_positions):
-        # ROI間の関係性を学習
-        attended_features, _ = self.self_attention(
-            roi_features, roi_features, roi_features
-        )
-        return attended_features
+# attention_modules.pyを活用して改良
+from .attention_modules import SpatialAttentionModule, ChannelAttentionModule
+
+class ImprovedAttention(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.spatial_att = SpatialAttentionModule()
+        self.channel_att = ChannelAttentionModule(channels)
+
+    def forward(self, features, fg_prob):
+        # 空間的・チャンネル的な注意機構を組み合わせ
+        spatial_weight = self.spatial_att(features)
+        channel_weight = self.channel_att(features)
+        return features * spatial_weight * channel_weight * fg_prob
 ```
-- **期待効果**: 隣接インスタンスの情報を活用し、分離性能向上
+- **期待効果**: より精密な特徴の重み付けによる分離性能向上
 
-#### 改善案7: 特徴融合の強化
+#### 改善案7: 特徴融合の改善【現在の単純な結合を改良】
+- **現状**: RGB特徴とbg_fg_maskの単純なconcat
+- **改善案**: 既存のコードを拡張
 ```python
+# 現在のinput_adjust (257ch → 256ch)を改良
 class AdaptiveFeatureFusion(nn.Module):
-    def __init__(self, rgb_dim, unet_dim, out_dim):
-        self.rgb_gate = nn.Sequential(
-            nn.Conv2d(rgb_dim + unet_dim, 1, 1),
+    def __init__(self, rgb_channels, mask_channels=1):
+        super().__init__()
+        total_channels = rgb_channels + mask_channels
+
+        # ゲート機構を追加
+        self.gate = nn.Sequential(
+            nn.Conv2d(total_channels, rgb_channels // 4, 1),
+            nn.ReLU(),
+            nn.Conv2d(rgb_channels // 4, rgb_channels, 1),
             nn.Sigmoid()
         )
-        self.fusion = nn.Conv2d(rgb_dim + unet_dim, out_dim, 1)
 
-    def forward(self, rgb_features, unet_features):
-        combined = torch.cat([rgb_features, unet_features], dim=1)
-        gate = self.rgb_gate(combined)
-        # 適応的な重み付けで融合
-        fused = self.fusion(combined) * gate
-        return fused
+        self.fusion = nn.Conv2d(total_channels, rgb_channels, 1)
+
+    def forward(self, rgb_features, mask):
+        combined = torch.cat([rgb_features, mask], dim=1)
+        gate_weights = self.gate(combined)
+        fused = self.fusion(combined)
+        return fused * gate_weights + rgb_features * (1 - gate_weights)
 ```
-- **期待効果**: RGB特徴とUNet特徴の適応的な融合により、より良い表現を獲得
+- **期待効果**: 適応的な特徴融合により、タスクに応じた最適な表現を獲得
 
 ### 3.3 学習戦略の改善（優先度：高）
 
-#### 改善案8: 段階的学習
+#### 改善案8: 段階的学習【config.jsonの調整とスクリプトの活用】
+- **現状**: 固定の重み設定で学習
+- **改善案**: 段階的な重み調整
 ```python
-# Phase 1: 前景/背景の精度を最初に向上
-phase1_config = {
-    'auxiliary_weight': 0.7,  # 高い重み
-    'ce_weight': 0.3,
-    'epochs': 20
-}
+# run_experiments.pyに段階的学習を実装
+def phased_training(config_name, phases):
+    for phase_num, phase_config in enumerate(phases):
+        # config.jsonを一時的に更新
+        update_config(config_name, {
+            "auxiliary_task": {"weight": phase_config["aux_weight"]},
+            "training": {
+                "ce_weight": phase_config["ce_weight"],
+                "dice_weight": phase_config["dice_weight"],
+                "num_epochs": phase_config["epochs"]
+            }
+        })
 
-# Phase 2: Target/Non-target分離を改善
-phase2_config = {
-    'auxiliary_weight': 0.3,
-    'ce_weight': 0.7,
-    'epochs': 30
-}
+        # 学習実行
+        run_experiment(config_name, resume=phase_num > 0)
+
+# 使用例
+phases = [
+    {"aux_weight": 0.7, "ce_weight": 0.3, "dice_weight": 0.0, "epochs": 20},  # Phase 1
+    {"aux_weight": 0.3, "ce_weight": 0.7, "dice_weight": 1.0, "epochs": 30}   # Phase 2
+]
 ```
 - **期待効果**: 各タスクに焦点を当てた段階的な最適化
 
-#### 改善案9: データ拡張の強化
+#### 改善案9: データ拡張の改善【既存設定の活用と拡張】
+- **現状**: `use_augmentation: true`, `augmentation_prob: 0.5`が設定済み
+- **改善案**: データセットレベルでの拡張強化
 ```python
-# インスタンス境界を意識した拡張
-class BoundaryAwareAugmentation:
-    def __init__(self):
-        self.elastic_transform = ElasticTransform(alpha=50, sigma=5)
-        self.boundary_noise = BoundaryNoise(intensity=0.1)
+# dataset_adapter.pyまたは新規実装
+from torchvision import transforms
+import albumentations as A
 
-    def __call__(self, image, mask):
-        # 弾性変形で境界を変化
-        image, mask = self.elastic_transform(image, mask)
-        # 境界領域にノイズを追加
-        image = self.boundary_noise(image, mask)
-        return image, mask
+class EnhancedAugmentation:
+    def __init__(self, augmentation_prob=0.5):
+        self.transform = A.Compose([
+            A.HorizontalFlip(p=0.5),
+            A.RandomBrightnessContrast(p=0.3),
+            A.RandomGamma(p=0.3),
+            # 境界を意識した拡張
+            A.ElasticTransform(alpha=50, sigma=5, p=0.3),
+            A.GridDistortion(p=0.3),
+            # ROI内での変形
+            A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.5)
+        ], bbox_params=A.BboxParams(format='coco', label_fields=['category_ids']))
+
+    def __call__(self, image, bboxes, masks):
+        # 拡張を適用
+        transformed = self.transform(image=image, bboxes=bboxes, masks=masks)
+        return transformed['image'], transformed['bboxes'], transformed['masks']
 ```
-- **期待効果**: 境界領域の変動に対するロバスト性向上
+- **実装方法**: データローダーでの拡張処理を強化
+- **期待効果**: より多様な入力に対するロバスト性向上
 
-## 4. 実装優先順位
+## 4. 実装優先順位と推奨戦略
 
-1. **即座に実装すべき改善**
-   - 改善案1: 解像度の向上（設定変更のみ）
-     - [ ] 64x48 -> 112x84
-     - [ ] 112x84 -> 112x112
-   - 改善案4: 損失関数の改善（auxiliary weightの調整）
-   - 改善案8: 段階的学習戦略
+### 4.1 即座に実装可能（設定変更のみ）
+1. **改善案1: 解像度の向上**
+   ```bash
+   # Step 1: 段階的な解像度向上
+   # config.jsonを編集: roi_size: [64, 48] → [112, 84] → [112, 112]
+   ```
 
-2. **短期的に実装すべき改善**
-   - 改善案2: Pre-trained UNetの部分的ファインチューニング
-   - 改善案5: 階層的予測の導入
-   - 改善案9: データ拡張の強化
+2. **改善案2: Pre-trained UNetのファインチューニング**
+   ```bash
+   # config.jsonを編集: freeze_pretrained_weights: true → false
+   ```
 
-3. **中長期的に検討すべき改善**
-   - 改善案3: マルチスケール特徴の活用
-   - 改善案6: インスタンス関係性のモデリング
-   - 改善案7: 特徴融合の強化
+3. **改善案4: Auxiliary loss重みの調整**
+   ```bash
+   # config.jsonを編集: auxiliary_task.weight: 0.3 → 0.5
+   ```
+
+### 4.2 短期的に実装（軽微なコード変更）
+1. **改善案8: 段階的学習の実装**
+   - run_experiments.pyに段階的な設定変更機能を追加
+   - 既存のresume機能を活用
+
+2. **改善案6: Attention機構の改良**
+   - 既存のattention_modules.pyを活用
+   - PretrainedUNetGuidedSegmentationHeadの改良
+
+3. **改善案9: データ拡張の強化**
+   - dataset_adapter.pyでの拡張処理追加
+   - albumentationsライブラリの活用
+
+### 4.3 中期的に実装（新規実装が必要）
+1. **改善案3: マルチスケール特徴の活用**
+   - Pre-trained UNetの中間特徴抽出機能の追加
+   - 特徴融合メカニズムの実装
+
+2. **改善案5: 階層的予測の強化**
+   - 段階的な予測構造の実装
+   - 各段階での最適化
+
+3. **改善案7: 特徴融合の高度化**
+   - ゲート機構を持つ融合モジュールの実装
+   - 適応的な重み付け
+
+### 4.4 推奨実行順序
+```bash
+# Phase 1: 即座に効果が期待できる改善（1週間）
+1. 解像度を112x84に変更して学習
+2. auxiliary_task.weightを0.5に変更
+3. freeze_pretrained_weightsをfalseに変更
+4. 20エポック学習して効果を確認
+
+# Phase 2: 短期改善の実装（2週間）
+1. 段階的学習スクリプトの実装
+2. データ拡張の強化
+3. Attention機構の改良
+4. 追加30エポック学習
+
+# Phase 3: 中期改善の実装（1ヶ月）
+1. マルチスケール特徴抽出の実装
+2. 高度な特徴融合の実装
+3. 全体的な最適化
+```
 
 ## 5. 期待される改善効果
 
-上記の改善を実装することで、以下の効果が期待されます：
+### 5.1 Phase 1実装後の期待効果（設定変更のみ）
+- [x] **解像度向上（64x48→112x84）**:
+  - ROIカバレッジ: 34.1% → 約55-60%
+  - 細部の特徴捕捉能力の向上
+- **UNetファインチューニング**:
+  - タスク特有の前景/背景分離の学習
+  - mIoU: 77.5% → 80-82%（推定）
+- **Auxiliary loss重み増加**:
+  - 前景/背景分離の精度向上
+  - 赤色領域（誤分類）の削減
 
-- **前景/背景分離**: 現在の約77%のmIoUから85-90%への向上
-- **Target/Non-target分離**: インスタンス分離精度の20-30%向上
-- **全体的な性能**: 3クラス分類の精度が現状から大幅に改善
+### 5.2 Phase 2実装後の期待効果（短期改善）
+- **段階的学習**:
+  - 各タスクでの最適化による性能向上
+  - 学習の安定性向上
+- **データ拡張強化**:
+  - 汎化性能の向上
+  - エッジケースへの対応力向上
+- **Attention改良**:
+  - Target/Non-target分離精度: +10-15%
+  - 黄色領域（重複予測）の削減
 
-これらの改善により、Pre-trained UNetの高い性能を維持しながら、3クラス分類タスクに特化した最適化が可能となります。
+### 5.3 Phase 3実装後の期待効果（中期改善）
+- **マルチスケール特徴**:
+  - 境界領域の精度向上
+  - mIoU: 82% → 85-88%（推定）
+- **高度な特徴融合**:
+  - 3クラス分類の全体的な精度向上
+  - インスタンス分離精度: +20-25%
+
+### 5.4 最終的な目標性能
+- **前景/背景分離**: mIoU 85-90%
+- **Target/Non-target分離**: インスタンス分離精度 90%以上
+- **3クラス分類精度**: 現状から30-40%の改善
+
+これらの改善により、Pre-trained UNetの高い性能を活かしつつ、3クラス分類タスクに最適化されたモデルが実現可能となります。
 
 ## 6. 現在のアーキテクチャパイプライン
 
@@ -256,23 +390,23 @@ class BoundaryAwareAugmentation:
 graph TB
     A[入力画像<br/>B, 3, 640, 640] --> B[Pre-trained UNet<br/>2020-09-23a.pth]
     A --> C[ROI情報<br/>N, 5]
-    
+
     B --> D[全画像の前景/背景マスク<br/>B, 1, 640, 640]
-    
+
     D --> E[ROIAlign<br/>Mask抽出]
     A --> F[ROIAlign<br/>RGB抽出]
     C --> E
     C --> F
-    
+
     E --> G[ROI別bg/fg mask<br/>N, 1, 64, 48]
     F --> H[ROI別RGB画像<br/>N, 3, 64, 48]
-    
+
     H --> I[RGB Feature Extractor<br/>256チャンネル特徴]
     I --> J[ROI特徴<br/>N, 256, 64, 48]
-    
+
     J --> K[PretrainedUNetGuidedSegmentationHead]
     G --> K
-    
+
     K --> L[3クラス予測<br/>N, 3, 64, 48]
     K --> M[Auxiliary Outputs<br/>- bg_fg_logits<br/>- target_nontarget_logits<br/>- fg_prob]
 ```
@@ -328,7 +462,7 @@ nn.Sequential(
 - **クラス名**: `PretrainedUNetGuidedSegmentationHead` (行21-190)
 主要な処理フロー：
 1. **入力調整**: RGB特徴(256ch) + fg_prob(1ch) = 257ch → 256ch
-2. **特徴処理**: 
+2. **特徴処理**:
    ```python
    feature_processor = nn.Sequential(
        Conv2d(256, 256, 3, padding=1),
@@ -368,8 +502,8 @@ main_dice_loss = DiceLoss(target_class=1)  # targetクラスのみ
 aux_fg_bg_loss = CrossEntropyLoss()
 
 # 合計損失
-total_loss = ce_weight * main_ce_loss + 
-             dice_weight * main_dice_loss + 
+total_loss = ce_weight * main_ce_loss +
+             dice_weight * main_dice_loss +
              aux_weight * aux_fg_bg_loss
 ```
 
