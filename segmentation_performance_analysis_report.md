@@ -70,7 +70,7 @@
 ### 3.1 前景/背景分離の改善（優先度：高）
 
 #### 改善案1: 解像度の向上【設定変更のみで実装可能】
-```json
+```jsonc
 // config.jsonでの変更
 "model": {
     "roi_size": [112, 84],    // 段階的に変更（現在: [64, 48]）
@@ -81,7 +81,7 @@
 - **期待効果**: カバレッジが34.1%から75.5%に向上し、詳細な特徴を捉えられる
 
 #### 改善案2: Pre-trained UNetのファインチューニング【設定変更のみで実装可能】
-```json
+```jsonc
 // config.jsonでの変更
 "model": {
     "freeze_pretrained_weights": false  // 現在: true
@@ -116,7 +116,7 @@ class PreTrainedUNetWithIntermediateFeatures(PreTrainedPeopleSegmentationUNet):
 - **期待効果**: より豊富な特徴表現により、前景/背景の境界をより正確に捉える
 
 #### 改善案4: 損失関数の改善【一部は設定変更で可能】
-```json
+```jsonc
 // config.jsonでの変更
 "auxiliary_task": {
     "weight": 0.5    // 現在: 0.3
