@@ -40,8 +40,40 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         model: The segmentation model
         feature_extractor: Feature extractor (if using base model)
     """
-    # Check for hierarchical models first
-    if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+    # Check for RGB hierarchical models first (they don't need YOLO feature extractor)
+    if config.model.use_rgb_hierarchical:
+        from src.human_edge_detection.advanced.hierarchical_segmentation_rgb import create_rgb_hierarchical_model
+        
+        # Determine if multi-scale fusion is needed
+        multi_scale = (hasattr(config.model, 'variable_roi_sizes') and config.model.variable_roi_sizes) or config.multiscale.enabled
+        
+        model = create_rgb_hierarchical_model(
+            num_classes=config.model.num_classes,
+            roi_size=config.model.roi_size,
+            mask_size=config.model.mask_size,
+            use_multi_scale_fusion=multi_scale,
+            fusion_method=config.multiscale.fusion_method if multi_scale else 'concat',
+            use_attention_module=config.model.use_attention_module,
+            # Binary mask refinement modules
+            use_boundary_refinement=getattr(config.model, 'use_boundary_refinement', False),
+            use_progressive_upsampling=getattr(config.model, 'use_progressive_upsampling', False),
+            use_subpixel_conv=getattr(config.model, 'use_subpixel_conv', False),
+            use_contour_detection=getattr(config.model, 'use_contour_detection', False),
+            use_distance_transform=getattr(config.model, 'use_distance_transform', False),
+            # Normalization configuration
+            normalization_type=getattr(config.model, 'normalization_type', 'layernorm2d'),
+            normalization_groups=getattr(config.model, 'normalization_groups', 8),
+            # Pre-trained model configuration
+            use_pretrained_unet=getattr(config.model, 'use_pretrained_unet', False),
+            pretrained_weights_path=getattr(config.model, 'pretrained_weights_path', ''),
+            freeze_pretrained_weights=getattr(config.model, 'freeze_pretrained_weights', False),
+            use_full_image_unet=getattr(config.model, 'use_full_image_unet', False),
+        )
+        
+        feature_extractor = None  # RGB model doesn't need external feature extractor
+        
+    # Check for hierarchical models 
+    elif config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         # Build multi-scale model with hierarchical architecture
         if config.model.variable_roi_sizes:
             # Create custom variable ROI model
@@ -136,8 +168,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
     else:
         # Base single-scale model
         feature_extractor = YOLOv9FeatureExtractor(
-            onnx_path=config.model.onnx_model,
-            execution_provider=config.model.execution_provider
+            onnx_path=config.model.onnx_model
         )
 
         model = create_model(
@@ -157,14 +188,38 @@ def build_loss_function(
     """Build loss function based on configuration."""
 
     # Check for hierarchical model first
-    if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
-        from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
-        return HierarchicalLoss(
-            bg_weight=1.0,
-            fg_weight=1.5,
-            target_weight=2.0,
-            consistency_weight=0.1
-        )
+    if config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+        # Check if we need refined hierarchical loss
+        if any(getattr(config.model, attr, False) for attr in ['use_boundary_refinement', 'use_active_contour_loss', 'use_progressive_upsampling', 
+                                                                 'use_subpixel_conv', 'use_contour_detection', 'use_distance_transform', 'use_boundary_aware_loss']):
+            from src.human_edge_detection.advanced.hierarchical_segmentation_refinement import RefinedHierarchicalLoss
+            
+            return RefinedHierarchicalLoss(
+                bg_weight=1.5,
+                fg_weight=1.5,
+                target_weight=1.2,
+                consistency_weight=0.3,
+                use_dynamic_weights=False,
+                dice_weight=config.training.dice_weight,
+                ce_weight=config.training.ce_weight,
+                # Refinement parameters
+                active_contour_weight=0.1,
+                boundary_aware_weight=0.1,
+                contour_loss_weight=0.1,
+                distance_loss_weight=0.1,
+                use_active_contour_loss=getattr(config.model, 'use_active_contour_loss', False),
+                use_boundary_aware_loss=getattr(config.model, 'use_boundary_aware_loss', False),
+                use_contour_detection=getattr(config.model, 'use_contour_detection', False),
+                use_distance_transform=getattr(config.model, 'use_distance_transform', False),
+            )
+        else:
+            from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
+            return HierarchicalLoss(
+                bg_weight=1.0,
+                fg_weight=1.5,
+                target_weight=2.0,
+                consistency_weight=0.1
+            )
 
     # Extract pixel ratios and separation aware weights from data_stats
     pixel_ratios = None

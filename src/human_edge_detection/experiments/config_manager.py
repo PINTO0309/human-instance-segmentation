@@ -116,6 +116,7 @@ class DataConfig:
 
     # Visualization
     use_roi_comparison: bool = False  # If True, show ROI Comparison row in visualization
+    use_edge_visualize: bool = False  # If True, show edge detection results in visualization
 
 
 @dataclass
@@ -2435,6 +2436,8 @@ class ConfigManager:
                 num_workers=4,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=True,
             ),
             training=TrainingConfig(
                 learning_rate=1e-4,

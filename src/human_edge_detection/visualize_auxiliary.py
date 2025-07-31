@@ -2,20 +2,20 @@
 
 To enable ROI patch visualization in the 5th row:
 1. Modify your model's forward method to return ROI patches in aux_outputs:
-   
+
    Example for HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet:
    ```python
    def forward(self, images, rois):
        # ... existing code ...
-       
+
        # Extract ROI patches for visualization
        roi_rgb_patches = self.roi_align_rgb(images, rois, self.roi_size[0], self.roi_size[1])
-       
+
        # ... rest of processing ...
-       
+
        # Add to aux_outputs
        aux_outputs['roi_patches'] = roi_rgb_patches
-       
+
        return predictions, aux_outputs
    ```
 
@@ -59,7 +59,8 @@ class ValidationVisualizerWithAuxiliary:
         device: str = 'cuda',
         roi_padding: float = 0.0,
         visualize_auxiliary: bool = True,
-        use_roi_comparison: bool = True
+        use_roi_comparison: bool = True,
+        use_edge_visualize: bool = False
     ):
         """Initialize visualizer with auxiliary task support.
 
@@ -73,6 +74,7 @@ class ValidationVisualizerWithAuxiliary:
             roi_padding: ROI padding ratio (0.0 = no padding, 0.1 = 10% padding)
             visualize_auxiliary: Whether to visualize auxiliary predictions
             use_roi_comparison: Whether to show ROI Comparison row in visualization
+            use_edge_visualize: Whether to visualize edge detection results (contours)
         """
         self.model = model
         self.feature_extractor = feature_extractor
@@ -83,6 +85,7 @@ class ValidationVisualizerWithAuxiliary:
         self.roi_padding = roi_padding
         self.visualize_auxiliary = visualize_auxiliary
         self.use_roi_comparison = use_roi_comparison
+        self.use_edge_visualize = use_edge_visualize
 
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -94,10 +97,10 @@ class ValidationVisualizerWithAuxiliary:
 
         # ROI batch processor (static class, no constructor args)
         self.roi_processor = ROIBatchProcessor
-        
+
         # Create custom color palette avoiding red and yellow
         self._create_custom_colors()
-    
+
     def _create_custom_colors(self):
         """Create custom color palette avoiding red and yellow colors."""
         # Define colors manually to avoid red and yellow
@@ -276,6 +279,7 @@ class ValidationVisualizerWithAuxiliary:
         all_panel3_images = []  # Full-image UNet Output
         all_panel4_images = []  # Predictions
         all_panel5_images = []  # ROI Comparison
+        all_edge_images = []    # Edge Detection
 
         with torch.no_grad():
             # Synchronize CUDA to ensure clean state
@@ -335,10 +339,15 @@ class ValidationVisualizerWithAuxiliary:
 
                 # Panel 4: Predictions
                 panel4_img = self._create_panel_predictions(image_np, anns, predictions, orig_width, orig_height)
-                
+
                 # Panel 5: ROI Comparison (only if enabled)
                 if self.use_roi_comparison:
                     panel5_img = self._create_panel_roi_comparison(image_np, anns, unet_outputs)
+
+                # Edge Detection Panel (only if enabled and contours are available)
+                edge_img = None
+                if self.use_edge_visualize and 'contours' in unet_outputs:
+                    edge_img = self._create_panel_edge_detection(image_np, unet_outputs['contours'])
 
                 # Add to lists
                 all_panel1_images.append(panel1_img)
@@ -347,17 +356,37 @@ class ValidationVisualizerWithAuxiliary:
                 all_panel4_images.append(panel4_img)
                 if self.use_roi_comparison:
                     all_panel5_images.append(panel5_img)
+                if edge_img is not None:
+                    all_edge_images.append(edge_img)
 
-        # Create combined grid image (4x4 or 5x4 depending on use_roi_comparison)
+        # Create combined grid image based on configuration
         if all_panel1_images:
-            if self.use_roi_comparison:
-                self._create_combined_5x4_image(
-                    all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, all_panel5_images, epoch
-                )
+            if self.use_edge_visualize and all_edge_images:
+                # With edge visualization
+                if self.use_roi_comparison:
+                    # 6 rows: GT, Heatmap, UNet, Predictions, ROI, Edge
+                    self._create_combined_6x4_image(
+                        all_panel1_images, all_panel2_images, all_panel3_images,
+                        all_panel4_images, all_panel5_images, all_edge_images, epoch
+                    )
+                else:
+                    # 5 rows: GT, Heatmap, UNet, Predictions, Edge
+                    self._create_combined_5x4_image_with_edge(
+                        all_panel1_images, all_panel2_images, all_panel3_images,
+                        all_panel4_images, all_edge_images, epoch
+                    )
             else:
-                self._create_combined_4x4_image(
-                    all_panel1_images, all_panel2_images, all_panel3_images, all_panel4_images, epoch
-                )
+                # Without edge visualization
+                if self.use_roi_comparison:
+                    self._create_combined_5x4_image(
+                        all_panel1_images, all_panel2_images, all_panel3_images,
+                        all_panel4_images, all_panel5_images, epoch
+                    )
+                else:
+                    self._create_combined_4x4_image(
+                        all_panel1_images, all_panel2_images, all_panel3_images,
+                        all_panel4_images, epoch
+                    )
 
     def _get_predictions(
         self,
@@ -1180,15 +1209,15 @@ class ValidationVisualizerWithAuxiliary:
             img = cv2.addWeighted(img, 0.7, mask_colored, 0.3, 0)
 
         return Image.fromarray(img.astype(np.uint8))
-    
+
     def _create_panel_roi_comparison(self, image_np: np.ndarray, annotations: List[Dict], unet_outputs: Dict) -> Image.Image:
         """Create panel showing ROI clipping comparison.
-        
+
         Args:
             image_np: Original image (640x640)
             annotations: List of COCO annotations
             unet_outputs: Dictionary containing ROI information
-            
+
         Returns:
             Panel image showing ROI comparison
         """
@@ -1196,16 +1225,16 @@ class ValidationVisualizerWithAuxiliary:
         panel_height = 640
         panel_img = Image.new('RGB', (panel_width, panel_height), color=(230, 230, 230))
         draw = ImageDraw.Draw(panel_img)
-        
+
         # Check if we have ROI coordinates
         if 'roi_coordinates' not in unet_outputs or len(unet_outputs['roi_coordinates']) == 0:
             # No ROIs to display
             draw.text((panel_width//2 - 50, panel_height//2), "No ROIs", fill='black')
             return panel_img
-        
+
         roi_coordinates = unet_outputs['roi_coordinates']
         num_rois = min(len(roi_coordinates), 4)  # Display up to 4 ROIs
-        
+
         # Layout configuration
         if num_rois == 1:
             rows, cols = 1, 2
@@ -1215,25 +1244,25 @@ class ValidationVisualizerWithAuxiliary:
             rows, cols = 2, 4  # 2x2 grid, each cell split in half
         else:
             rows, cols = 2, 4
-        
+
         # Calculate cell dimensions
         cell_width = (panel_width - 20) // cols
         cell_height = (panel_height - 40) // rows
-        
+
         # Try to get font
         try:
             font_small = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 10)
         except:
             font_small = ImageFont.load_default()
-        
+
         # Process each ROI
         for idx in range(num_rois):
             x1, y1, x2, y2 = roi_coordinates[idx]
-            
+
             # Extract original ROI from image
             roi_original = image_np[y1:y2, x1:x2]
             roi_h, roi_w = roi_original.shape[:2]
-            
+
             # Calculate position in grid
             if num_rois <= 2:
                 row = 0
@@ -1241,31 +1270,31 @@ class ValidationVisualizerWithAuxiliary:
             else:
                 row = idx // 2
                 col_base = (idx % 2) * 2
-            
+
             # Position for this ROI pair
             x_pos_orig = 10 + col_base * cell_width
             x_pos_align = x_pos_orig + cell_width
             y_pos = 30 + row * cell_height
-            
+
             # Resize ROI to fit in cell (maintaining aspect ratio)
             max_w = cell_width - 10
             max_h = cell_height - 20
-            
+
             if roi_w > 0 and roi_h > 0:
                 scale = min(max_w / roi_w, max_h / roi_h, 1.0)
                 new_w = int(roi_w * scale)
                 new_h = int(roi_h * scale)
-                
+
                 roi_resized = cv2.resize(roi_original, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-                
+
                 # Convert to PIL Image
                 roi_pil = Image.fromarray(roi_resized)
-                
+
                 # Paste original ROI
                 panel_img.paste(roi_pil, (x_pos_orig, y_pos))
                 draw.text((x_pos_orig, y_pos - 15), f"ROI {idx+1} Original", fill='black', font=font_small)
                 draw.text((x_pos_orig, y_pos + new_h + 2), f"({roi_w}x{roi_h})", fill='gray', font=font_small)
-                
+
                 # For RoIAlign output, we need the model to return it
                 # For now, show the same ROI with a note
                 if 'roi_patches' in unet_outputs and idx < len(unet_outputs['roi_patches']):
@@ -1277,11 +1306,11 @@ class ValidationVisualizerWithAuxiliary:
                         if roi_patch_np.shape[0] == 3:  # CHW format
                             roi_patch_np = np.transpose(roi_patch_np, (1, 2, 0))
                         roi_patch_np = (roi_patch_np * 255).astype(np.uint8)
-                        
+
                         # Resize to match display size
                         roi_patch_resized = cv2.resize(roi_patch_np, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
                         roi_patch_pil = Image.fromarray(roi_patch_resized)
-                        
+
                         panel_img.paste(roi_patch_pil, (x_pos_align, y_pos))
                         draw.text((x_pos_align, y_pos - 15), f"RoIAlign Output", fill='blue', font=font_small)
                         draw.text((x_pos_align, y_pos + new_h + 2), f"({roi_patch_np.shape[1]}x{roi_patch_np.shape[0]})", fill='gray', font=font_small)
@@ -1293,20 +1322,80 @@ class ValidationVisualizerWithAuxiliary:
                     # No RoIAlign output available, show placeholder
                     panel_img.paste(roi_pil, (x_pos_align, y_pos))
                     draw.text((x_pos_align, y_pos - 15), f"RoIAlign (N/A)", fill='gray', font=font_small)
-                    
+
                 # Draw bounding box info
                 draw.rectangle([x_pos_orig-1, y_pos-1, x_pos_orig+new_w+1, y_pos+new_h+1], outline='red', width=1)
                 draw.rectangle([x_pos_align-1, y_pos-1, x_pos_align+new_w+1, y_pos+new_h+1], outline='blue', width=1)
-        
+
         # Add title
         try:
             font_title = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 16)
         except:
             font_title = font_small
-            
+
         draw.text((panel_width//2 - 80, 5), "ROI Clipping Comparison", fill='black', font=font_title)
-        
+
         return panel_img
+
+    def _create_panel_edge_detection(self, image_np: np.ndarray, contours: Union[torch.Tensor, np.ndarray]) -> Image.Image:
+        """Create panel showing edge detection results (contours).
+
+        Args:
+            image_np: Original image (640x640)
+            contours: Contour predictions from the model (1xHxW or HxW)
+
+        Returns:
+            Panel image showing edge detection visualization
+        """
+        # Convert contours to numpy if needed
+        if isinstance(contours, torch.Tensor):
+            contours = contours.detach().cpu().numpy()
+
+        # Handle different shapes
+        if contours.ndim == 3 and contours.shape[0] == 1:
+            contours = contours[0]  # Remove batch dimension
+
+        # Ensure contours are in the correct size
+        if contours.shape != (640, 640):
+            # Resize to 640x640 if needed
+            contours = cv2.resize(contours, (640, 640), interpolation=cv2.INTER_LINEAR)
+
+        # Create a copy of the image
+        img = image_np.copy()
+
+        # Normalize contours to 0-1 range if needed
+        if contours.max() > 1.0:
+            contours = contours / contours.max()
+
+        # Create edge visualization using a colormap
+        # Use a green-based colormap for edges
+        edge_colored = np.zeros_like(img)
+
+        # Apply threshold to get binary edges for cleaner visualization
+        edge_binary = contours > 0.1
+
+        # Create green overlay for edges
+        edge_colored[:, :, 1] = (edge_binary * 255).astype(np.uint8)  # Green channel
+
+        # Also create a heatmap version for continuous values
+        edge_heatmap = plt.cm.viridis(contours)[:, :, :3]  # Use viridis colormap
+        edge_heatmap = (edge_heatmap * 255).astype(np.uint8)
+
+        # Blend the heatmap with the original image
+        alpha = 0.6
+        img_with_edges = cv2.addWeighted(img, 1 - alpha, edge_heatmap, alpha, 0)
+
+        # Add edge contours on top
+        contour_points, _ = cv2.findContours(
+            edge_binary.astype(np.uint8),
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
+
+        # Draw contours in bright green
+        cv2.drawContours(img_with_edges, contour_points, -1, (0, 255, 0), 2)
+
+        return Image.fromarray(img_with_edges.astype(np.uint8))
 
     def _create_combined_5x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
                                   panel3_images: List[Image.Image], panel4_images: List[Image.Image],
@@ -1362,7 +1451,7 @@ class ValidationVisualizerWithAuxiliary:
 
             # Row 4: Predictions (standard width)
             combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
-            
+
             # Row 5: ROI Comparison (wider due to side-by-side display)
             combined_img.paste(panel5_images[col], (x_offset, title_height + 4 * (img_height + padding)))
 
@@ -1417,7 +1506,7 @@ class ValidationVisualizerWithAuxiliary:
         output_path = self.output_dir / f'validation_all_images_epoch_{epoch+1:04d}.png'
         combined_img_resized.save(output_path)
         print(f"  Saved combined visualization: {output_path}")
-    
+
     def _create_combined_4x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
                                   panel3_images: List[Image.Image], panel4_images: List[Image.Image], epoch: int):
         """Create combined 4x4 grid visualization (without ROI Comparison)."""
@@ -1636,7 +1725,7 @@ class ValidationVisualizerWithAuxiliary:
 
         if not roi_list:
             return {}, None, unet_outputs
-        
+
         # Store ROI coordinates for visualization
         unet_outputs['roi_coordinates'] = roi_coordinates
 
@@ -1763,10 +1852,47 @@ class ValidationVisualizerWithAuxiliary:
                 # Check for full-image UNet output
                 if 'full_image_logits' in aux_outputs:
                     unet_outputs['full_image_logits'] = aux_outputs['full_image_logits']
-                
+
                 # Check for ROI patches (if model returns them)
                 if 'roi_patches' in aux_outputs:
                     unet_outputs['roi_patches'].extend(aux_outputs['roi_patches'])
+
+                # Check for contours (edge detection)
+                if 'contours' in aux_outputs:
+                    contours_batch = aux_outputs['contours']
+                    if isinstance(contours_batch, torch.Tensor):
+                        contours_batch = contours_batch.detach().cpu().numpy()
+
+                    # Process each contour in the batch and place in full image
+                    if 'full_contours' not in unet_outputs:
+                        unet_outputs['full_contours'] = np.zeros((640, 640), dtype=np.float32)
+
+                    # Handle batch of contours
+                    for j, (roi_coord, contour) in enumerate(zip(batch_coords, contours_batch)):
+                        if j >= len(contours_batch):
+                            break
+
+                        x1, y1, x2, y2 = roi_coord
+
+                        # Handle different contour shapes
+                        if contour.ndim == 3 and contour.shape[0] == 1:
+                            contour = contour[0]  # Remove channel dimension
+
+                        # Resize contour to ROI size
+                        contour_resized = cv2.resize(
+                            contour,
+                            (x2 - x1, y2 - y1),
+                            interpolation=cv2.INTER_LINEAR
+                        )
+
+                        # Place in full image (take max to combine overlapping ROIs)
+                        unet_outputs['full_contours'][y1:y2, x1:x2] = np.maximum(
+                            unet_outputs['full_contours'][y1:y2, x1:x2],
+                            contour_resized
+                        )
+
+                    # Store the full contours for visualization
+                    unet_outputs['contours'] = unet_outputs['full_contours']
 
                 # Process each auxiliary prediction if we have any
                 if aux_probs is not None:
@@ -2078,3 +2204,224 @@ class ValidationVisualizerWithAuxiliary:
         pred_overlay[error_mask] = [1.0, 0.0, 0.0, 0.55]  # Red with slight transparency (alpha = 0.55)
 
         ax.imshow(pred_overlay)
+    def _create_combined_5x4_image_with_edge(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
+                                             panel3_images: List[Image.Image], panel4_images: List[Image.Image],
+                                             edge_images: List[Image.Image], epoch: int):
+        """Create combined 5x4 grid visualization with edge detection (no ROI comparison)."""
+        n_images = len(panel1_images)
+        if n_images == 0:
+            return
+
+        # Fixed dimensions
+        img_width = 640
+        img_height = 640
+        heatmap_width = 700  # Heatmap panel is wider due to colorbar
+        padding = 20
+
+        # Add extra space for title at the top
+        title_height = 80
+
+        # Create combined image (5 rows x n_images columns)
+        # Set margins
+        label_padding = 30
+        right_margin = 30
+        bottom_margin = 30
+        # Account for wider heatmap panels
+        combined_width = label_padding + n_images * heatmap_width + (n_images - 1) * padding + right_margin
+        combined_height = title_height + 5 * img_height + 4 * padding + bottom_margin
+        combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
+
+        # Add title text
+        draw = ImageDraw.Draw(combined_img)
+
+        # Try to load fonts
+        try:
+            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+            label_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+        except:
+            title_font = ImageFont.load_default()
+            label_font = ImageFont.load_default()
+
+        # Paste images in grid first
+        for col in range(n_images):
+            # Use wider spacing to accommodate heatmap panels
+            x_offset = label_padding + col * (heatmap_width + padding)
+
+            # Row 1: Ground Truth
+            combined_img.paste(panel1_images[col], (x_offset, title_height))
+
+            # Row 2: Binary Mask Heatmap
+            combined_img.paste(panel2_images[col], (x_offset, title_height + img_height + padding))
+
+            # Row 3: Full-image UNet Output
+            combined_img.paste(panel3_images[col], (x_offset, title_height + 2 * (img_height + padding)))
+
+            # Row 4: Predictions
+            combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
+
+            # Row 5: Edge Detection
+            combined_img.paste(edge_images[col], (x_offset, title_height + 4 * (img_height + padding)))
+
+        # Draw main title
+        title_text = f"Validation Results with Edge Detection - Epoch {epoch+1:04d}"
+        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+        title_width = title_bbox[2] - title_bbox[0]
+        title_x = (combined_width - title_width) // 2
+        draw.text((title_x, 20), title_text, fill='black', font=title_font)
+
+        # Row labels with colors
+        labels = [
+            ("Ground Truth", (255, 102, 102)),  # Light red
+            ("Binary Mask Heatmap", (102, 178, 255)),  # Light blue
+            ("Full UNet Output", (0, 204, 102)),  # Light green
+            ("Predictions", (0, 153, 0)),  # Green
+            ("Edge Detection", (153, 102, 255))  # Purple
+        ]
+
+        # Draw row labels on top of images
+        for idx, (text, color) in enumerate(labels):
+            y_pos = title_height + idx * (img_height + padding) + 5
+            # Draw background rectangle
+            bbox = draw.textbbox((0, 0), text, font=label_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+            # Increase padding for better visual balance
+            vertical_padding = 23
+            horizontal_padding = 30
+
+            # Calculate box dimensions
+            box_height = text_height + 2 * vertical_padding
+
+            draw.rectangle(
+                [10, y_pos, 10 + text_width + 2 * horizontal_padding, y_pos + box_height],
+                fill=color
+            )
+
+            # Center text vertically within the box
+            text_y = y_pos + vertical_padding - bbox[1]
+            draw.text((10 + horizontal_padding, text_y), text, fill='white', font=label_font)
+
+        # Resize to 45% of original size
+        scale_factor = 0.45
+        new_width = int(combined_img.width * scale_factor)
+        new_height = int(combined_img.height * scale_factor)
+        combined_img_resized = combined_img.resize((new_width, new_height), Image.LANCZOS)
+
+        # Save combined image
+        output_path = self.output_dir / f'validation_all_images_epoch_{epoch+1:04d}.png'
+        combined_img_resized.save(output_path)
+        print(f"  Saved combined visualization: {output_path}")
+
+    def _create_combined_6x4_image(self, panel1_images: List[Image.Image], panel2_images: List[Image.Image],
+                                   panel3_images: List[Image.Image], panel4_images: List[Image.Image],
+                                   panel5_images: List[Image.Image], edge_images: List[Image.Image], epoch: int):
+        """Create combined 6x4 grid visualization with edge detection and ROI comparison."""
+        n_images = len(panel1_images)
+        if n_images == 0:
+            return
+
+        # Fixed dimensions
+        img_width = 640
+        img_height = 640
+        heatmap_width = 700  # Heatmap panel is wider due to colorbar
+        padding = 20
+
+        # Add extra space for title at the top
+        title_height = 80
+
+        # Create combined image (6 rows x n_images columns)
+        # Set margins
+        label_padding = 30
+        right_margin = 30
+        bottom_margin = 30
+        # Account for wider heatmap panels
+        combined_width = label_padding + n_images * heatmap_width + (n_images - 1) * padding + right_margin
+        combined_height = title_height + 6 * img_height + 5 * padding + bottom_margin
+        combined_img = Image.new('RGB', (combined_width, combined_height), color=(255, 255, 255))
+
+        # Add title text
+        draw = ImageDraw.Draw(combined_img)
+
+        # Try to load fonts
+        try:
+            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+            label_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+        except:
+            title_font = ImageFont.load_default()
+            label_font = ImageFont.load_default()
+
+        # Paste images in grid first
+        for col in range(n_images):
+            # Use wider spacing to accommodate heatmap panels
+            x_offset = label_padding + col * (heatmap_width + padding)
+
+            # Row 1: Ground Truth
+            combined_img.paste(panel1_images[col], (x_offset, title_height))
+
+            # Row 2: Binary Mask Heatmap
+            combined_img.paste(panel2_images[col], (x_offset, title_height + img_height + padding))
+
+            # Row 3: Full-image UNet Output
+            combined_img.paste(panel3_images[col], (x_offset, title_height + 2 * (img_height + padding)))
+
+            # Row 4: Predictions
+            combined_img.paste(panel4_images[col], (x_offset, title_height + 3 * (img_height + padding)))
+
+            # Row 5: ROI Comparison
+            combined_img.paste(panel5_images[col], (x_offset, title_height + 4 * (img_height + padding)))
+
+            # Row 6: Edge Detection
+            combined_img.paste(edge_images[col], (x_offset, title_height + 5 * (img_height + padding)))
+
+        # Draw main title
+        title_text = f"Validation Results with Edge Detection - Epoch {epoch+1:04d}"
+        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+        title_width = title_bbox[2] - title_bbox[0]
+        title_x = (combined_width - title_width) // 2
+        draw.text((title_x, 20), title_text, fill='black', font=title_font)
+
+        # Row labels with colors
+        labels = [
+            ("Ground Truth", (255, 102, 102)),  # Light red
+            ("Binary Mask Heatmap", (102, 178, 255)),  # Light blue
+            ("Full UNet Output", (0, 204, 102)),  # Light green
+            ("Predictions", (0, 153, 0)),  # Green
+            ("ROI Comparison", (255, 153, 51)),  # Orange
+            ("Edge Detection", (153, 102, 255))  # Purple
+        ]
+
+        # Draw row labels on top of images
+        for idx, (text, color) in enumerate(labels):
+            y_pos = title_height + idx * (img_height + padding) + 5
+            # Draw background rectangle
+            bbox = draw.textbbox((0, 0), text, font=label_font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+
+            # Increase padding for better visual balance
+            vertical_padding = 23
+            horizontal_padding = 30
+
+            # Calculate box dimensions
+            box_height = text_height + 2 * vertical_padding
+
+            draw.rectangle(
+                [10, y_pos, 10 + text_width + 2 * horizontal_padding, y_pos + box_height],
+                fill=color
+            )
+
+            # Center text vertically within the box
+            text_y = y_pos + vertical_padding - bbox[1]
+            draw.text((10 + horizontal_padding, text_y), text, fill='white', font=label_font)
+
+        # Resize to 45% of original size
+        scale_factor = 0.45
+        new_width = int(combined_img.width * scale_factor)
+        new_height = int(combined_img.height * scale_factor)
+        combined_img_resized = combined_img.resize((new_width, new_height), Image.LANCZOS)
+
+        # Save combined image
+        output_path = self.output_dir / f'validation_all_images_epoch_{epoch+1:04d}.png'
+        combined_img_resized.save(output_path)
+        print(f"  Saved combined visualization: {output_path}")

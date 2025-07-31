@@ -793,3 +793,125 @@ ModelConfig(
    - 各変換の確率（p値）は経験的に設定
    - データセットの特性に応じて調整推奨
    - 過度な拡張は学習を不安定にする可能性あり
+
+## ONNXで実装可能なシンプルなエッジ平滑化パイプライン
+
+MLAAやSMAAのような高度なアンチエイリアシング手法はONNXでの実装が困難ですが、以下のシンプルなパイプラインで実用的なエッジ平滑化を実現できます。
+
+### 1. エッジ検出フェーズ
+
+```python
+# Sobelフィルタでエッジ強度を計算
+sobel_x = Conv(image, sobel_x_kernel)  # [-1,0,1; -2,0,2; -1,0,1]
+sobel_y = Conv(image, sobel_y_kernel)  # [-1,-2,-1; 0,0,0; 1,2,1]
+edge_magnitude = Sqrt(Add(Mul(sobel_x, sobel_x), Mul(sobel_y, sobel_y)))
+edge_mask = Greater(edge_magnitude, threshold)
+```
+
+### 2. 方向性ブラー
+
+```python
+# エッジの方向を計算
+edge_angle = Atan2(sobel_y, sobel_x)
+
+# 45度単位で量子化（8方向）
+quantized_angle = Mul(Round(Div(edge_angle, pi/4)), pi/4)
+
+# 方向別のブラーカーネル適用
+horizontal_blur = Conv(image, [0.25, 0.5, 0.25])  # 1x3
+vertical_blur = Conv(image, [[0.25], [0.5], [0.25]])  # 3x1
+diag1_blur = Conv(image, diag45_kernel)
+diag2_blur = Conv(image, diag135_kernel)
+```
+
+### 3. 適応的ブレンディング
+
+```python
+# エッジ強度に基づくブレンド係数
+blend_weight = Mul(edge_mask, Sigmoid(Mul(edge_magnitude, sensitivity)))
+
+# 元画像とブラー画像をブレンド
+smoothed = Add(
+    Mul(image, Sub(1.0, blend_weight)),
+    Mul(blurred_image, blend_weight)
+)
+```
+
+### より簡易な実装例（ミニマムアプローチ）
+
+2パスで完結する最小構成：
+
+```python
+# パス1: エッジ検出
+edge = Conv(luminance, laplacian_kernel)  # [-1,-1,-1; -1,8,-1; -1,-1,-1]
+edge_mask = Sigmoid(Mul(Abs(edge), 10.0))  # スムーズなマスク
+
+# パス2: 選択的ガウシアンブラー
+blurred = Conv(image, gaussian_3x3)
+result = Add(
+    Mul(image, Sub(1.0, edge_mask)),
+    Mul(blurred, edge_mask)
+)
+```
+
+### ONNX実装の利点
+
+1. **少ない演算子で実現**
+   - Conv, Add, Mul, Greater, Sigmoid のみ
+   - 条件分岐なし
+
+2. **1-2パスで完結**
+   - メモリ効率的
+   - 中間バッファ最小
+
+3. **パラメータ調整可能**
+   - threshold: エッジ検出感度
+   - blur_size: 平滑化強度
+   - blend_factor: 効果の強さ
+
+### 実装例（擬似コード）
+
+```python
+def create_edge_smoothing_onnx():
+    # 入力
+    input = onnx.helper.make_tensor_value_info('input', TensorProto.FLOAT, [1, 3, H, W])
+    
+    # Luminance変換
+    rgb_weights = constant([0.299, 0.587, 0.114])
+    luminance = reduce_sum(mul(input, rgb_weights), axis=1)
+    
+    # エッジ検出
+    edge_kernel = constant([[-1,-1,-1], [-1,8,-1], [-1,-1,-1]])
+    edges = conv2d(luminance, edge_kernel, padding=1)
+    
+    # エッジマスク生成
+    edge_mask = sigmoid(mul(abs(edges), 10.0))
+    
+    # ブラー処理
+    blur_kernel = gaussian_kernel(3)
+    blurred = conv2d(input, blur_kernel, padding=1)
+    
+    # ブレンド
+    output = add(
+        mul(input, sub(1.0, edge_mask)),
+        mul(blurred, edge_mask)
+    )
+    
+    return create_model([input], [output], nodes)
+```
+
+### 実装上の考慮事項
+
+1. **エッジ検出の精度**
+   - Sobelフィルタ: より正確だが2パス必要
+   - Laplacianフィルタ: 1パスで高速だが精度は劣る
+
+2. **ブラー強度の制御**
+   - ガウシアンカーネルのサイズ: 3x3（軽い）〜7x7（強い）
+   - 複数回適用で強度調整も可能
+
+3. **性能最適化**
+   - Conv演算子の最適化がONNXランタイムで自動実行
+   - バッチ処理により高速化可能
+
+この方式なら、MLAAやSMAAほどの品質は得られませんが、実用的なジャギー軽減効果を手軽に実現できます。特に、リアルタイム処理が必要な場合や、組み込みデバイスでの実行を考慮する場合に有効です。

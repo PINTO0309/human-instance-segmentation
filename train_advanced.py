@@ -962,7 +962,8 @@ def main():
             device=device,
             roi_padding=config.data.roi_padding,
             visualize_auxiliary=config.auxiliary_task.visualize,
-            use_roi_comparison=config.data.use_roi_comparison
+            use_roi_comparison=config.data.use_roi_comparison,
+            use_edge_visualize=config.data.use_edge_visualize
         )
     # Use HierarchicalUNetVisualizer for hierarchical UNet models
     elif any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical', 'use_pretrained_unet', 'use_full_image_unet']):
