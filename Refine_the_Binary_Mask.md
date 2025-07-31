@@ -923,172 +923,90 @@ def create_edge_smoothing_onnx():
 ### 基本的な2パス実装
 
 ```python
-import onnx
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
-from onnx import helper, TensorProto
 
-def create_binary_mask_edge_smoothing_onnx(
-    input_shape=(1, 1, 640, 640),  # バイナリマスク用に1チャンネル
+class BinaryMaskEdgeSmoothing(nn.Module):
+    """バイナリマスクのエッジ平滑化PyTorchモデル"""
+
+    def __init__(self, threshold=0.5, blur_strength=3.0):
+        super().__init__()
+        self.threshold = threshold
+        self.blur_strength = blur_strength
+
+        # Laplacianカーネル（エッジ検出用）
+        laplacian_kernel = torch.tensor([
+            [-1, -1, -1],
+            [-1,  8, -1],
+            [-1, -1, -1]
+        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('laplacian_kernel', laplacian_kernel)
+
+        # ガウシアンカーネル（3x3）
+        gaussian_kernel = torch.tensor([
+            [1/16, 2/16, 1/16],
+            [2/16, 4/16, 2/16],
+            [1/16, 2/16, 1/16]
+        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('gaussian_kernel', gaussian_kernel)
+
+    def forward(self, mask):
+        # 1. エッジ検出
+        edges = F.conv2d(mask, self.laplacian_kernel, padding=1)
+
+        # 2. エッジの絶対値
+        edge_abs = torch.abs(edges)
+
+        # 3. エッジマスク生成（Sigmoid使用）
+        edge_scaled = edge_abs * self.blur_strength
+        edge_mask = torch.sigmoid(edge_scaled)
+
+        # 4. ガウシアンブラー適用
+        blurred = F.conv2d(mask, self.gaussian_kernel, padding=1)
+
+        # 5. ブレンディング
+        # result = mask * (1 - edge_mask) + blurred * edge_mask
+        smoothed = mask * (1 - edge_mask) + blurred * edge_mask
+
+        # 6. 最終的な二値化（オプション）
+        binary_output = (smoothed > self.threshold).float()
+
+        return binary_output
+
+def export_binary_mask_edge_smoothing_onnx(
+    model_path='edge_smoothing.onnx',
+    input_shape=(1, 1, 640, 640),
     threshold=0.5,
     blur_strength=3.0
 ):
-    """バイナリマスクのエッジ平滑化ONNXモデル作成"""
-
-    # 入力定義（バイナリマスク: 0 or 1）
-    input_mask = helper.make_tensor_value_info(
-        'mask', TensorProto.FLOAT, input_shape
-    )
-
-    # 定数定義
-    # Laplacianカーネル（エッジ検出用）
-    laplacian_kernel = helper.make_tensor(
-        'laplacian_kernel',
-        TensorProto.FLOAT,
-        dims=[1, 1, 3, 3],
-        vals=[-1, -1, -1, -1, 8, -1, -1, -1, -1]
-    )
-
-    # ガウシアンカーネル（3x3）
-    gaussian_kernel = helper.make_tensor(
-        'gaussian_kernel',
-        TensorProto.FLOAT,
-        dims=[1, 1, 3, 3],
-        vals=[1/16, 2/16, 1/16, 2/16, 4/16, 2/16, 1/16, 2/16, 1/16]
-    )
-
-    # エッジ強度係数
-    edge_scale = helper.make_tensor(
-        'edge_scale',
-        TensorProto.FLOAT,
-        dims=[1],
-        vals=[blur_strength]
-    )
-
-    # しきい値
-    thresh = helper.make_tensor(
-        'threshold',
-        TensorProto.FLOAT,
-        dims=[1],
-        vals=[threshold]
-    )
-
-    # ノード定義
-    nodes = []
-
-    # 1. エッジ検出
-    edge_conv = helper.make_node(
-        'Conv',
-        inputs=['mask', 'laplacian_kernel'],
-        outputs=['edges'],
-        pads=[1, 1, 1, 1]
-    )
-    nodes.append(edge_conv)
-
-    # 2. エッジの絶対値
-    edge_abs = helper.make_node(
-        'Abs',
-        inputs=['edges'],
-        outputs=['edge_abs']
-    )
-    nodes.append(edge_abs)
-
-    # 3. エッジマスク生成（Sigmoid使用）
-    edge_scaled = helper.make_node(
-        'Mul',
-        inputs=['edge_abs', 'edge_scale'],
-        outputs=['edge_scaled']
-    )
-    nodes.append(edge_scaled)
-
-    edge_mask = helper.make_node(
-        'Sigmoid',
-        inputs=['edge_scaled'],
-        outputs=['edge_mask']
-    )
-    nodes.append(edge_mask)
-
-    # 4. ガウシアンブラー適用
-    blurred = helper.make_node(
-        'Conv',
-        inputs=['mask', 'gaussian_kernel'],
-        outputs=['blurred'],
-        pads=[1, 1, 1, 1]
-    )
-    nodes.append(blurred)
-
-    # 5. エッジマスクの反転（1 - edge_mask）
-    one = helper.make_tensor(
-        'one',
-        TensorProto.FLOAT,
-        dims=[1],
-        vals=[1.0]
-    )
-
-    inv_mask = helper.make_node(
-        'Sub',
-        inputs=['one', 'edge_mask'],
-        outputs=['inv_mask']
-    )
-    nodes.append(inv_mask)
-
-    # 6. 元画像とブラー画像のブレンド
-    # result = mask * (1 - edge_mask) + blurred * edge_mask
-    orig_weighted = helper.make_node(
-        'Mul',
-        inputs=['mask', 'inv_mask'],
-        outputs=['orig_weighted']
-    )
-    nodes.append(orig_weighted)
-
-    blur_weighted = helper.make_node(
-        'Mul',
-        inputs=['blurred', 'edge_mask'],
-        outputs=['blur_weighted']
-    )
-    nodes.append(blur_weighted)
-
-    result = helper.make_node(
-        'Add',
-        inputs=['orig_weighted', 'blur_weighted'],
-        outputs=['smoothed']
-    )
-    nodes.append(result)
-
-    # 7. 最終的な二値化（オプション）
-    final_threshold = helper.make_node(
-        'Greater',
-        inputs=['smoothed', 'threshold'],
-        outputs=['binary_output']
-    )
-    nodes.append(final_threshold)
-
-    # Float変換
-    output = helper.make_node(
-        'Cast',
-        inputs=['binary_output'],
-        outputs=['output'],
-        to=TensorProto.FLOAT
-    )
-    nodes.append(output)
-
-    # 出力定義
-    output_info = helper.make_tensor_value_info(
-        'output', TensorProto.FLOAT, input_shape
-    )
-
-    # グラフ作成
-    graph = helper.make_graph(
-        nodes,
-        'binary_mask_edge_smoothing',
-        [input_mask],
-        [output_info],
-        initializer=[laplacian_kernel, gaussian_kernel, edge_scale,
-                    thresh, one]
-    )
+    """PyTorchモデルをONNXにエクスポート"""
 
     # モデル作成
-    model = helper.make_model(graph)
-    return model
+    model = BinaryMaskEdgeSmoothing(threshold, blur_strength)
+    model.eval()
+
+    # ダミー入力
+    dummy_input = torch.randn(input_shape)
+
+    # ONNXエクスポート
+    torch.onnx.export(
+        model,
+        dummy_input,
+        model_path,
+        export_params=True,
+        opset_version=11,
+        do_constant_folding=True,
+        input_names=['mask'],
+        output_names=['output'],
+        dynamic_axes={
+            'mask': {0: 'batch_size', 2: 'height', 3: 'width'},
+            'output': {0: 'batch_size', 2: 'height', 3: 'width'}
+        }
+    )
+
+    return model_path
 ```
 
 ### 処理フローの詳細
@@ -1110,92 +1028,105 @@ def create_binary_mask_edge_smoothing_onnx(
 ### 方向性を考慮した高度な実装
 
 ```python
-def create_directional_edge_smoothing_onnx(
-    input_shape=(1, 1, 640, 640),
-    num_directions=4  # 4方向または8方向
-):
-    """エッジの方向性を考慮した平滑化"""
+class DirectionalEdgeSmoothing(nn.Module):
+    """エッジの方向性を考慮した平滑化PyTorchモデル"""
 
-    input_mask = helper.make_tensor_value_info(
-        'mask', TensorProto.FLOAT, input_shape
-    )
+    def __init__(self, num_directions=4):
+        super().__init__()
+        self.num_directions = num_directions
 
-    # Sobelフィルタで方向検出
-    sobel_x_kernel = helper.make_tensor(
-        'sobel_x',
-        TensorProto.FLOAT,
-        dims=[1, 1, 3, 3],
-        vals=[-1, 0, 1, -2, 0, 2, -1, 0, 1]
-    )
+        # Sobelフィルタで方向検出
+        sobel_x = torch.tensor([
+            [-1, 0, 1],
+            [-2, 0, 2],
+            [-1, 0, 1]
+        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('sobel_x', sobel_x)
 
-    sobel_y_kernel = helper.make_tensor(
-        'sobel_y',
-        TensorProto.FLOAT,
-        dims=[1, 1, 3, 3],
-        vals=[-1, -2, -1, 0, 0, 0, 1, 2, 1]
-    )
+        sobel_y = torch.tensor([
+            [-1, -2, -1],
+            [ 0,  0,  0],
+            [ 1,  2,  1]
+        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('sobel_y', sobel_y)
 
-    nodes = []
+        # 方向別ブラーカーネル定義
+        # 水平方向
+        h_blur = torch.tensor(
+            [[0.1, 0.2, 0.4, 0.2, 0.1]]
+        ).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('h_blur', h_blur)
 
-    # X方向のエッジ
-    edge_x = helper.make_node(
-        'Conv',
-        inputs=['mask', 'sobel_x_kernel'],
-        outputs=['edge_x'],
-        pads=[1, 1, 1, 1]
-    )
-    nodes.append(edge_x)
+        # 垂直方向
+        v_blur = torch.tensor(
+            [[0.1], [0.2], [0.4], [0.2], [0.1]]
+        ).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('v_blur', v_blur)
 
-    # Y方向のエッジ
-    edge_y = helper.make_node(
-        'Conv',
-        inputs=['mask', 'sobel_y_kernel'],
-        outputs=['edge_y'],
-        pads=[1, 1, 1, 1]
-    )
-    nodes.append(edge_y)
+        # 対角方向（45度）
+        diag1_blur = torch.tensor([
+            [0.1, 0.0, 0.0],
+            [0.0, 0.8, 0.0],
+            [0.0, 0.0, 0.1]
+        ]).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('diag1_blur', diag1_blur)
 
-    # エッジ強度計算
-    edge_x_sq = helper.make_node('Mul', ['edge_x', 'edge_x'], ['edge_x_sq'])
-    edge_y_sq = helper.make_node('Mul', ['edge_y', 'edge_y'], ['edge_y_sq'])
-    edge_sum = helper.make_node('Add', ['edge_x_sq', 'edge_y_sq'], ['edge_sum'])
-    edge_magnitude = helper.make_node('Sqrt', ['edge_sum'], ['edge_magnitude'])
-    nodes.extend([edge_x_sq, edge_y_sq, edge_sum, edge_magnitude])
+        # 対角方向（135度）
+        diag2_blur = torch.tensor([
+            [0.0, 0.0, 0.1],
+            [0.0, 0.8, 0.0],
+            [0.1, 0.0, 0.0]
+        ]).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('diag2_blur', diag2_blur)
 
-    # 方向別ブラーカーネル定義
-    # 水平方向
-    h_blur = helper.make_tensor(
-        'h_blur', TensorProto.FLOAT,
-        dims=[1, 1, 1, 5],
-        vals=[0.1, 0.2, 0.4, 0.2, 0.1]
-    )
+    def forward(self, mask):
+        # エッジ方向の検出
+        edge_x = F.conv2d(mask, self.sobel_x, padding=1)
+        edge_y = F.conv2d(mask, self.sobel_y, padding=1)
 
-    # 垂直方向
-    v_blur = helper.make_tensor(
-        'v_blur', TensorProto.FLOAT,
-        dims=[1, 1, 5, 1],
-        vals=[0.1, 0.2, 0.4, 0.2, 0.1]
-    )
+        # エッジ強度計算
+        edge_magnitude = torch.sqrt(edge_x**2 + edge_y**2 + 1e-8)
 
-    # 対角方向（45度）
-    diag1_blur = helper.make_tensor(
-        'diag1_blur', TensorProto.FLOAT,
-        dims=[1, 1, 3, 3],
-        vals=[0.1, 0, 0, 0, 0.8, 0, 0, 0, 0.1]
-    )
+        # エッジ方向計算（ラジアン）
+        edge_angle = torch.atan2(edge_y, edge_x)
 
-    # 対角方向（135度）
-    diag2_blur = helper.make_tensor(
-        'diag2_blur', TensorProto.FLOAT,
-        dims=[1, 1, 3, 3],
-        vals=[0, 0, 0.1, 0, 0.8, 0, 0.1, 0, 0]
-    )
+        # 方向別のブラー適用
+        # 水平方向ブラー
+        blur_h = F.conv2d(mask, self.h_blur, padding=(0, 2))
+        # 垂直方向ブラー
+        blur_v = F.conv2d(mask, self.v_blur, padding=(2, 0))
+        # 対角方向ブラー
+        blur_d1 = F.conv2d(mask, self.diag1_blur, padding=1)
+        blur_d2 = F.conv2d(mask, self.diag2_blur, padding=1)
 
-    # 各方向のブラー適用（簡略化版）
-    # 実際の実装では方向判定してブレンドする必要がある
+        # 方向に基づく重み計算
+        # 水平方向: -π/4 < angle < π/4 または 3π/4 < angle < π または -π < angle < -3π/4
+        weight_h = torch.cos(edge_angle)**2
+        # 垂直方向: π/4 < angle < 3π/4 または -3π/4 < angle < -π/4
+        weight_v = torch.sin(edge_angle)**2
+        # 対角方向の重み（簡略化）
+        weight_d1 = torch.cos(edge_angle - np.pi/4)**2 * 0.5
+        weight_d2 = torch.cos(edge_angle + np.pi/4)**2 * 0.5
 
-    # グラフとモデル作成
-    # ...
+        # 重みの正規化
+        weight_sum = weight_h + weight_v + weight_d1 + weight_d2 + 1e-8
+        weight_h = weight_h / weight_sum
+        weight_v = weight_v / weight_sum
+        weight_d1 = weight_d1 / weight_sum
+        weight_d2 = weight_d2 / weight_sum
+
+        # 方向別ブラーの合成
+        blurred = (blur_h * weight_h + blur_v * weight_v +
+                  blur_d1 * weight_d1 + blur_d2 * weight_d2)
+
+        # エッジ強度に基づくブレンディング
+        edge_mask = torch.sigmoid(edge_magnitude * 3.0)
+        smoothed = mask * (1 - edge_mask) + blurred * edge_mask
+
+        # 二値化
+        binary_output = (smoothed > 0.5).float()
+
+        return binary_output
 ```
 
 ### 実用的な使用例
@@ -1274,34 +1205,110 @@ class BinaryMaskSmoother:
 ### パラメータ調整可能な実装
 
 ```python
-def create_adaptive_edge_smoothing_onnx():
-    """適応的なエッジ平滑化（パラメータ動的調整）"""
+class AdaptiveEdgeSmoothing(nn.Module):
+    """適応的なエッジ平滑化PyTorchモデル（パラメータ動的調整）"""
 
-    # 動的入力
-    inputs = [
-        helper.make_tensor_value_info('mask', TensorProto.FLOAT, [1, 1, 'H', 'W']),
-        helper.make_tensor_value_info('blur_strength', TensorProto.FLOAT, [1]),
-        helper.make_tensor_value_info('edge_sensitivity', TensorProto.FLOAT, [1]),
-        helper.make_tensor_value_info('final_threshold', TensorProto.FLOAT, [1])
-    ]
+    def __init__(self):
+        super().__init__()
 
-    # 実装詳細...
-    # blur_strength: ブラーの強度（1.0-5.0）
-    # edge_sensitivity: エッジ検出の感度（0.5-2.0）
-    # final_threshold: 最終二値化の閾値（0.3-0.7）
+        # Laplacianカーネル（エッジ検出用）
+        laplacian_kernel = torch.tensor([
+            [-1, -1, -1],
+            [-1,  8, -1],
+            [-1, -1, -1]
+        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+        self.register_buffer('laplacian_kernel', laplacian_kernel)
+
+    def forward(self, mask, blur_strength, edge_sensitivity, final_threshold):
+        """
+        Args:
+            mask: バイナリマスク [B, 1, H, W]
+            blur_strength: ブラーの強度（1.0-5.0） [B, 1]
+            edge_sensitivity: エッジ検出の感度（0.5-2.0） [B, 1]
+            final_threshold: 最終二値化の閾値（0.3-0.7） [B, 1]
+        """
+        B, C, H, W = mask.shape
+
+        # エッジ検出
+        edges = F.conv2d(mask, self.laplacian_kernel, padding=1)
+        edges = torch.abs(edges)
+
+        # 適応的な閾値でエッジマスク生成
+        edge_threshold = 0.5 * edge_sensitivity.view(B, 1, 1, 1)
+        edge_mask = (edges > edge_threshold).float()
+
+        # 動的なカーネルサイズの計算
+        kernel_size = (2 * torch.ceil(blur_strength).int().item() + 1).item()
+
+        # Gaussianブラー（標準偏差はblur_strengthに基づく）
+        # 注意: 実際のデプロイではgaussian_blur関数を使用
+        # ここでは平均フィルタで近似
+        avg_kernel = torch.ones(1, 1, kernel_size, kernel_size) / (kernel_size * kernel_size)
+        avg_kernel = avg_kernel.to(mask.device)
+
+        smoothed = F.conv2d(
+            mask,
+            avg_kernel,
+            padding=kernel_size//2
+        )
+
+        # エッジ部分のみ平滑化
+        result = mask * (1 - edge_mask) + smoothed * edge_mask
+
+        # 最終的な二値化
+        final_mask = (result > final_threshold.view(B, 1, 1, 1)).float()
+
+        return final_mask
+
+# ONNXエクスポート例
+def export_adaptive_smoothing_to_onnx():
+    model = AdaptiveEdgeSmoothing()
+    model.eval()
+
+    # ダミー入力
+    dummy_mask = torch.randn(1, 1, 256, 256)
+    dummy_blur = torch.tensor([3.0])
+    dummy_sensitivity = torch.tensor([1.0])
+    dummy_threshold = torch.tensor([0.5])
+
+    torch.onnx.export(
+        model,
+        (dummy_mask, dummy_blur, dummy_sensitivity, dummy_threshold),
+        "adaptive_edge_smoothing.onnx",
+        input_names=['mask', 'blur_strength', 'edge_sensitivity', 'final_threshold'],
+        output_names=['smoothed_mask'],
+        dynamic_axes={
+            'mask': {0: 'batch', 2: 'height', 3: 'width'},
+            'smoothed_mask': {0: 'batch', 2: 'height', 3: 'width'}
+        },
+        opset_version=11
+    )
 ```
 
 ### セグメンテーションパイプラインへの統合
 
 ```python
 class SegmentationWithEdgeSmoothing:
-    """エッジ平滑化を統合したセグメンテーション"""
+    """エッジ平滑化を統合したセグメンテーション（PyTorchモデル対応）"""
 
-    def __init__(self, seg_model_path, smooth_model_path):
+    def __init__(self, seg_model_path, smooth_model_path=None, use_pytorch_smoother=False):
         self.seg_session = ort.InferenceSession(seg_model_path)
-        self.smoother = BinaryMaskSmoother(smooth_model_path)
 
-    def predict(self, image, smooth_iterations=1):
+        if use_pytorch_smoother:
+            # PyTorchモデルを使用
+            self.pytorch_smoother = BinaryMaskEdgeSmoothing()
+            if smooth_model_path:
+                # 保存済みの重みをロード
+                state_dict = torch.load(smooth_model_path)
+                self.pytorch_smoother.load_state_dict(state_dict)
+            self.pytorch_smoother.eval()
+            self.smoother = None
+        else:
+            # ONNXモデルを使用
+            self.smoother = BinaryMaskSmoother(smooth_model_path)
+            self.pytorch_smoother = None
+
+    def predict(self, image, smooth_iterations=1, use_gpu=False):
         # 1. セグメンテーション実行
         seg_output = self.seg_session.run(
             ['output'],
@@ -1309,197 +1316,248 @@ class SegmentationWithEdgeSmoothing:
         )[0]
 
         # 2. エッジ平滑化
-        smoothed = self.smoother.smooth_multiclass_mask(
-            seg_output,
-            iterations=smooth_iterations
-        )
+        if self.pytorch_smoother is not None:
+            # PyTorchモデルでの処理
+            device = 'cuda' if use_gpu and torch.cuda.is_available() else 'cpu'
+            mask_tensor = torch.from_numpy(seg_output).to(device)
+            self.pytorch_smoother.to(device)
+
+            with torch.no_grad():
+                for _ in range(smooth_iterations):
+                    mask_tensor = self.pytorch_smoother(mask_tensor)
+
+            smoothed = mask_tensor.cpu().numpy()
+        else:
+            # ONNXモデルでの処理
+            smoothed = self.smoother.smooth_multiclass_mask(
+                seg_output,
+                iterations=smooth_iterations
+            )
 
         return smoothed
+
+# PyTorchモデルとONNXモデルの統合使用例
+class HybridEdgeSmoother:
+    """PyTorchとONNXの両方をサポートする統合クラス"""
+
+    def __init__(self):
+        # 各種PyTorchモデル
+        self.basic_smoother = BinaryMaskEdgeSmoothing()
+        self.directional_smoother = DirectionalEdgeSmoothing()
+        self.adaptive_smoother = AdaptiveEdgeSmoothing()
+
+    def export_all_to_onnx(self, output_dir='onnx_models'):
+        """すべてのモデルをONNXにエクスポート"""
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 基本モデル
+        dummy_input = torch.randn(1, 1, 256, 256)
+        torch.onnx.export(
+            self.basic_smoother,
+            dummy_input,
+            f"{output_dir}/basic_edge_smoothing.onnx",
+            input_names=['mask'],
+            output_names=['smoothed_mask'],
+            dynamic_axes={'mask': {0: 'batch', 2: 'height', 3: 'width'},
+                         'smoothed_mask': {0: 'batch', 2: 'height', 3: 'width'}}
+        )
+
+        # 方向性モデル
+        torch.onnx.export(
+            self.directional_smoother,
+            dummy_input,
+            f"{output_dir}/directional_edge_smoothing.onnx",
+            input_names=['mask'],
+            output_names=['smoothed_mask'],
+            dynamic_axes={'mask': {0: 'batch', 2: 'height', 3: 'width'},
+                         'smoothed_mask': {0: 'batch', 2: 'height', 3: 'width'}}
+        )
+
+        # 適応的モデル
+        dummy_blur = torch.tensor([3.0])
+        dummy_sensitivity = torch.tensor([1.0])
+        dummy_threshold = torch.tensor([0.5])
+        torch.onnx.export(
+            self.adaptive_smoother,
+            (dummy_input, dummy_blur, dummy_sensitivity, dummy_threshold),
+            f"{output_dir}/adaptive_edge_smoothing.onnx",
+            input_names=['mask', 'blur_strength', 'edge_sensitivity', 'final_threshold'],
+            output_names=['smoothed_mask'],
+            dynamic_axes={'mask': {0: 'batch', 2: 'height', 3: 'width'},
+                         'smoothed_mask': {0: 'batch', 2: 'height', 3: 'width'}}
+        )
 ```
 
 ### パフォーマンス最適化
 
 ```python
-def create_optimized_edge_smoothing_onnx():
-    """最適化されたエッジ平滑化実装"""
+class OptimizedEdgeSmoothing(nn.Module):
+    """最適化されたエッジ平滑化PyTorchモデル（FP16対応）"""
 
-    # 入力定義（バッチ対応、FP16）
-    input_mask = helper.make_tensor_value_info(
-        'mask', TensorProto.FLOAT16,
-        ['N', 1, 'H', 'W']  # バッチ対応
-    )
+    def __init__(self, use_fp16=True):
+        super().__init__()
+        self.use_fp16 = use_fp16
 
-    nodes = []
+        # 1. Depthwise Convolutionの使用
+        # エッジ検出用のDepthwise Laplacianカーネル
+        self.edge_detector = nn.Conv2d(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=3,
+            padding=1,
+            groups=1,  # Depthwise convolution
+            bias=False
+        )
 
-    # 1. Depthwise Convolutionの使用
-    # エッジ検出用のDepthwise Laplacianカーネル
-    # 各チャンネルに独立して適用（メモリ効率的）
-    laplacian_dw = helper.make_tensor(
-        'laplacian_dw',
-        TensorProto.FLOAT16,
-        dims=[1, 1, 3, 3],  # Depthwise: [out_ch, in_ch/groups, H, W]
-        vals=np.array([-1, -1, -1, -1, 8, -1, -1, -1, -1], dtype=np.float16).tolist()
-    )
+        # Laplacianカーネルの重みを設定
+        laplacian_kernel = torch.tensor([
+            [-1, -1, -1],
+            [-1,  8, -1],
+            [-1, -1, -1]
+        ], dtype=torch.float32).unsqueeze(0).unsqueeze(0)
 
-    # Depthwise Convolution for edge detection
-    edge_conv = helper.make_node(
-        'Conv',
-        inputs=['mask', 'laplacian_dw'],
-        outputs=['edges'],
-        pads=[1, 1, 1, 1],
-        group=1  # Depthwise convolution
-    )
-    nodes.append(edge_conv)
+        self.edge_detector.weight.data = laplacian_kernel
+        self.edge_detector.weight.requires_grad = False
 
-    # 2. Fused Operations（複数の演算を融合）
-    # エッジの絶対値とスケーリングを一度に
-    edge_scale_value = helper.make_tensor(
-        'edge_scale', TensorProto.FLOAT16, dims=[1], vals=[3.0]
-    )
+        # 3. 最適化されたガウシアンブラー（Separable convolution）
+        # 水平方向のガウシアンカーネル
+        self.gaussian_h = nn.Conv2d(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=(1, 5),
+            padding=(0, 2),
+            bias=False
+        )
+        gaussian_h_kernel = torch.tensor(
+            [0.0625, 0.25, 0.375, 0.25, 0.0625],
+            dtype=torch.float32
+        ).reshape(1, 1, 1, 5)
+        self.gaussian_h.weight.data = gaussian_h_kernel
+        self.gaussian_h.weight.requires_grad = False
 
-    # Abs + Mul fusion
-    edge_abs_scaled = helper.make_node(
-        'Abs',
-        inputs=['edges'],
-        outputs=['edge_abs']
-    )
-    nodes.append(edge_abs_scaled)
+        # 垂直方向のガウシアンカーネル
+        self.gaussian_v = nn.Conv2d(
+            in_channels=1,
+            out_channels=1,
+            kernel_size=(5, 1),
+            padding=(2, 0),
+            bias=False
+        )
+        gaussian_v_kernel = torch.tensor(
+            [0.0625, 0.25, 0.375, 0.25, 0.0625],
+            dtype=torch.float32
+        ).reshape(1, 1, 5, 1)
+        self.gaussian_v.weight.data = gaussian_v_kernel
+        self.gaussian_v.weight.requires_grad = False
 
-    edge_scaled = helper.make_node(
-        'Mul',
-        inputs=['edge_abs', 'edge_scale'],
-        outputs=['edge_scaled']
-    )
-    nodes.append(edge_scaled)
+        # 定数バッファ
+        self.register_buffer('edge_scale', torch.tensor(3.0))
+        self.register_buffer('threshold', torch.tensor(0.5))
 
-    # 3. 最適化されたガウシアンブラー
-    # Separable convolution（分離可能畳み込み）で高速化
-    # 水平方向のガウシアンカーネル
-    gaussian_h = helper.make_tensor(
-        'gaussian_h',
-        TensorProto.FLOAT16,
-        dims=[1, 1, 1, 5],  # 水平1D
-        vals=np.array([0.0625, 0.25, 0.375, 0.25, 0.0625], dtype=np.float16).tolist()
-    )
 
-    # 垂直方向のガウシアンカーネル
-    gaussian_v = helper.make_tensor(
-        'gaussian_v',
-        TensorProto.FLOAT16,
-        dims=[1, 1, 5, 1],  # 垂直1D
-        vals=np.array([0.0625, 0.25, 0.375, 0.25, 0.0625], dtype=np.float16).tolist()
-    )
+    def forward(self, mask):
+        """最適化された順伝播
 
-    # Separable Gaussian blur（2パスで効率化）
-    blur_h = helper.make_node(
-        'Conv',
-        inputs=['mask', 'gaussian_h'],
-        outputs=['blur_horizontal'],
-        pads=[0, 2, 0, 2]  # 水平方向のパディング
-    )
-    nodes.append(blur_h)
+        Args:
+            mask: バイナリマスク [B, 1, H, W]
 
-    blur_v = helper.make_node(
-        'Conv',
-        inputs=['blur_horizontal', 'gaussian_v'],
-        outputs=['blurred'],
-        pads=[2, 0, 2, 0]  # 垂直方向のパディング
-    )
-    nodes.append(blur_v)
+        Returns:
+            smoothed_mask: 平滑化されたマスク [B, 1, H, W]
+        """
+        # FP16への変換（オプション）
+        if self.use_fp16 and mask.dtype != torch.float16:
+            mask = mask.half()
 
-    # 4. Sigmoid with approximation（高速近似）
-    # Sigmoidの代わりにClipを使用した高速近似
-    # sigmoid(x) ≈ clip((x + 1) / 2, 0, 1) for small x
-    one_half = helper.make_tensor(
-        'one_half', TensorProto.FLOAT16, dims=[1], vals=[0.5]
-    )
+        # 1. エッジ検出（Depthwise Convolution）
+        edges = self.edge_detector(mask)
 
-    edge_shift = helper.make_node(
-        'Add',
-        inputs=['edge_scaled', 'one_half'],
-        outputs=['edge_shifted']
-    )
-    nodes.append(edge_shift)
+        # 2. Fused Operations（複数の演算を融合）
+        # エッジの絶対値とスケーリングを一度に
+        edge_abs_scaled = torch.abs(edges) * self.edge_scale
 
-    edge_mask_pre = helper.make_node(
-        'Mul',
-        inputs=['edge_shifted', 'one_half'],
-        outputs=['edge_mask_pre']
-    )
-    nodes.append(edge_mask_pre)
+        # 3. Separable Gaussian blur（2パスで効率化）
+        blur_horizontal = self.gaussian_h(mask)
+        blurred = self.gaussian_v(blur_horizontal)
 
-    # Clip to [0, 1]
-    edge_mask = helper.make_node(
-        'Clip',
-        inputs=['edge_mask_pre'],
-        outputs=['edge_mask'],
-        min=0.0,
-        max=1.0
-    )
-    nodes.append(edge_mask)
+        # 4. Sigmoid with approximation（高速近似）
+        # sigmoid(x) ≈ clip((x + 0.5) * 0.5, 0, 1) for small x
+        edge_mask = torch.clamp((edge_abs_scaled + 0.5) * 0.5, 0, 1)
 
-    # 5. ブレンディング（SIMD最適化を意識）
-    # (1 - edge_mask)の計算
-    one = helper.make_tensor(
-        'one', TensorProto.FLOAT16, dims=[1], vals=[1.0]
-    )
+        # 5. ブレンディング（SIMD最適化を意識）
+        # FMA (Fused Multiply-Add) を活用できる形式
+        # result = mask * (1 - edge_mask) + blurred * edge_mask
+        smoothed = mask * (1 - edge_mask) + blurred * edge_mask
 
-    inv_mask = helper.make_node(
-        'Sub',
-        inputs=['one', 'edge_mask'],
-        outputs=['inv_mask']
-    )
-    nodes.append(inv_mask)
+        # 6. 量子化対応の二値化
+        binary_output = (smoothed > self.threshold).float()
 
-    # FMA (Fused Multiply-Add) を活用できる形式
-    # result = mask * inv_mask + blurred * edge_mask
-    orig_weighted = helper.make_node(
-        'Mul',
-        inputs=['mask', 'inv_mask'],
-        outputs=['orig_weighted']
-    )
-    nodes.append(orig_weighted)
+        # FP16で返す（必要に応じて）
+        if self.use_fp16:
+            return binary_output.half()
+        return binary_output
 
-    blur_weighted = helper.make_node(
-        'Mul',
-        inputs=['blurred', 'edge_mask'],
-        outputs=['blur_weighted']
-    )
-    nodes.append(blur_weighted)
+    def to_onnx(self, onnx_path="optimized_edge_smoothing.onnx", opset_version=11):
+        """ONNXにエクスポート（FP16対応）"""
+        dummy_input = torch.randn(1, 1, 256, 256)
+        if self.use_fp16:
+            dummy_input = dummy_input.half()
+            self.half()  # モデルもFP16に
 
-    result = helper.make_node(
-        'Add',
-        inputs=['orig_weighted', 'blur_weighted'],
-        outputs=['smoothed']
-    )
-    nodes.append(result)
+        torch.onnx.export(
+            self,
+            dummy_input,
+            onnx_path,
+            input_names=['mask'],
+            output_names=['smoothed_mask'],
+            dynamic_axes={
+                'mask': {0: 'batch', 2: 'height', 3: 'width'},
+                'smoothed_mask': {0: 'batch', 2: 'height', 3: 'width'}
+            },
+            opset_version=opset_version,
+            do_constant_folding=True,  # 定数の最適化
+            operator_export_type=torch.onnx.OperatorExportTypes.ONNX
+        )
 
-    # 6. 量子化対応の二値化
-    # FP16での比較と変換
-    threshold_fp16 = helper.make_tensor(
-        'threshold', TensorProto.FLOAT16, dims=[1], vals=[0.5]
-    )
+# 使用例
+def benchmark_optimized_smoothing():
+    """性能ベンチマーク"""
+    import time
 
-    binary_output = helper.make_node(
-        'Greater',
-        inputs=['smoothed', 'threshold'],
-        outputs=['binary_output']
-    )
-    nodes.append(binary_output)
+    model_fp32 = OptimizedEdgeSmoothing(use_fp16=False)
+    model_fp16 = OptimizedEdgeSmoothing(use_fp16=True)
 
-    # Cast to FP16
-    output = helper.make_node(
-        'Cast',
-        inputs=['binary_output'],
-        outputs=['output'],
-        to=TensorProto.FLOAT16
-    )
-    nodes.append(output)
+    # GPU上でのベンチマーク
+    if torch.cuda.is_available():
+        model_fp32 = model_fp32.cuda()
+        model_fp16 = model_fp16.cuda()
 
-    # 出力定義
-    output_info = helper.make_tensor_value_info(
-        'output', TensorProto.FLOAT16, ['N', 1, 'H', 'W']
-    )
+        # ウォームアップ
+        dummy_input = torch.randn(1, 1, 512, 512).cuda()
+        for _ in range(10):
+            _ = model_fp32(dummy_input)
+            _ = model_fp16(dummy_input.half())
+
+        # FP32のベンチマーク
+        torch.cuda.synchronize()
+        start = time.time()
+        for _ in range(100):
+            _ = model_fp32(dummy_input)
+        torch.cuda.synchronize()
+        fp32_time = time.time() - start
+
+        # FP16のベンチマーク
+        torch.cuda.synchronize()
+        start = time.time()
+        for _ in range(100):
+            _ = model_fp16(dummy_input.half())
+        torch.cuda.synchronize()
+        fp16_time = time.time() - start
+
+        print(f"FP32 inference time: {fp32_time:.3f}s")
+        print(f"FP16 inference time: {fp16_time:.3f}s")
+        print(f"Speedup: {fp32_time/fp16_time:.2f}x")
+```
 
     # グラフ作成
     graph = helper.make_graph(
@@ -1712,3 +1770,52 @@ def optimize_for_inference_engines(model):
    - 適応的パラメータ調整
 
 この実装により、セグメンテーションモデルの出力品質を後処理で向上させることができます。
+
+## PyTorchモデルからONNXへのエクスポートアプローチの利点
+
+### なぜPyTorch経由でONNXを生成するのか
+
+上記の実装では、ONNXグラフを直接構築する代わりに、PyTorchモデルを定義してからONNXにエクスポートするアプローチを採用しています。このアプローチには以下の利点があります：
+
+1. **開発効率の向上**
+   - PyTorchの直感的なAPIで迅速にプロトタイピング
+   - デバッグが容易（PyTorch上で動作確認可能）
+   - 複雑なグラフ構造も簡潔に表現
+
+2. **保守性の向上**
+   - コードが読みやすく、理解しやすい
+   - モデルの修正や拡張が簡単
+   - PyTorchエコシステムの豊富なツールを活用可能
+
+3. **互換性と最適化**
+   - PyTorchのONNXエクスポーターが自動的に最適化
+   - 各種推論エンジンとの互換性が高い
+   - Dynamic shapesやFP16などの高度な機能も簡単に設定
+
+4. **柔軟な運用**
+   - 開発時はPyTorchで、本番環境ではONNXで実行
+   - 必要に応じてPyTorchとONNXを使い分け可能
+   - 学習済みの重みを簡単に読み込み・保存
+
+### 実装例の比較
+
+**従来のONNX直接構築**:
+```python
+# 複雑で冗長なグラフ定義
+nodes = []
+nodes.append(helper.make_node('Conv', ...))
+nodes.append(helper.make_node('Abs', ...))
+# ... 多数のノード定義
+```
+
+**PyTorch経由のアプローチ**:
+```python
+# シンプルで直感的
+class EdgeSmoothing(nn.Module):
+    def forward(self, x):
+        edges = self.edge_detector(x)
+        smoothed = self.gaussian_blur(x)
+        return self.blend(x, smoothed, edges)
+```
+
+このアプローチにより、エッジ平滑化の実装がより実用的で保守しやすくなっています。
