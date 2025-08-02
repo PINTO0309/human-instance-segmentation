@@ -29,25 +29,28 @@ class LayerNorm2d(nn.Module):
 
 class ResidualBlock(nn.Module):
     """Residual block for easier gradient flow."""
-    def __init__(self, channels: int, normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
+    def __init__(self, channels: int, normalization_type: str = 'layernorm2d', normalization_groups: int = 8, activation_function: str = 'relu', activation_beta: float = 1.0):
         super().__init__()
         from .normalization_comparison import get_normalization_layer
         
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
         self.norm1 = get_normalization_layer(normalization_type, channels, num_groups=normalization_groups)
-        self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
         self.norm2 = get_normalization_layer(normalization_type, channels, num_groups=normalization_groups)
+        
+        # Create activation modules
+        self.activation1 = get_activation(activation_function, inplace=True, beta=activation_beta)
+        self.activation2 = get_activation(activation_function, inplace=True, beta=activation_beta)
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
         x = self.conv1(x)
         x = self.norm1(x)
-        x = self.relu(x)
+        x = self.activation1(x)
         x = self.conv2(x)
         x = self.norm2(x)
         x = x + residual
-        x = self.relu(x)
+        x = self.activation2(x)
         return x
 
 
@@ -55,7 +58,8 @@ class BoundaryRefinementModule(nn.Module):
     """Refines mask boundaries using specialized edge processing."""
     
     def __init__(self, in_channels: int = 3, edge_channels: int = 32,
-                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
+                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8,
+                 activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize boundary refinement module.
         
         Args:
@@ -63,6 +67,8 @@ class BoundaryRefinementModule(nn.Module):
             edge_channels: Number of channels for edge processing
             normalization_type: Type of normalization to use
             normalization_groups: Number of groups for GroupNorm
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
         from .normalization_comparison import get_normalization_layer
@@ -71,10 +77,10 @@ class BoundaryRefinementModule(nn.Module):
         self.edge_conv = nn.Sequential(
             nn.Conv2d(in_channels, edge_channels, 3, padding=1),
             get_normalization_layer(normalization_type, edge_channels, num_groups=min(normalization_groups, edge_channels)),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(edge_channels, edge_channels, 3, padding=1),
             get_normalization_layer(normalization_type, edge_channels, num_groups=min(normalization_groups, edge_channels)),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(edge_channels, in_channels, 1)
         )
         
@@ -147,7 +153,8 @@ class ProgressiveUpsamplingDecoder(nn.Module):
     
     def __init__(self, in_channels: int, num_classes: int = 3,
                  normalization_type: str = 'layernorm2d',
-                 normalization_groups: int = 8):
+                 normalization_groups: int = 8,
+                 activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize progressive upsampling decoder.
         
         Args:
@@ -155,6 +162,8 @@ class ProgressiveUpsamplingDecoder(nn.Module):
             num_classes: Number of output classes
             normalization_type: Type of normalization to use
             normalization_groups: Number of groups for group normalization
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
         from .normalization_comparison import get_normalization_layer
@@ -165,15 +174,15 @@ class ProgressiveUpsamplingDecoder(nn.Module):
             nn.Sequential(
                 nn.ConvTranspose2d(in_channels, in_channels//2, 4, stride=2, padding=1),
                 get_normalization_layer(normalization_type, in_channels//2, num_groups=min(normalization_groups, in_channels//2)),
-                nn.ReLU(inplace=True),
-                ResidualBlock(in_channels//2, normalization_type, normalization_groups),
+                get_activation(activation_function, inplace=True, beta=activation_beta),
+                ResidualBlock(in_channels//2, normalization_type, normalization_groups, activation_function, activation_beta),
             ),
             # Stage 2: 2x upsampling
             nn.Sequential(
                 nn.ConvTranspose2d(in_channels//2, in_channels//4, 4, stride=2, padding=1),
                 get_normalization_layer(normalization_type, in_channels//4, num_groups=min(normalization_groups, in_channels//4)),
-                nn.ReLU(inplace=True),
-                ResidualBlock(in_channels//4, normalization_type, normalization_groups),
+                get_activation(activation_function, inplace=True, beta=activation_beta),
+                ResidualBlock(in_channels//4, normalization_type, normalization_groups, activation_function, activation_beta),
             ),
             # Final projection
             nn.Conv2d(in_channels//4, num_classes, 1)
@@ -246,7 +255,8 @@ class ContourDetectionBranch(nn.Module):
     """Explicit contour detection branch for boundary refinement."""
     
     def __init__(self, in_channels: int, contour_channels: int = 64,
-                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
+                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8,
+                 activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize contour detection branch.
         
         Args:
@@ -254,6 +264,8 @@ class ContourDetectionBranch(nn.Module):
             contour_channels: Number of channels for contour processing
             normalization_type: Type of normalization to use
             normalization_groups: Number of groups for GroupNorm
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
         
@@ -262,10 +274,10 @@ class ContourDetectionBranch(nn.Module):
         self.contour_branch = nn.Sequential(
             nn.Conv2d(in_channels, contour_channels, 3, padding=1),
             get_normalization_layer(normalization_type, contour_channels, num_groups=normalization_groups),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(contour_channels, contour_channels, 3, padding=1),
             get_normalization_layer(normalization_type, contour_channels, num_groups=normalization_groups),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(contour_channels, 1, 1),
             nn.Sigmoid()
         )
@@ -286,7 +298,8 @@ class DistanceTransformDecoder(nn.Module):
     """Distance transform prediction for mask refinement."""
     
     def __init__(self, in_channels: int, distance_channels: int = 128,
-                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
+                 normalization_type: str = 'layernorm2d', normalization_groups: int = 8,
+                 activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize distance transform decoder.
         
         Args:
@@ -294,6 +307,8 @@ class DistanceTransformDecoder(nn.Module):
             distance_channels: Number of channels for distance processing
             normalization_type: Type of normalization to use
             normalization_groups: Number of groups for GroupNorm
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
         
@@ -302,8 +317,8 @@ class DistanceTransformDecoder(nn.Module):
         self.distance_head = nn.Sequential(
             nn.Conv2d(in_channels, distance_channels, 3, padding=1),
             get_normalization_layer(normalization_type, distance_channels, num_groups=normalization_groups),
-            nn.ReLU(inplace=True),
-            ResidualBlock(distance_channels, normalization_type, normalization_groups),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
+            ResidualBlock(distance_channels, normalization_type, normalization_groups, activation_function, activation_beta),
             nn.Conv2d(distance_channels, 1, 1)
         )
         
@@ -427,7 +442,9 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         dropout_rate: float = 0.1,
         use_attention_module: bool = False,
         normalization_type: str = 'layernorm2d',
-        normalization_groups: int = 8
+        normalization_groups: int = 8,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize extended hierarchical segmentation head V2."""
         super().__init__()
@@ -460,11 +477,11 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         self.shared_features = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
             get_normalization_layer(normalization_type, mid_channels, num_groups=normalization_groups),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Dropout2d(dropout_rate),
-            ResidualBlock(mid_channels, normalization_type, normalization_groups),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups, activation_function, activation_beta),
             nn.Dropout2d(dropout_rate),
-            ResidualBlock(mid_channels, normalization_type, normalization_groups),
+            ResidualBlock(mid_channels, normalization_type, normalization_groups, activation_function, activation_beta),
         )
         
         # Branch 1: Background vs Foreground using Enhanced UNet
@@ -473,14 +490,16 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
             base_channels=base_channels, 
             depth=3,
             normalization_type=normalization_type,
-            normalization_groups=normalization_groups
+            normalization_groups=normalization_groups,
+            activation_function=activation_function,
+            activation_beta=activation_beta
         )
         
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(
             nn.ConvTranspose2d(2, 32, 2, stride=2),
             get_normalization_layer(normalization_type, 32, num_groups=min(normalization_groups, 32)),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(32, 2, 1)
         )
         
@@ -488,37 +507,37 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         if use_attention_module:
             # Build modules list manually to handle normalization
             modules = [
-                ResidualBlock(mid_channels, normalization_type, normalization_groups),
+                ResidualBlock(mid_channels, normalization_type, normalization_groups, activation_function, activation_beta),
                 SpatialAttentionModule(kernel_size=7),
                 nn.Dropout2d(dropout_rate),
                 nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
                 get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
-                nn.ReLU(inplace=True),
+                get_activation(activation_function, inplace=True, beta=activation_beta),
                 ChannelAttentionModule(mid_channels // 2, reduction_ratio=8),
                 nn.Dropout2d(dropout_rate),
-                ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2)),
+                ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2), activation_function, activation_beta),
                 nn.Conv2d(mid_channels // 2, 2, 1)
             ]
             self.target_vs_nontarget_branch = nn.ModuleList(modules)
         else:
             self.target_vs_nontarget_branch = nn.Sequential(
-                ResidualBlock(mid_channels, normalization_type, normalization_groups),
+                ResidualBlock(mid_channels, normalization_type, normalization_groups, activation_function, activation_beta),
                 nn.Dropout2d(dropout_rate),
                 nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
                 get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
-                nn.ReLU(inplace=True),
+                get_activation(activation_function, inplace=True, beta=activation_beta),
                 nn.Dropout2d(dropout_rate),
-                ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2)),
+                ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2), activation_function, activation_beta),
                 nn.Conv2d(mid_channels // 2, 2, 1)
             )
         
         # Enhanced gating
         self.fg_gate = nn.Sequential(
             nn.Conv2d(2, mid_channels // 4, 1),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Dropout2d(dropout_rate * 0.5),
             nn.Conv2d(mid_channels // 4, mid_channels // 2, 1),
-            nn.ReLU(inplace=True),
+            get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(mid_channels // 2, mid_channels, 1),
             nn.Sigmoid()
         )
@@ -604,6 +623,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         # Normalization configuration
         normalization_type: str = 'layernorm2d',
         normalization_groups: int = 8,
+        # Activation function configuration
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0,
     ):
         """Initialize refined hierarchical segmentation head.
         
@@ -629,7 +651,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             mask_size=mask_size,
             use_attention_module=use_attention_module,
             normalization_type=normalization_type,
-            normalization_groups=normalization_groups
+            normalization_groups=normalization_groups,
+            activation_function=activation_function,
+            activation_beta=activation_beta
         )
         
         # Support non-square mask sizes
@@ -654,14 +678,20 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 in_channels=num_classes,
                 edge_channels=32,
                 normalization_type=normalization_type,
-                normalization_groups=normalization_groups
+                normalization_groups=normalization_groups,
+                activation_function=activation_function,
+                activation_beta=activation_beta
             )
             
         if use_progressive_upsampling:
             # Replace final decoder with progressive upsampling
             self.progressive_decoder = ProgressiveUpsamplingDecoder(
                 in_channels=mid_channels,
-                num_classes=num_classes
+                num_classes=num_classes,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups,
+                activation_function=activation_function,
+                activation_beta=activation_beta
             )
             
         if use_subpixel_conv:
@@ -677,7 +707,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 in_channels=mid_channels,
                 contour_channels=64,
                 normalization_type=normalization_type,
-                normalization_groups=normalization_groups
+                normalization_groups=normalization_groups,
+                activation_function=activation_function,
+                activation_beta=activation_beta
             )
             
         if use_distance_transform:
@@ -685,7 +717,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 in_channels=mid_channels,
                 distance_channels=128,
                 normalization_type=normalization_type,
-                normalization_groups=normalization_groups
+                normalization_groups=normalization_groups,
+                activation_function=activation_function,
+                activation_beta=activation_beta
             )
             
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:

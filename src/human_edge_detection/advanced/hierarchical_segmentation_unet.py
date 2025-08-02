@@ -10,11 +10,34 @@ from ..model import LayerNorm2d
 from .attention_modules import ChannelAttentionModule, SpatialAttentionModule
 
 
+def get_activation_function(activation_name: str = 'relu', activation_beta: float = 1.0):
+    """Get activation function by name.
+    
+    Args:
+        activation_name: Name of activation function ('relu', 'swish', 'gelu', 'silu')
+        activation_beta: Beta parameter for Swish activation
+        
+    Returns:
+        Activation function module
+    """
+    activation_name = activation_name.lower()
+    if activation_name == 'relu':
+        return nn.ReLU(inplace=True)
+    elif activation_name == 'swish' or activation_name == 'silu':
+        # Swish is the same as SiLU in PyTorch
+        return nn.SiLU(inplace=True)
+    elif activation_name == 'gelu':
+        return nn.GELU()
+    else:
+        raise ValueError(f"Unsupported activation function: {activation_name}")
+
+
 class ResidualBlock(nn.Module):
     """Residual block with configurable normalization."""
 
     def __init__(self, channels: int, normalization_type: str = 'layernorm2d',
-                 normalization_groups: int = 8):
+                 normalization_groups: int = 8, activation_function: str = 'relu',
+                 activation_beta: float = 1.0):
         super().__init__()
         from .normalization_comparison import get_normalization_layer
 
@@ -24,14 +47,14 @@ class ResidualBlock(nn.Module):
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
         self.norm2 = get_normalization_layer(normalization_type, channels,
                                            num_groups=min(normalization_groups, channels))
-        self.relu = nn.ReLU(inplace=True)
+        self.activation = get_activation_function(activation_function, activation_beta)
 
     def forward(self, x):
         residual = x
-        out = self.relu(self.norm1(self.conv1(x)))
+        out = self.activation(self.norm1(self.conv1(x)))
         out = self.norm2(self.conv2(out))
         out += residual
-        out = self.relu(out)
+        out = self.activation(out)
         return out
 
 
@@ -40,7 +63,9 @@ class ShallowUNet(nn.Module):
 
     def __init__(self, in_channels: int, base_channels: int = 64,
                  normalization_type: str = 'layernorm2d',
-                 normalization_groups: int = 8):
+                 normalization_groups: int = 8,
+                 activation_function: str = 'relu',
+                 activation_beta: float = 1.0):
         """Initialize shallow U-Net.
 
         Args:
@@ -56,10 +81,10 @@ class ShallowUNet(nn.Module):
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, base_channels, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Conv2d(base_channels, base_channels, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
-            nn.ReLU(inplace=True)
+            get_activation_function(activation_function, activation_beta)
         )
 
         self.pool1 = nn.MaxPool2d(2)
@@ -67,10 +92,10 @@ class ShallowUNet(nn.Module):
         self.enc2 = nn.Sequential(
             nn.Conv2d(base_channels, base_channels * 2, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Conv2d(base_channels * 2, base_channels * 2, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
-            nn.ReLU(inplace=True)
+            get_activation_function(activation_function, activation_beta)
         )
 
         self.pool2 = nn.MaxPool2d(2)
@@ -79,10 +104,10 @@ class ShallowUNet(nn.Module):
         self.bottom = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels * 4, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels * 4, num_groups=min(normalization_groups, base_channels * 4)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Conv2d(base_channels * 4, base_channels * 4, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels * 4, num_groups=min(normalization_groups, base_channels * 4)),
-            nn.ReLU(inplace=True)
+            get_activation_function(activation_function, activation_beta)
         )
 
         # Decoder path
@@ -90,20 +115,20 @@ class ShallowUNet(nn.Module):
         self.dec2 = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 2, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Conv2d(base_channels * 2, base_channels * 2, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels * 2, num_groups=min(normalization_groups, base_channels * 2)),
-            nn.ReLU(inplace=True)
+            get_activation_function(activation_function, activation_beta)
         )
 
         self.up1 = nn.ConvTranspose2d(base_channels * 2, base_channels, 2, stride=2)
         self.dec1 = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Conv2d(base_channels, base_channels, 3, padding=1),
             get_normalization_layer(normalization_type, base_channels, num_groups=min(normalization_groups, base_channels)),
-            nn.ReLU(inplace=True)
+            get_activation_function(activation_function, activation_beta)
         )
 
         # Final layer
@@ -254,7 +279,8 @@ class EnhancedUNet(nn.Module):
 
     def __init__(self, in_channels: int, base_channels: int = 64, depth: int = 4,
                  groups: int = None, normalization_type: str = 'layernorm2d',
-                 normalization_groups: int = 8):
+                 normalization_groups: int = 8, activation_function: str = 'relu',
+                 activation_beta: float = 1.0):
         """Initialize enhanced U-Net.
 
         Args:
@@ -264,8 +290,12 @@ class EnhancedUNet(nn.Module):
             groups: Deprecated parameter for backward compatibility
             normalization_type: Type of normalization to use
             normalization_groups: Number of groups for GroupNorm
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
+        self.activation_function = activation_function
+        self.activation_beta = activation_beta
         self.depth = depth
 
         # Import normalization utilities
@@ -283,18 +313,18 @@ class EnhancedUNet(nn.Module):
                 encoder = nn.Sequential(
                     nn.Conv2d(channels[i], channels[i+1], 3, padding=1),
                     get_normalization_layer(normalization_type, channels[i+1], num_groups=min(normalization_groups, channels[i+1])),
-                    nn.ReLU(inplace=True),
-                    ResidualBlock(channels[i+1], normalization_type, normalization_groups),
-                    ResidualBlock(channels[i+1], normalization_type, normalization_groups)
+                    get_activation_function(activation_function, activation_beta),
+                    ResidualBlock(channels[i+1], normalization_type, normalization_groups, activation_function, activation_beta),
+                    ResidualBlock(channels[i+1], normalization_type, normalization_groups, activation_function, activation_beta)
                 )
             else:
                 # Deeper encoders with residual blocks
                 encoder = nn.Sequential(
-                    ResidualBlock(channels[i], normalization_type, normalization_groups),
-                    ResidualBlock(channels[i], normalization_type, normalization_groups),
+                    ResidualBlock(channels[i], normalization_type, normalization_groups, activation_function, activation_beta),
+                    ResidualBlock(channels[i], normalization_type, normalization_groups, activation_function, activation_beta),
                     nn.Conv2d(channels[i], channels[i+1], 3, padding=1),
                     get_normalization_layer(normalization_type, channels[i+1], num_groups=min(normalization_groups, channels[i+1])),
-                    nn.ReLU(inplace=True)
+                    get_activation_function(activation_function, activation_beta)
                 )
 
             self.encoders.append(encoder)
@@ -303,11 +333,11 @@ class EnhancedUNet(nn.Module):
 
         # Bottleneck with attention
         self.bottleneck = nn.Sequential(
-            ResidualBlock(channels[-1], normalization_type, normalization_groups),
-            ResidualBlock(channels[-1], normalization_type, normalization_groups),
+            ResidualBlock(channels[-1], normalization_type, normalization_groups, activation_function, activation_beta),
+            ResidualBlock(channels[-1], normalization_type, normalization_groups, activation_function, activation_beta),
             nn.Conv2d(channels[-1], channels[-1], 3, padding=1),
             get_normalization_layer(normalization_type, channels[-1], num_groups=min(normalization_groups, channels[-1])),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             # Spatial attention
             nn.Conv2d(channels[-1], channels[-1], 1),
             nn.Sigmoid(),
@@ -328,9 +358,9 @@ class EnhancedUNet(nn.Module):
             decoder = nn.Sequential(
                 nn.Conv2d(channels[i] * 2, channels[i], 3, padding=1),
                 get_normalization_layer(normalization_type, channels[i], num_groups=min(normalization_groups, channels[i])),
-                nn.ReLU(inplace=True),
-                ResidualBlock(channels[i], normalization_type, normalization_groups),
-                ResidualBlock(channels[i], normalization_type, normalization_groups)
+                get_activation_function(activation_function, activation_beta),
+                ResidualBlock(channels[i], normalization_type, normalization_groups, activation_function, activation_beta),
+                ResidualBlock(channels[i], normalization_type, normalization_groups, activation_function, activation_beta)
             )
             self.decoders.append(decoder)
 
@@ -338,7 +368,7 @@ class EnhancedUNet(nn.Module):
         self.final = nn.Sequential(
             nn.Conv2d(channels[1], channels[1] // 2, 3, padding=1),
             get_normalization_layer(normalization_type, channels[1] // 2, num_groups=min(normalization_groups, channels[1] // 2)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Conv2d(channels[1] // 2, 2, 1)  # 2 classes: bg, fg
         )
 
@@ -647,7 +677,9 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         num_classes: int = 3,
         mask_size: Union[int, Tuple[int, int]] = 56,
         dropout_rate: float = 0.1,
-        use_attention_module: bool = False
+        use_attention_module: bool = False,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize hierarchical segmentation head V2.
 

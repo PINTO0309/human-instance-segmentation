@@ -18,6 +18,28 @@ from .hierarchical_segmentation_unet import (
 )
 
 
+def get_activation_function(activation_name: str = 'relu', activation_beta: float = 1.0):
+    """Get activation function by name.
+    
+    Args:
+        activation_name: Name of activation function ('relu', 'swish', 'gelu', 'silu')
+        activation_beta: Beta parameter for Swish activation
+        
+    Returns:
+        Activation function module
+    """
+    activation_name = activation_name.lower()
+    if activation_name == 'relu':
+        return nn.ReLU(inplace=True)
+    elif activation_name == 'swish' or activation_name == 'silu':
+        # Swish is the same as SiLU in PyTorch
+        return nn.SiLU(inplace=True)
+    elif activation_name == 'gelu':
+        return nn.GELU()
+    else:
+        raise ValueError(f"Unsupported activation function: {activation_name}")
+
+
 class PretrainedUNetGuidedSegmentationHead(nn.Module):
     """Segmentation head that uses pre-trained UNet output directly for bg/fg separation."""
 
@@ -30,7 +52,9 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
         dropout_rate: float = 0.1,
         use_attention_module: bool = False,
         normalization_type: str = 'layernorm2d',
-        normalization_groups: int = 8
+        normalization_groups: int = 8,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize pre-trained UNet guided segmentation head.
 
@@ -65,18 +89,18 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
         self.feature_processor = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
             get_normalization_layer(normalization_type, mid_channels, num_groups=min(normalization_groups, mid_channels)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Dropout2d(dropout_rate),
-            FlexibleResidualBlock(mid_channels, normalization_type, normalization_groups),
+            FlexibleResidualBlock(mid_channels, normalization_type, normalization_groups, activation_function, activation_beta),
             nn.Dropout2d(dropout_rate),
-            FlexibleResidualBlock(mid_channels, normalization_type, normalization_groups),
+            FlexibleResidualBlock(mid_channels, normalization_type, normalization_groups, activation_function, activation_beta),
         )
 
         # Direct 3-class prediction branch
         self.final_classifier = nn.Sequential(
             nn.Conv2d(mid_channels, mid_channels // 2, 3, padding=1),
             get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
             nn.Conv2d(mid_channels // 2, num_classes, 1)  # Direct 3-class output
         )
 
@@ -84,7 +108,7 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
         if use_attention_module:
             self.attention_module = nn.Sequential(
                 nn.Conv2d(mid_channels, mid_channels // 4, 1),
-                nn.ReLU(inplace=True),
+                get_activation_function(activation_function, activation_beta),
                 nn.Conv2d(mid_channels // 4, 1, 1),
                 nn.Sigmoid()
             )
@@ -199,7 +223,9 @@ class RGBFeatureExtractor(nn.Module):
         roi_size: int = 28,
         num_layers: int = 4,
         normalization_type: str = 'layernorm2d',
-        normalization_groups: int = 8
+        normalization_groups: int = 8,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize RGB feature extractor.
 
@@ -231,7 +257,7 @@ class RGBFeatureExtractor(nn.Module):
             layers.extend([
                 nn.Conv2d(channels[i], out_ch, 3, padding=1, stride=1),
                 get_normalization_layer(normalization_type, out_ch, num_groups=normalization_groups),
-                nn.ReLU(inplace=True)
+                get_activation_function(activation_function, activation_beta)
             ])
 
             # Add residual blocks for deeper features
@@ -243,7 +269,7 @@ class RGBFeatureExtractor(nn.Module):
                 elif normalization_type.lower() in ['batchnorm', 'batchnorm2d']:
                     # Use the flexible ResidualBlock from hierarchical_segmentation_unet
                     from .hierarchical_segmentation_unet import ResidualBlock as FlexibleResidualBlock
-                    layers.append(FlexibleResidualBlock(out_ch, normalization_type, normalization_groups))
+                    layers.append(FlexibleResidualBlock(out_ch, normalization_type, normalization_groups, activation_function, activation_beta))
                 else:
                     layers.append(ResidualBlock(out_ch))
 
@@ -420,6 +446,8 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
         freeze_pretrained_weights: bool = False,
         normalization_type: str = 'layernorm2d',
         normalization_groups: int = 8,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0,
     ):
         """Initialize hierarchical RGB segmentation model with pre-trained UNet.
 
@@ -475,15 +503,15 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
         self.feature_processor = nn.Sequential(
             nn.Conv2d(2, 64, 3, padding=1),
             get_normalization_layer(normalization_type, 64, num_groups=min(normalization_groups, 64)),
-            nn.ReLU(inplace=True),
-            FlexibleResidualBlock(64, normalization_type, min(normalization_groups, 64)),
+            get_activation_function(activation_function, activation_beta),
+            FlexibleResidualBlock(64, normalization_type, min(normalization_groups, 64), activation_function, activation_beta),
             nn.Conv2d(64, 128, 3, padding=1),
             get_normalization_layer(normalization_type, 128, num_groups=min(normalization_groups, 128)),
-            nn.ReLU(inplace=True),
-            FlexibleResidualBlock(128, normalization_type, min(normalization_groups, 128)),
+            get_activation_function(activation_function, activation_beta),
+            FlexibleResidualBlock(128, normalization_type, min(normalization_groups, 128), activation_function, activation_beta),
             nn.Conv2d(128, feature_dim, 3, padding=1),
             get_normalization_layer(normalization_type, feature_dim, num_groups=min(normalization_groups, feature_dim)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
         )
 
         # Hierarchical segmentation head
@@ -546,6 +574,9 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         # Normalization configuration
         normalization_type: str = 'layernorm2d',
         normalization_groups: int = 8,
+        # Activation function configuration
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0,
     ):
         """Initialize hierarchical RGB segmentation model with full-image pre-trained UNet.
 
@@ -615,19 +646,19 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         self.rgb_feature_extractor = nn.Sequential(
             nn.Conv2d(3, 64, 3, padding=1),
             get_normalization_layer(normalization_type, 64, num_groups=min(normalization_groups, 64)),
-            nn.ReLU(inplace=True),
-            FlexibleResidualBlock(64, normalization_type, min(normalization_groups, 64)),
+            get_activation_function(activation_function, activation_beta),
+            FlexibleResidualBlock(64, normalization_type, min(normalization_groups, 64), activation_function, activation_beta),
             nn.Conv2d(64, 128, 3, padding=1),  # Removed stride=2
             get_normalization_layer(normalization_type, 128, num_groups=min(normalization_groups, 128)),
-            nn.ReLU(inplace=True),
-            FlexibleResidualBlock(128, normalization_type, min(normalization_groups, 128)),
+            get_activation_function(activation_function, activation_beta),
+            FlexibleResidualBlock(128, normalization_type, min(normalization_groups, 128), activation_function, activation_beta),
             nn.Conv2d(128, 256, 3, padding=1),  # Removed stride=2
             get_normalization_layer(normalization_type, 256, num_groups=min(normalization_groups, 256)),
-            nn.ReLU(inplace=True),
-            FlexibleResidualBlock(256, normalization_type, min(normalization_groups, 256)),
+            get_activation_function(activation_function, activation_beta),
+            FlexibleResidualBlock(256, normalization_type, min(normalization_groups, 256), activation_function, activation_beta),
             nn.Conv2d(256, feature_dim, 1),
             get_normalization_layer(normalization_type, feature_dim, num_groups=min(normalization_groups, feature_dim)),
-            nn.ReLU(inplace=True),
+            get_activation_function(activation_function, activation_beta),
         )
 
         # Since we need to incorporate pre-trained UNet bg/fg masks,
@@ -664,6 +695,8 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
                 use_distance_transform=use_distance_transform,
                 normalization_type=normalization_type,
                 normalization_groups=normalization_groups,
+                activation_function=activation_function,
+                activation_beta=activation_beta,
             )
         else:
             # Use standard segmentation head that directly uses pre-trained UNet output
@@ -675,6 +708,8 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
                 use_attention_module=use_attention_module,
                 normalization_type=normalization_type,
                 normalization_groups=normalization_groups,
+                activation_function=activation_function,
+                activation_beta=activation_beta,
             )
 
     def forward(self, images: torch.Tensor, rois: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
@@ -732,7 +767,9 @@ class MultiScaleRGBSegmentationModel(nn.Module):
         num_classes: int = 3,
         use_attention_module: bool = False,
         normalization_type: str = 'layernorm2d',
-        normalization_groups: int = 8
+        normalization_groups: int = 8,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize multi-scale RGB segmentation model.
 
@@ -757,7 +794,11 @@ class MultiScaleRGBSegmentationModel(nn.Module):
                 in_channels=3,
                 out_channels=feature_channels,
                 roi_size=roi_size,
-                num_layers=4
+                num_layers=4,
+                normalization_type=normalization_type,
+                normalization_groups=normalization_groups,
+                activation_function=activation_function,
+                activation_beta=activation_beta
             )
             for scale, roi_size in roi_sizes.items()
         })
@@ -788,7 +829,7 @@ class MultiScaleRGBSegmentationModel(nn.Module):
         self.fusion_proj = nn.Sequential(
             nn.Conv2d(fused_channels, feature_channels, 1),
             get_normalization_layer(normalization_type, feature_channels, num_groups=min(normalization_groups, feature_channels)),
-            nn.ReLU(inplace=True)
+            get_activation_function(activation_function, activation_beta)
         )
 
         # Hierarchical segmentation head
@@ -908,6 +949,10 @@ def create_rgb_hierarchical_model(
             mask_size=mask_size,
             fusion_method=fusion_method,
             use_attention_module=use_attention_module,
+            normalization_type=normalization_type,
+            normalization_groups=normalization_groups,
+            activation_function=activation_function,
+            activation_beta=activation_beta,
             # TODO: Add refinement support to MultiScaleRGBSegmentationModel
         )
     else:
@@ -927,6 +972,8 @@ def create_rgb_hierarchical_model(
                     use_distance_transform=use_distance_transform,
                     normalization_type=normalization_type,
                     normalization_groups=normalization_groups,
+                    activation_function=activation_function,
+                    activation_beta=activation_beta,
                 )
             else:
                 # Create model with ROI-based pre-trained UNet
@@ -936,6 +983,10 @@ def create_rgb_hierarchical_model(
                     pretrained_weights_path=pretrained_weights_path,
                     use_attention_module=use_attention_module,
                     freeze_pretrained_weights=freeze_pretrained_weights,
+                    normalization_type=normalization_type,
+                    normalization_groups=normalization_groups,
+                    activation_function=activation_function,
+                    activation_beta=activation_beta,
                 )
         else:
             # Use standard model

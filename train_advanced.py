@@ -138,6 +138,9 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             # Normalization configuration
             normalization_type=getattr(config.model, 'normalization_type', 'layernorm2d'),
             normalization_groups=getattr(config.model, 'normalization_groups', 8),
+            # Activation function configuration
+            activation_function=getattr(config.model, 'activation_function', 'relu'),
+            activation_beta=getattr(config.model, 'activation_beta', 1.0),
             # Pre-trained model configuration
             use_pretrained_unet=getattr(config.model, 'use_pretrained_unet', False),
             pretrained_weights_path=getattr(config.model, 'pretrained_weights_path', ''),
