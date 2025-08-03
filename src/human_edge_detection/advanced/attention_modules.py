@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+from .activation_utils import get_activation
 
 
 class ChannelAttentionModule(nn.Module):
@@ -17,7 +18,9 @@ class ChannelAttentionModule(nn.Module):
         self, 
         in_channels: int, 
         reduction_ratio: int = 8,
-        min_channels: int = 8
+        min_channels: int = 8,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize Channel Attention Module.
         
@@ -25,6 +28,8 @@ class ChannelAttentionModule(nn.Module):
             in_channels: Number of input channels
             reduction_ratio: Reduction ratio for the bottleneck
             min_channels: Minimum number of channels in bottleneck
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
         
@@ -33,7 +38,7 @@ class ChannelAttentionModule(nn.Module):
         
         # Global average pooling (implicit)
         self.fc1 = nn.Conv2d(in_channels, bottleneck_channels, 1, bias=False)
-        self.relu = nn.ReLU(inplace=True)
+        self.activation = get_activation(activation_function, inplace=True, beta=activation_beta)
         self.fc2 = nn.Conv2d(bottleneck_channels, in_channels, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
         
@@ -51,7 +56,7 @@ class ChannelAttentionModule(nn.Module):
         
         # Channel attention
         channel_att = self.fc1(avg_pool)
-        channel_att = self.relu(channel_att)
+        channel_att = self.activation(channel_att)
         channel_att = self.fc2(channel_att)
         channel_att = self.sigmoid(channel_att)
         
@@ -119,7 +124,9 @@ class CBAMModule(nn.Module):
         self,
         in_channels: int,
         reduction_ratio: int = 8,
-        kernel_size: int = 7
+        kernel_size: int = 7,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize CBAM.
         
@@ -127,11 +134,15 @@ class CBAMModule(nn.Module):
             in_channels: Number of input channels
             reduction_ratio: Channel reduction ratio
             kernel_size: Spatial attention kernel size
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
         
         self.channel_attention = ChannelAttentionModule(
-            in_channels, reduction_ratio
+            in_channels, reduction_ratio,
+            activation_function=activation_function,
+            activation_beta=activation_beta
         )
         self.spatial_attention = SpatialAttentionModule(kernel_size)
         
@@ -161,7 +172,9 @@ class AttentionGate(nn.Module):
         self,
         in_channels: int,
         gating_channels: int,
-        inter_channels: Optional[int] = None
+        inter_channels: Optional[int] = None,
+        activation_function: str = 'relu',
+        activation_beta: float = 1.0
     ):
         """Initialize Attention Gate.
         
@@ -169,6 +182,8 @@ class AttentionGate(nn.Module):
             in_channels: Number of input feature channels
             gating_channels: Number of gating signal channels
             inter_channels: Number of intermediate channels
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for Swish
         """
         super().__init__()
         
@@ -187,7 +202,7 @@ class AttentionGate(nn.Module):
             inter_channels, 1,
             kernel_size=1, stride=1, padding=0, bias=True
         )
-        self.relu = nn.ReLU(inplace=True)
+        self.activation = get_activation(activation_function, inplace=True, beta=activation_beta)
         self.sigmoid = nn.Sigmoid()
         
     def forward(
@@ -214,7 +229,7 @@ class AttentionGate(nn.Module):
         # Compute attention
         g1 = self.W_g(g)
         x1 = self.W_x(x)
-        psi = self.relu(g1 + x1)
+        psi = self.activation(g1 + x1)
         psi = self.psi(psi)
         attention = self.sigmoid(psi)
         

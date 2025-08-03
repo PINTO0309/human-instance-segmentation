@@ -513,7 +513,7 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
                 nn.ConvTranspose2d(mid_channels, mid_channels // 2, 2, stride=2),
                 get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
                 get_activation(activation_function, inplace=True, beta=activation_beta),
-                ChannelAttentionModule(mid_channels // 2, reduction_ratio=8),
+                ChannelAttentionModule(mid_channels // 2, reduction_ratio=8, activation_function=activation_function, activation_beta=activation_beta),
                 nn.Dropout2d(dropout_rate),
                 ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2), activation_function, activation_beta),
                 nn.Conv2d(mid_channels // 2, 2, 1)

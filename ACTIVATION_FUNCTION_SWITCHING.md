@@ -57,7 +57,7 @@ python train_advanced.py \
 
 ## Implementation Details
 
-The activation function switching has been successfully implemented across all major components of the RGB Hierarchical UNet V2 model. When you set `activation_function='swish'`, approximately 49 out of 50 activation functions after the pre-trained UNet will switch from ReLU to Swish.
+The activation function switching has been successfully implemented across all major components of the RGB Hierarchical UNet V2 model. When you set `activation_function='swish'`, all 50 activation functions after the pre-trained UNet will switch from ReLU to Swish.
 
 The implementation covers:
 1. **RGB Feature Extractor**: All activation functions in the feature extraction layers
@@ -72,15 +72,14 @@ The activation function switching has been fully implemented for all layers afte
 - **RGB Feature Extractor**: ✅ Fully supports activation switching (10 activations)
 - **Shared Features**: ✅ Fully supports activation switching (5 activations)
 - **Background vs Foreground UNet**: ✅ Fully supports activation switching (18 activations)
-- **Target vs Non-target Branch**: ✅ Supports activation switching (5/6 activations*)
+- **Target vs Non-target Branch**: ✅ Fully supports activation switching (all 6 activations)
 - **Upsampling Layers**: ✅ Fully supports activation switching
 - **Gating Mechanisms**: ✅ Fully supports activation switching
 - **Contour Detection Branch**: ✅ Fully supports activation switching
 - **Distance Transform Decoder**: ✅ Fully supports activation switching
 - **Residual Blocks**: ✅ All ResidualBlocks support activation switching
+- **Attention Modules**: ✅ ChannelAttentionModule and AttentionGate fully support activation switching
 - **Pre-trained UNet layers**: ✅ NOT affected (correctly remain as ReLU to preserve pre-trained weights)
-
-*Note: The ChannelAttentionModule contains one hardcoded ReLU that remains unchanged for architectural stability.
 
 ## Performance Considerations
 
