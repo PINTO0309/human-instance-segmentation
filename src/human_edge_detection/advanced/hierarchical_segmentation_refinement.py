@@ -7,6 +7,7 @@ particularly focusing on boundary precision and smoothness.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from typing import Dict, Tuple, Optional, List, Union
 from .activation_utils import ActivationConfig, get_activation
 
@@ -18,7 +19,7 @@ class LayerNorm2d(nn.Module):
         self.weight = nn.Parameter(torch.ones(num_features))
         self.bias = nn.Parameter(torch.zeros(num_features))
         self.eps = eps
-        
+
     def forward(self, x):
         u = x.mean(1, keepdim=True)
         s = (x - u).pow(2).mean(1, keepdim=True)
@@ -32,16 +33,16 @@ class ResidualBlock(nn.Module):
     def __init__(self, channels: int, normalization_type: str = 'layernorm2d', normalization_groups: int = 8, activation_function: str = 'relu', activation_beta: float = 1.0):
         super().__init__()
         from .normalization_comparison import get_normalization_layer
-        
+
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
         self.norm1 = get_normalization_layer(normalization_type, channels, num_groups=normalization_groups)
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
         self.norm2 = get_normalization_layer(normalization_type, channels, num_groups=normalization_groups)
-        
+
         # Create activation modules
         self.activation1 = get_activation(activation_function, inplace=True, beta=activation_beta)
         self.activation2 = get_activation(activation_function, inplace=True, beta=activation_beta)
-        
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
         x = self.conv1(x)
@@ -56,12 +57,12 @@ class ResidualBlock(nn.Module):
 
 class BoundaryRefinementModule(nn.Module):
     """Refines mask boundaries using specialized edge processing."""
-    
+
     def __init__(self, in_channels: int = 3, edge_channels: int = 32,
                  normalization_type: str = 'layernorm2d', normalization_groups: int = 8,
                  activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize boundary refinement module.
-        
+
         Args:
             in_channels: Number of input channels (3 for 3-class mask)
             edge_channels: Number of channels for edge processing
@@ -72,7 +73,7 @@ class BoundaryRefinementModule(nn.Module):
         """
         super().__init__()
         from .normalization_comparison import get_normalization_layer
-        
+
         # Edge detection and refinement network
         self.edge_conv = nn.Sequential(
             nn.Conv2d(in_channels, edge_channels, 3, padding=1),
@@ -83,40 +84,40 @@ class BoundaryRefinementModule(nn.Module):
             get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(edge_channels, in_channels, 1)
         )
-        
+
         # Learnable blending weight - initialize smaller for stability
         self.blend_weight = nn.Parameter(torch.tensor(0.01))
-        
+
         # Initialize edge conv weights smaller
         for m in self.edge_conv.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_uniform_(m.weight, gain=0.1)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-        
+
     def detect_edges(self, mask_logits: torch.Tensor) -> torch.Tensor:
         """Detect edges in the mask using Sobel-like filters.
-        
+
         Args:
             mask_logits: Input mask logits of shape (B, C, H, W)
-            
+
         Returns:
             Edge map of shape (B, 1, H, W)
         """
         # Convert logits to probabilities
         probs = torch.softmax(mask_logits, dim=1)
-        
+
         # Compute gradients
         dy = torch.abs(probs[:, :, 1:, :] - probs[:, :, :-1, :])
         dx = torch.abs(probs[:, :, :, 1:] - probs[:, :, :, :-1])
-        
+
         # Pad to maintain size
         dy = F.pad(dy, (0, 0, 0, 1), mode='replicate')
         dx = F.pad(dx, (0, 1, 0, 0), mode='replicate')
-        
+
         # Combine gradients
         edges = torch.sqrt(dy**2 + dx**2).mean(dim=1, keepdim=True)
-        
+
         # Normalize and threshold with numerical stability
         edge_min = edges.min()
         edge_max = edges.max()
@@ -126,37 +127,37 @@ class BoundaryRefinementModule(nn.Module):
         else:
             edges = (edges - edge_min) / (edge_max - edge_min + 1e-6)
         return edges
-        
+
     def forward(self, mask_logits: torch.Tensor) -> torch.Tensor:
         """Apply boundary refinement to mask logits.
-        
+
         Args:
             mask_logits: Input mask logits of shape (B, C, H, W)
-            
+
         Returns:
             Refined mask logits of shape (B, C, H, W)
         """
         # Detect edges
         edges = self.detect_edges(mask_logits)
-        
+
         # Apply edge-aware refinement
         refined_edges = self.edge_conv(mask_logits)
-        
+
         # Blend with original based on edge strength
         refined = mask_logits + self.blend_weight * refined_edges * edges
-        
+
         return refined
 
 
 class ProgressiveUpsamplingDecoder(nn.Module):
     """Progressive upsampling for smoother boundaries."""
-    
+
     def __init__(self, in_channels: int, num_classes: int = 3,
                  normalization_type: str = 'layernorm2d',
                  normalization_groups: int = 8,
                  activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize progressive upsampling decoder.
-        
+
         Args:
             in_channels: Number of input feature channels
             num_classes: Number of output classes
@@ -167,7 +168,7 @@ class ProgressiveUpsamplingDecoder(nn.Module):
         """
         super().__init__()
         from .normalization_comparison import get_normalization_layer
-        
+
         # Progressive upsampling stages
         self.stages = nn.ModuleList([
             # Stage 1: 2x upsampling
@@ -187,39 +188,39 @@ class ProgressiveUpsamplingDecoder(nn.Module):
             # Final projection
             nn.Conv2d(in_channels//4, num_classes, 1)
         ])
-        
+
     def forward(self, features: torch.Tensor, target_size: int) -> torch.Tensor:
         """Apply progressive upsampling.
-        
+
         Args:
             features: Input features
             target_size: Target output size
-            
+
         Returns:
             Upsampled output
         """
         x = features
-        
+
         # Apply progressive upsampling
         for i, stage in enumerate(self.stages[:-1]):
             x = stage(x)
-        
+
         # Final projection
         x = self.stages[-1](x)
-        
+
         # Ensure output is target size
         if x.shape[-1] != target_size:
             x = F.interpolate(x, size=target_size, mode='bilinear', align_corners=False)
-            
+
         return x
 
 
 class SubPixelDecoder(nn.Module):
     """Sub-pixel convolution for high-quality upsampling."""
-    
+
     def __init__(self, in_channels: int, num_classes: int = 3, upscale_factor: int = 2):
         """Initialize sub-pixel decoder.
-        
+
         Args:
             in_channels: Number of input channels
             num_classes: Number of output classes
@@ -227,22 +228,22 @@ class SubPixelDecoder(nn.Module):
         """
         super().__init__()
         self.upscale_factor = upscale_factor
-        
+
         # Sub-pixel convolution
         self.conv = nn.Conv2d(
-            in_channels, 
-            num_classes * upscale_factor**2, 
-            3, 
+            in_channels,
+            num_classes * upscale_factor**2,
+            3,
             padding=1
         )
         self.pixel_shuffle = nn.PixelShuffle(upscale_factor)
-        
+
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """Apply sub-pixel upsampling.
-        
+
         Args:
             features: Input features
-            
+
         Returns:
             Upsampled output
         """
@@ -253,12 +254,12 @@ class SubPixelDecoder(nn.Module):
 
 class ContourDetectionBranch(nn.Module):
     """Explicit contour detection branch for boundary refinement."""
-    
+
     def __init__(self, in_channels: int, contour_channels: int = 64,
                  normalization_type: str = 'layernorm2d', normalization_groups: int = 8,
                  activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize contour detection branch.
-        
+
         Args:
             in_channels: Number of input channels
             contour_channels: Number of channels for contour processing
@@ -268,9 +269,9 @@ class ContourDetectionBranch(nn.Module):
             activation_beta: Beta parameter for Swish
         """
         super().__init__()
-        
+
         from .normalization_comparison import get_normalization_layer
-        
+
         self.contour_branch = nn.Sequential(
             nn.Conv2d(in_channels, contour_channels, 3, padding=1),
             get_normalization_layer(normalization_type, contour_channels, num_groups=normalization_groups),
@@ -281,13 +282,13 @@ class ContourDetectionBranch(nn.Module):
             nn.Conv2d(contour_channels, 1, 1),
             nn.Sigmoid()
         )
-        
+
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """Detect contours from features.
-        
+
         Args:
             features: Input features
-            
+
         Returns:
             Contour map of shape (B, 1, H, W)
         """
@@ -296,12 +297,12 @@ class ContourDetectionBranch(nn.Module):
 
 class DistanceTransformDecoder(nn.Module):
     """Distance transform prediction for mask refinement."""
-    
+
     def __init__(self, in_channels: int, distance_channels: int = 128,
                  normalization_type: str = 'layernorm2d', normalization_groups: int = 8,
                  activation_function: str = 'relu', activation_beta: float = 1.0):
         """Initialize distance transform decoder.
-        
+
         Args:
             in_channels: Number of input channels
             distance_channels: Number of channels for distance processing
@@ -311,9 +312,9 @@ class DistanceTransformDecoder(nn.Module):
             activation_beta: Beta parameter for Swish
         """
         super().__init__()
-        
+
         from .normalization_comparison import get_normalization_layer
-        
+
         self.distance_head = nn.Sequential(
             nn.Conv2d(in_channels, distance_channels, 3, padding=1),
             get_normalization_layer(normalization_type, distance_channels, num_groups=normalization_groups),
@@ -321,35 +322,35 @@ class DistanceTransformDecoder(nn.Module):
             ResidualBlock(distance_channels, normalization_type, normalization_groups, activation_function, activation_beta),
             nn.Conv2d(distance_channels, 1, 1)
         )
-        
+
         # Learnable threshold - initialize smaller
         self.threshold = nn.Parameter(torch.tensor(0.3))
-        
+
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Predict distance transform and convert to mask.
-        
+
         Args:
             features: Input features
-            
+
         Returns:
             Tuple of (mask, distance_map)
         """
         # Predict distance from boundary
         distance_map = self.distance_head(features)
-        
+
         # Convert to mask using learnable threshold
         mask = torch.sigmoid((distance_map - self.threshold) * 10)  # Sharp transition
-        
+
         return mask, distance_map
 
 
 def active_contour_loss(pred_mask: torch.Tensor, smoothness_weight: float = 0.01) -> torch.Tensor:
     """Active contour loss for smooth boundaries.
-    
+
     Args:
         pred_mask: Predicted mask probabilities (after softmax)
         smoothness_weight: Weight for curvature term
-        
+
     Returns:
         Scalar loss value
     """
@@ -357,82 +358,82 @@ def active_contour_loss(pred_mask: torch.Tensor, smoothness_weight: float = 0.01
     if pred_mask.dim() == 4 and pred_mask.shape[1] > 1:
         # Multi-class case - use target class
         pred_mask = pred_mask[:, 1:2, :, :]  # Target class
-    
+
     # Compute gradients
     dy = pred_mask[:, :, 1:, :] - pred_mask[:, :, :-1, :]
     dx = pred_mask[:, :, :, 1:] - pred_mask[:, :, :, :-1]
-    
+
     # Boundary length (L1 norm of gradients) with clamping for stability
     dy_clamped = torch.clamp(torch.abs(dy), max=10.0)
     dx_clamped = torch.clamp(torch.abs(dx), max=10.0)
     boundary_length = torch.mean(dy_clamped) + torch.mean(dx_clamped)
-    
+
     # Curvature (second derivatives)
     if dy.shape[2] > 1:
         ddy = dy[:, :, 1:, :] - dy[:, :, :-1, :]
         curvature_y = torch.mean(torch.abs(ddy))
     else:
         curvature_y = 0
-        
+
     if dx.shape[3] > 1:
         ddx = dx[:, :, :, 1:] - dx[:, :, :, :-1]
         curvature_x = torch.mean(torch.abs(ddx))
     else:
         curvature_x = 0
-    
+
     curvature = curvature_y + curvature_x
-    
+
     return boundary_length + smoothness_weight * curvature
 
 
 def boundary_aware_loss(
-    pred: torch.Tensor, 
-    target: torch.Tensor, 
+    pred: torch.Tensor,
+    target: torch.Tensor,
     boundary_width: int = 3,
     boundary_weight: float = 5.0
 ) -> torch.Tensor:
     """Boundary-aware weighted cross-entropy loss.
-    
+
     Args:
         pred: Predicted logits of shape (B, C, H, W)
         target: Target labels of shape (B, H, W)
         boundary_width: Width of boundary region
         boundary_weight: Weight for boundary pixels
-        
+
     Returns:
         Weighted loss tensor
     """
     # Get one-hot encoding of target
     B, C, H, W = pred.shape
     target_onehot = F.one_hot(target, num_classes=C).permute(0, 3, 1, 2).float()
-    
+
     # Detect boundaries using morphological operations
     kernel_size = boundary_width
     pool = nn.MaxPool2d(kernel_size, stride=1, padding=kernel_size//2)
-    
+
     # Dilate target masks
     dilated = pool(target_onehot)
-    
+
     # Erode target masks (using -MaxPool on inverted mask)
     eroded = 1 - pool(1 - target_onehot)
-    
+
     # Boundary is dilated - eroded
     boundary = (dilated - eroded).sum(dim=1, keepdim=True) > 0
-    
+
     # Create weight map
     weights = torch.ones_like(target, dtype=torch.float32)
     weights[boundary.squeeze(1)] = boundary_weight
-    
+
     # Compute weighted cross-entropy
     loss = F.cross_entropy(pred, target, reduction='none')
     weighted_loss = loss * weights
-    
+
     return weighted_loss.mean()
 
 
 class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
     """Extended version of HierarchicalSegmentationHeadUNetV2 that exposes shared features."""
-    
+
     def __init__(
         self,
         in_channels: int,
@@ -448,16 +449,16 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
     ):
         """Initialize extended hierarchical segmentation head V2."""
         super().__init__()
-        
+
         # Import necessary components
         from .hierarchical_segmentation_unet import (
             SpatialAttentionModule, ChannelAttentionModule
         )
-        
+
         # Import EnhancedUNet which now supports normalization
         from .hierarchical_segmentation_unet import EnhancedUNet
         base_channels = 64  # Keep consistent base channels
-        
+
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
         self.num_classes = num_classes
         # Support non-square mask sizes
@@ -469,10 +470,10 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
             self.mask_height = self.mask_width = int(mask_size)
             self.mask_size = mask_size
         self.use_attention_module = use_attention_module
-        
+
         # Import normalization utility
         from .normalization_comparison import get_normalization_layer
-        
+
         # Shared feature processing
         self.shared_features = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 3, padding=1),
@@ -483,18 +484,18 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
             nn.Dropout2d(dropout_rate),
             ResidualBlock(mid_channels, normalization_type, normalization_groups, activation_function, activation_beta),
         )
-        
+
         # Branch 1: Background vs Foreground using Enhanced UNet
         self.bg_vs_fg_unet = EnhancedUNet(
-            mid_channels, 
-            base_channels=base_channels, 
+            mid_channels,
+            base_channels=base_channels,
             depth=3,
             normalization_type=normalization_type,
             normalization_groups=normalization_groups,
             activation_function=activation_function,
             activation_beta=activation_beta
         )
-        
+
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(
             nn.ConvTranspose2d(2, 32, 2, stride=2),
@@ -502,7 +503,7 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
             get_activation(activation_function, inplace=True, beta=activation_beta),
             nn.Conv2d(32, 2, 1)
         )
-        
+
         # Branch 2: Target vs Non-target
         if use_attention_module:
             # Build modules list manually to handle normalization
@@ -530,7 +531,7 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
                 ResidualBlock(mid_channels // 2, normalization_type, min(normalization_groups, mid_channels // 2), activation_function, activation_beta),
                 nn.Conv2d(mid_channels // 2, 2, 1)
             )
-        
+
         # Enhanced gating
         self.fg_gate = nn.Sequential(
             nn.Conv2d(2, mid_channels // 4, 1),
@@ -541,19 +542,19 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
             nn.Conv2d(mid_channels // 2, mid_channels, 1),
             nn.Sigmoid()
         )
-        
+
         # Store shared features for refinement modules
         self._shared_features_cache = None
-        
+
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Forward pass with feature caching."""
         # Shared feature extraction
         shared = self.shared_features(features)
         self._shared_features_cache = shared  # Cache for refinement modules
-        
+
         # Rest is same as original
         bg_fg_logits_low = self.bg_vs_fg_unet(shared)
-        
+
         bg_fg_logits = self.upsample_bg_fg(bg_fg_logits_low)
         if bg_fg_logits.shape[2] != self.mask_height or bg_fg_logits.shape[3] != self.mask_width:
             bg_fg_logits = F.interpolate(
@@ -563,10 +564,10 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
                 align_corners=False
             )
         bg_fg_probs = F.softmax(bg_fg_logits, dim=1)
-        
+
         fg_attention = self.fg_gate(bg_fg_logits_low)
         gated_features = shared * fg_attention
-        
+
         if self.use_attention_module:
             x = gated_features
             for module in self.target_vs_nontarget_branch:
@@ -574,7 +575,7 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
             target_nontarget_logits = x
         else:
             target_nontarget_logits = self.target_vs_nontarget_branch(gated_features)
-        
+
         if target_nontarget_logits.shape[2] != self.mask_height or target_nontarget_logits.shape[3] != self.mask_width:
             target_nontarget_logits = F.interpolate(
                 target_nontarget_logits,
@@ -582,17 +583,17 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
                 mode='bilinear',
                 align_corners=False
             )
-        
+
         # Combine predictions
         batch_size = features.shape[0]
         final_logits = torch.zeros(batch_size, 3, self.mask_height, self.mask_width,
                                   device=features.device)
-        
+
         final_logits[:, 0] = bg_fg_logits[:, 0]
         fg_mask = bg_fg_probs[:, 1:2]
         final_logits[:, 1] = bg_fg_logits[:, 1] + target_nontarget_logits[:, 0] * fg_mask.squeeze(1)
         final_logits[:, 2] = bg_fg_logits[:, 1] + target_nontarget_logits[:, 1] * fg_mask.squeeze(1)
-        
+
         aux_outputs = {
             'bg_fg_logits': bg_fg_logits,
             'bg_fg_logits_low': bg_fg_logits_low,
@@ -600,13 +601,13 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
             'fg_attention': fg_attention,
             'shared_features': self._shared_features_cache  # Include shared features
         }
-        
+
         return final_logits, aux_outputs
 
 
 class RefinedHierarchicalSegmentationHead(nn.Module):
     """Enhanced hierarchical segmentation head with refinement modules."""
-    
+
     def __init__(
         self,
         in_channels: int,
@@ -628,7 +629,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         activation_beta: float = 1.0,
     ):
         """Initialize refined hierarchical segmentation head.
-        
+
         Args:
             in_channels: Number of input channels
             mid_channels: Number of channels in intermediate layers
@@ -642,7 +643,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             use_distance_transform: Enable distance transform prediction
         """
         super().__init__()
-        
+
         # Use extended version that exposes shared features
         self.base_head = ExtendedHierarchicalSegmentationHeadUNetV2(
             in_channels=in_channels,
@@ -655,7 +656,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             activation_function=activation_function,
             activation_beta=activation_beta
         )
-        
+
         # Support non-square mask sizes
         if isinstance(mask_size, (tuple, list)):
             self.mask_height = int(mask_size[0])
@@ -665,14 +666,14 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             self.mask_height = self.mask_width = int(mask_size)
             self.mask_size = mask_size
         self.num_classes = num_classes
-        
+
         # Refinement modules
         self.use_boundary_refinement = use_boundary_refinement
         self.use_progressive_upsampling = use_progressive_upsampling
         self.use_subpixel_conv = use_subpixel_conv
         self.use_contour_detection = use_contour_detection
         self.use_distance_transform = use_distance_transform
-        
+
         if use_boundary_refinement:
             self.boundary_refiner = BoundaryRefinementModule(
                 in_channels=num_classes,
@@ -682,7 +683,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 activation_function=activation_function,
                 activation_beta=activation_beta
             )
-            
+
         if use_progressive_upsampling:
             # Replace final decoder with progressive upsampling
             self.progressive_decoder = ProgressiveUpsamplingDecoder(
@@ -693,7 +694,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 activation_function=activation_function,
                 activation_beta=activation_beta
             )
-            
+
         if use_subpixel_conv:
             # Alternative to progressive upsampling
             self.subpixel_decoder = SubPixelDecoder(
@@ -701,7 +702,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 num_classes=num_classes,
                 upscale_factor=2
             )
-            
+
         if use_contour_detection:
             self.contour_branch = ContourDetectionBranch(
                 in_channels=mid_channels,
@@ -711,7 +712,7 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 activation_function=activation_function,
                 activation_beta=activation_beta
             )
-            
+
         if use_distance_transform:
             self.distance_decoder = DistanceTransformDecoder(
                 in_channels=mid_channels,
@@ -721,25 +722,25 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 activation_function=activation_function,
                 activation_beta=activation_beta
             )
-            
+
     def forward(self, features: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Forward pass with refinement.
-        
+
         Args:
             features: Input features
-            
+
         Returns:
             Tuple of (refined masks, auxiliary outputs)
         """
         # Get base predictions
         base_masks, aux_outputs = self.base_head(features)
-        
+
         # Extract shared features from aux_outputs
         bg_fg_features = aux_outputs.get('shared_features', None)
-            
+
         # Apply refinements
         refined_masks = base_masks
-        
+
         # Replace decoder if using progressive upsampling or subpixel conv
         if self.use_progressive_upsampling and bg_fg_features is not None:
             # Re-decode with progressive upsampling
@@ -749,29 +750,29 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             refined_masks = self.subpixel_decoder(bg_fg_features)
             if refined_masks.shape[2] != self.mask_height or refined_masks.shape[3] != self.mask_width:
                 refined_masks = F.interpolate(
-                    refined_masks, 
-                    size=(self.mask_height, self.mask_width), 
-                    mode='bilinear', 
+                    refined_masks,
+                    size=(self.mask_height, self.mask_width),
+                    mode='bilinear',
                     align_corners=False
                 )
-                
+
         # Apply boundary refinement
         if self.use_boundary_refinement:
             refined_masks = self.boundary_refiner(refined_masks)
-            
+
         # Add auxiliary outputs
         if self.use_contour_detection and bg_fg_features is not None:
             contours = self.contour_branch(bg_fg_features)
             # Ensure contours match mask size
             if contours.shape[2] != self.mask_height or contours.shape[3] != self.mask_width:
                 contours = F.interpolate(
-                    contours, 
-                    size=(self.mask_height, self.mask_width), 
-                    mode='bilinear', 
+                    contours,
+                    size=(self.mask_height, self.mask_width),
+                    mode='bilinear',
                     align_corners=False
                 )
             aux_outputs['contours'] = contours
-            
+
         if self.use_distance_transform and bg_fg_features is not None:
             dist_mask, dist_map = self.distance_decoder(bg_fg_features)
             # Ensure distance outputs match mask size
@@ -791,13 +792,13 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
                 )
             aux_outputs['distance_mask'] = dist_mask
             aux_outputs['distance_map'] = dist_map
-            
+
         return refined_masks, aux_outputs
 
 
 class RefinedHierarchicalLoss(nn.Module):
     """Hierarchical loss with refinement components."""
-    
+
     def __init__(
         self,
         bg_weight: float = 1.5,
@@ -817,9 +818,12 @@ class RefinedHierarchicalLoss(nn.Module):
         use_boundary_aware_loss: bool = False,
         use_contour_detection: bool = False,
         use_distance_transform: bool = False,
+        # Base mask size for automatic weight adjustment
+        base_mask_size: Tuple[int, int] = (64, 48),
+        auto_adjust_contour_weight: bool = True,
     ):
         """Initialize refined hierarchical loss.
-        
+
         Args:
             bg_weight: Weight for background/foreground loss
             fg_weight: Weight for foreground loss
@@ -836,12 +840,14 @@ class RefinedHierarchicalLoss(nn.Module):
             use_boundary_aware_loss: Enable boundary-aware loss
             use_contour_detection: Enable contour detection loss
             use_distance_transform: Enable distance transform loss
+            base_mask_size: Base mask size (height, width) for weight normalization
+            auto_adjust_contour_weight: Whether to auto-adjust contour weight based on resolution
         """
         super().__init__()
-        
+
         # Import base hierarchical loss
         from .hierarchical_segmentation import HierarchicalLoss
-        
+
         # Base hierarchical loss
         self.base_loss = HierarchicalLoss(
             bg_weight=bg_weight,
@@ -852,50 +858,55 @@ class RefinedHierarchicalLoss(nn.Module):
             dice_weight=dice_weight,
             ce_weight=ce_weight
         )
-        
+
         # Refinement loss weights
         self.active_contour_weight = active_contour_weight
         self.boundary_aware_weight = boundary_aware_weight
         self.contour_loss_weight = contour_loss_weight
         self.distance_loss_weight = distance_loss_weight
-        
+
         # Refinement flags
         self.use_active_contour_loss = use_active_contour_loss
         self.use_boundary_aware_loss = use_boundary_aware_loss
         self.use_contour_detection = use_contour_detection
         self.use_distance_transform = use_distance_transform
         
+        # Resolution-aware weight adjustment
+        self.base_mask_size = base_mask_size
+        self.auto_adjust_contour_weight = auto_adjust_contour_weight
+        self.base_resolution = base_mask_size[0] * base_mask_size[1]  # 64 * 48 = 3072
+
         # Contour loss (BCE)
         if use_contour_detection:
             self.contour_criterion = nn.BCEWithLogitsLoss()
-            
+
         # Distance transform loss (L1)
         if use_distance_transform:
             self.distance_criterion = nn.L1Loss()
-            
+
     def forward(
-        self, 
-        pred: torch.Tensor, 
+        self,
+        pred: torch.Tensor,
         target: torch.Tensor,
         aux_outputs: Optional[Dict[str, torch.Tensor]] = None
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """Compute refined hierarchical loss.
-        
+
         Args:
             pred: Predicted logits
             target: Target masks
             aux_outputs: Auxiliary outputs from model
-            
+
         Returns:
             Tuple of (total loss, loss components dict)
         """
         # Get base hierarchical loss
         base_loss, base_components = self.base_loss(pred, target, aux_outputs)
-        
+
         # Initialize total loss and components
         total_loss = base_loss
         loss_components = base_components.copy()
-        
+
         # Add refinement losses with clamping for stability
         if self.use_active_contour_loss:
             # Convert logits to probabilities
@@ -905,10 +916,10 @@ class RefinedHierarchicalLoss(nn.Module):
             ac_loss = torch.clamp(ac_loss, max=10.0)
             total_loss = total_loss + self.active_contour_weight * ac_loss
             loss_components['active_contour'] = ac_loss.item()
-            
+
         if self.use_boundary_aware_loss:
             ba_loss = boundary_aware_loss(
-                pred, target, 
+                pred, target,
                 boundary_width=3,
                 boundary_weight=2.0
             )
@@ -916,19 +927,39 @@ class RefinedHierarchicalLoss(nn.Module):
             ba_loss = torch.clamp(ba_loss, max=10.0)
             total_loss = total_loss + self.boundary_aware_weight * ba_loss
             loss_components['boundary_aware'] = ba_loss.item()
-            
+
         if self.use_contour_detection and aux_outputs and 'contours' in aux_outputs:
             # Generate contour targets from masks
             contour_targets = self._generate_contour_targets(target)
             contour_loss = self.contour_criterion(
-                aux_outputs['contours'], 
+                aux_outputs['contours'],
                 contour_targets
             )
             # Clamp to prevent explosion
             contour_loss = torch.clamp(contour_loss, max=10.0)
-            total_loss = total_loss + self.contour_loss_weight * contour_loss
-            loss_components['contour'] = contour_loss.item()
             
+            # Auto-adjust contour weight based on resolution if enabled
+            if self.auto_adjust_contour_weight:
+                # Get current mask resolution
+                H, W = target.shape[1], target.shape[2]
+                current_resolution = H * W
+                
+                # Calculate adjustment factor
+                # Higher resolution = smaller relative edge area = need higher weight
+                # Using inverse square root for smooth scaling
+                adjustment_factor = np.sqrt(self.base_resolution / current_resolution)
+                adjusted_weight = self.contour_loss_weight * adjustment_factor
+                
+                # Apply reasonable bounds to prevent extreme values
+                adjusted_weight = max(0.001, min(adjusted_weight, 0.5))
+            else:
+                adjusted_weight = self.contour_loss_weight
+            
+            total_loss = total_loss + adjusted_weight * contour_loss
+            loss_components['contour'] = contour_loss.item()
+            # Also track the adjusted weight for monitoring
+            loss_components['contour_weight'] = adjusted_weight
+
         if self.use_distance_transform and aux_outputs and 'distance_map' in aux_outputs:
             # Generate distance targets from masks
             distance_targets = self._generate_distance_targets(target)
@@ -940,63 +971,89 @@ class RefinedHierarchicalLoss(nn.Module):
             distance_loss = torch.clamp(distance_loss, max=10.0)
             total_loss = total_loss + self.distance_loss_weight * distance_loss
             loss_components['distance_transform'] = distance_loss.item()
-            
+
         return total_loss, loss_components
-        
+
     def _generate_contour_targets(self, masks: torch.Tensor) -> torch.Tensor:
-        """Generate contour targets from segmentation masks.
-        
+        """Generate contour targets from segmentation masks with resolution-aware edge width.
+
         Args:
             masks: Target masks of shape (B, H, W)
-            
+
         Returns:
             Binary contour targets of shape (B, 1, H, W)
         """
         B, H, W = masks.shape
-        
+
         # Convert to one-hot for edge detection
         masks_onehot = F.one_hot(masks, num_classes=3).permute(0, 3, 1, 2).float()
-        
+
         # Target class (class 1) edges
         target_mask = masks_onehot[:, 1:2, :, :]
-        
+
         # Compute gradients
         dy = torch.abs(target_mask[:, :, 1:, :] - target_mask[:, :, :-1, :])
         dx = torch.abs(target_mask[:, :, :, 1:] - target_mask[:, :, :, :-1])
-        
+
         # Pad to maintain size
         dy = F.pad(dy, (0, 0, 0, 1), mode='replicate')
         dx = F.pad(dx, (0, 1, 0, 0), mode='replicate')
-        
+
         # Combine gradients
         contours = torch.max(dy, dx)
-        
+
+        # Adaptive edge width based on resolution
+        # For 64x48 (base), edge_width = 1 (no dilation)
+        # For 128x96, edge_width = 3
+        # For 160x112, edge_width = 4
+        base_resolution = 64 * 48  # 3072
+        current_resolution = H * W
+        resolution_ratio = current_resolution / base_resolution
+
+        # Calculate edge width: 1 pixel for base resolution, scaling up with resolution
+        # Using sqrt to prevent excessive widening at very high resolutions
+        edge_width = max(1, int(np.sqrt(resolution_ratio) * 1.5))
+
+        # Apply dilation only if edge_width > 1
+        if edge_width > 1:
+            # Create dilation kernel
+            kernel_size = 2 * edge_width - 1  # Ensure odd size
+            kernel = torch.ones(1, 1, kernel_size, kernel_size, device=contours.device) / (kernel_size * kernel_size)
+
+            # Apply dilation via convolution
+            # Use padding to maintain size
+            padding = kernel_size // 2
+            contours_dilated = F.conv2d(contours, kernel, padding=padding)
+
+            # Threshold to create binary edges (anything touched by the kernel becomes edge)
+            contours = (contours_dilated > 0.1).float()
+
         return contours
-        
+
     def _generate_distance_targets(self, masks: torch.Tensor) -> torch.Tensor:
         """Generate distance transform targets from segmentation masks.
-        
+
         Note: This is a simplified version. In practice, you might want to
         use scipy.ndimage.distance_transform_edt on CPU for accurate results.
-        
+
         Args:
             masks: Target masks of shape (B, H, W)
-            
+
         Returns:
             Distance maps of shape (B, 1, H, W)
         """
         B, H, W = masks.shape
-        
+
         # For now, return a simple approximation
         # Real implementation would compute true distance transform
         target_mask = (masks == 1).float().unsqueeze(1)
-        
+
         # Simple distance approximation using max pooling
         distances = target_mask.clone()
-        
+
         # Iterative dilation to approximate distance
         for i in range(5):
             dilated = F.max_pool2d(distances, 3, stride=1, padding=1)
             distances = distances + (1 - distances) * dilated * 0.5
-            
+
         return distances
