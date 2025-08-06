@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 BATCH_SIZE = 2  # Reduced for memory constraints
 
 def main():
-    checkpoint_path = "experiments/rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48_disttrans_contdet_baware/checkpoints/checkpoint_epoch_0070.pth"
+    checkpoint_path = "experiments/rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware/checkpoints/checkpoint_epoch_0048.pth"
 
     print("Simple validation script for RGB Hierarchical UNet V2")
     print(f"Checkpoint: {checkpoint_path}")
@@ -22,10 +22,10 @@ def main():
     import sys
     sys.argv = [
         'train_advanced.py',
-        '--config', 'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m64x48_disttrans_contdet_baware',
+        '--config', 'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware',
         '--resume', checkpoint_path,
         '--test_only',
-        '--config_modifications', f'{{"training.batch_size":{BATCH_SIZE},"data.use_edge_visualize":true}}'
+        '--config_modifications', f'{{"training.batch_size":{BATCH_SIZE},"data.use_edge_visualize":false}}'
     ]
 
     # Import and run train_advanced
