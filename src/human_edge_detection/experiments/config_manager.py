@@ -56,6 +56,20 @@ class AuxiliaryTaskConfig:
 
 
 @dataclass
+class DistillationConfig:
+    """Configuration for knowledge distillation."""
+    enabled: bool = False
+    teacher_checkpoint: str = ""  # Path to teacher model checkpoint
+    temperature: float = 4.0  # Temperature for softening distributions
+    alpha: float = 0.7  # Weight for distillation loss (1-alpha for base loss)
+    distill_logits: bool = True  # Distill output logits
+    distill_features: bool = False  # Distill intermediate features
+    feature_match_layers: List[str] = field(default_factory=list)  # Layers for feature matching
+    freeze_teacher: bool = True  # Freeze teacher model weights
+    student_encoder: str = "timm-efficientnet-b0"  # Student model encoder
+
+
+@dataclass
 class TrainingConfig:
     """Training configuration."""
     # Basic settings
@@ -176,6 +190,7 @@ class ExperimentConfig:
     cascade: CascadeConfig = field(default_factory=CascadeConfig)
     relational: RelationalConfig = field(default_factory=RelationalConfig)
     auxiliary_task: AuxiliaryTaskConfig = field(default_factory=AuxiliaryTaskConfig)
+    distillation: DistillationConfig = field(default_factory=DistillationConfig)
 
     # Output settings
     output_dir: str = 'experiments'
@@ -206,6 +221,8 @@ class ExperimentConfig:
             data['relational'] = RelationalConfig(**data['relational'])
         if 'auxiliary_task' in data and isinstance(data['auxiliary_task'], dict):
             data['auxiliary_task'] = AuxiliaryTaskConfig(**data['auxiliary_task'])
+        if 'distillation' in data and isinstance(data['distillation'], dict):
+            data['distillation'] = DistillationConfig(**data['distillation'])
 
         return cls(**data)
 
@@ -2560,6 +2577,83 @@ class ConfigManager:
                 weight=0.3,
                 mid_channels=128,
                 visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=4,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+
+        # Knowledge distillation configuration
+        'rgb_hierarchical_unet_v2_distillation_b0_from_b3': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_distillation_b0_from_b3',
+            description='Knowledge distillation from EfficientNet-B3 teacher to EfficientNet-B0 student',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(80, 60),  # Same as teacher
+                mask_size=(160, 120),  # Same as teacher
+                onnx_model=None,
+                # Student model configuration (B0)
+                use_pretrained_unet=True,  # Still using the UNet architecture
+                pretrained_weights_path="",  # No pre-trained weights for B0
+                freeze_pretrained_weights=False,  # Student needs to be trainable
+                use_full_image_unet=True,  # Same as teacher
+                # Refinement modules (same as teacher)
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization and activation (same as teacher)
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                activation_function='relu',
+                activation_beta=1.0,
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            distillation=DistillationConfig(
+                enabled=True,
+                teacher_checkpoint="experiments/rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware/checkpoints/checkpoint_epoch_0048.pth",
+                temperature=4.0,
+                alpha=0.7,  # 70% distillation, 30% ground truth
+                distill_logits=True,
+                distill_features=False,
+                feature_match_layers=[],
+                freeze_teacher=True,
+                student_encoder="timm-efficientnet-b0"
             ),
             data=DataConfig(
                 train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",

@@ -40,6 +40,10 @@ class AdvancedONNXExporter:
             include_auxiliary: Whether to include auxiliary outputs in ONNX export
             mask_size: Mask size (int or tuple) from config
         """
+        # Handle DistillationModelWrapper - export only student model
+        from src.human_edge_detection.advanced.knowledge_distillation import DistillationModelWrapper
+        if isinstance(model, DistillationModelWrapper):
+            model = model.get_student()
         self.model = model.to(device)
         self.model_type = model_type
         self.device = device
@@ -1047,12 +1051,20 @@ def export_checkpoint_to_onnx_advanced(
         return False
 
     # Load model weights with strict=False for architecture changes
+    # If model is wrapped in DistillationModelWrapper, load into student model
+    from src.human_edge_detection.advanced.knowledge_distillation import DistillationModelWrapper
+    if isinstance(model, DistillationModelWrapper):
+        # Load weights into student model only
+        model_to_load = model.get_student()
+    else:
+        model_to_load = model
+    
     try:
-        model.load_state_dict(checkpoint['model_state_dict'], strict=True)
+        model_to_load.load_state_dict(checkpoint['model_state_dict'], strict=True)
     except RuntimeError as e:
         print(f"Warning: Failed to load model weights with strict=True, trying strict=False...")
         print(f"Error: {e}")
-        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        model_to_load.load_state_dict(checkpoint['model_state_dict'], strict=False)
 
     # Extract mask_size from config
     mask_size = None

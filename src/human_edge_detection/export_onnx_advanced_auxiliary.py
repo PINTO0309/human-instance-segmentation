@@ -138,8 +138,20 @@ def export_model_inference_only(
     # The model is already wrapped with auxiliary task if enabled
     print(f"Model type: {type(model).__name__}")
 
-    # Load weights
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # Load weights - handle DistillationModelWrapper
+    from src.human_edge_detection.advanced.knowledge_distillation import DistillationModelWrapper
+    if isinstance(model, DistillationModelWrapper):
+        # Load weights into student model only
+        model_to_load = model.get_student()
+    else:
+        model_to_load = model
+    
+    model_to_load.load_state_dict(checkpoint['model_state_dict'])
+    
+    # If using distillation, get student model for export
+    if isinstance(model, DistillationModelWrapper):
+        model = model.get_student()
+    
     model = model.to(device)
     model.eval()
 

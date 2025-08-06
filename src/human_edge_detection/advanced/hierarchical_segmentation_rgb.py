@@ -488,7 +488,8 @@ class HierarchicalRGBSegmentationModelWithPretrainedUNet(nn.Module):
         self.pretrained_unet = PreTrainedPeopleSegmentationUNetWrapper(
             in_channels=3,
             pretrained_weights_path=pretrained_weights_path,
-            freeze_weights=freeze_pretrained_weights
+            freeze_weights=freeze_pretrained_weights,
+            encoder_name=kwargs.get('encoder_name', 'timm-efficientnet-b3')
         )
 
         # Feature dimension after ROI extraction (for hierarchical head)
@@ -577,6 +578,7 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
         # Activation function configuration
         activation_function: str = 'relu',
         activation_beta: float = 1.0,
+        **kwargs
     ):
         """Initialize hierarchical RGB segmentation model with full-image pre-trained UNet.
 
@@ -609,16 +611,16 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
 
         # Import pre-trained model classes
         from .hierarchical_segmentation_unet import (
-            PreTrainedPeopleSegmentationUNet,
+            PreTrainedPeopleSegmentationUNetWrapper,
             HierarchicalSegmentationHeadUNetV2
         )
 
-        # Create pre-trained UNet for full image processing
-        self.pretrained_unet = PreTrainedPeopleSegmentationUNet(
+        # Create pre-trained UNet for full image processing using wrapper
+        self.pretrained_unet = PreTrainedPeopleSegmentationUNetWrapper(
             in_channels=3,
-            classes=1,  # Binary segmentation for person detection
             pretrained_weights_path=pretrained_weights_path,
-            freeze_weights=freeze_pretrained_weights
+            freeze_weights=freeze_pretrained_weights,
+            encoder_name=kwargs.get('encoder_name', 'timm-efficientnet-b3')
         )
 
         # ROI alignment to extract bg/fg masks from UNet output
@@ -663,8 +665,9 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
 
         # Since we need to incorporate pre-trained UNet bg/fg masks,
         # we'll concatenate them with features, so adjust input channels
-        # feature_dim (256) + 1 channel for bg/fg mask = 257
-        combined_feature_dim = feature_dim + 1
+        # The pretrained UNet outputs 2 channels (background and foreground probabilities)
+        # feature_dim (256) + 2 channels for bg/fg masks = 258
+        combined_feature_dim = feature_dim + 2
 
         # Check if any refinement modules are enabled
         use_refinement = any([
@@ -724,7 +727,12 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             aux_outputs: Auxiliary outputs dict
         """
         # Apply pre-trained UNet to full images
-        full_image_logits = self.pretrained_unet(images)  # (B, 1, H, W)
+        # The pretrained_unet may return a tuple (main_output, aux_output) or just main_output
+        unet_output = self.pretrained_unet(images)
+        if isinstance(unet_output, tuple):
+            full_image_logits, _ = unet_output  # Take main output, ignore aux
+        else:
+            full_image_logits = unet_output  # (B, 1, H, W)
 
         # Extract bg/fg masks for each ROI from UNet output
         roi_bg_fg_masks = self.roi_align_mask(full_image_logits, rois, self.roi_size[0], self.roi_size[1])
@@ -925,20 +933,20 @@ def create_rgb_hierarchical_model(
         Hierarchical segmentation model
     """
     # Extract common parameters
-    use_attention_module = kwargs.get('use_attention_module', False)
+    use_attention_module = kwargs.pop('use_attention_module', False)
 
     # Extract refinement parameters
-    use_boundary_refinement = kwargs.get('use_boundary_refinement', False)
-    use_progressive_upsampling = kwargs.get('use_progressive_upsampling', False)
-    use_subpixel_conv = kwargs.get('use_subpixel_conv', False)
-    use_contour_detection = kwargs.get('use_contour_detection', False)
-    use_distance_transform = kwargs.get('use_distance_transform', False)
+    use_boundary_refinement = kwargs.pop('use_boundary_refinement', False)
+    use_progressive_upsampling = kwargs.pop('use_progressive_upsampling', False)
+    use_subpixel_conv = kwargs.pop('use_subpixel_conv', False)
+    use_contour_detection = kwargs.pop('use_contour_detection', False)
+    use_distance_transform = kwargs.pop('use_distance_transform', False)
 
     # Check for pre-trained UNet option
-    use_pretrained_unet = kwargs.get('use_pretrained_unet', False)
-    pretrained_weights_path = kwargs.get('pretrained_weights_path', '')
-    freeze_pretrained_weights = kwargs.get('freeze_pretrained_weights', False)
-    use_full_image_unet = kwargs.get('use_full_image_unet', False)  # New parameter
+    use_pretrained_unet = kwargs.pop('use_pretrained_unet', False)
+    pretrained_weights_path = kwargs.pop('pretrained_weights_path', '')
+    freeze_pretrained_weights = kwargs.pop('freeze_pretrained_weights', False)
+    use_full_image_unet = kwargs.pop('use_full_image_unet', False)  # New parameter
 
     if multi_scale:
         roi_sizes = kwargs.get('roi_sizes', {'scale1': 56, 'scale2': 42, 'scale3': 28})
@@ -974,6 +982,7 @@ def create_rgb_hierarchical_model(
                     normalization_groups=normalization_groups,
                     activation_function=activation_function,
                     activation_beta=activation_beta,
+                    **kwargs  # Pass encoder_name and other kwargs
                 )
             else:
                 # Create model with ROI-based pre-trained UNet
@@ -987,6 +996,7 @@ def create_rgb_hierarchical_model(
                     normalization_groups=normalization_groups,
                     activation_function=activation_function,
                     activation_beta=activation_beta,
+                    **kwargs  # Pass encoder_name and other kwargs
                 )
         else:
             # Use standard model

@@ -259,6 +259,13 @@ def export_checkpoint_to_onnx(
     # Load checkpoint
     print(f"Loading checkpoint from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Handle DistillationModelWrapper - although this simple exporter shouldn't be used with distillation models
+    from src.human_edge_detection.advanced.knowledge_distillation import DistillationModelWrapper
+    if isinstance(model, DistillationModelWrapper):
+        print("Warning: This basic ONNX exporter is not designed for distillation models. Use export_onnx_advanced instead.")
+        model = model.get_student()
+    
     model.load_state_dict(checkpoint['model_state_dict'])
 
     # Create exporter

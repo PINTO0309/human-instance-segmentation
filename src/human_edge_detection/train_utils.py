@@ -193,9 +193,21 @@ def evaluate_model(
             # Compute loss
             instance_info = batch.get('instance_info') if config and config.distance_loss.enabled else None
 
+            # Handle distillation model output (returns student and teacher predictions)
+            if config and config.distillation.enabled:
+                # Model is wrapped in DistillationModelWrapper
+                student_predictions, teacher_predictions = predictions
+                # Pass both to distillation loss with masks as targets
+                # DistillationLoss.forward expects (student_outputs, teacher_outputs, targets)
+                loss, loss_dict = loss_fn(student_predictions, teacher_predictions, masks)
+                # Use student predictions for metrics
+                if isinstance(student_predictions, tuple):
+                    pred_for_metrics, _ = student_predictions
+                else:
+                    pred_for_metrics = student_predictions
             # Handle hierarchical model output
-            is_hierarchical = config and (config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']))
-            if is_hierarchical:
+            elif config and (config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4'])):
+                is_hierarchical = True
                 if isinstance(predictions, tuple):
                     logits, aux_outputs = predictions
                     loss, loss_dict = loss_fn(logits, masks, aux_outputs)
@@ -218,8 +230,11 @@ def evaluate_model(
 
             # Update loss metrics
             total_loss += loss.item()
-            total_ce_loss += loss_dict.get('ce_loss', 0).item() if isinstance(loss_dict.get('ce_loss', 0), torch.Tensor) else loss_dict.get('ce_loss', 0)
-            total_dice_loss += loss_dict.get('dice_loss', 0).item() if isinstance(loss_dict.get('dice_loss', 0), torch.Tensor) else loss_dict.get('dice_loss', 0)
+            # Handle both direct and distillation (base_) prefixed loss keys
+            ce_loss_val = loss_dict.get('ce_loss', loss_dict.get('base_ce_loss', 0))
+            dice_loss_val = loss_dict.get('dice_loss', loss_dict.get('base_dice_loss', 0))
+            total_ce_loss += ce_loss_val.item() if isinstance(ce_loss_val, torch.Tensor) else ce_loss_val
+            total_dice_loss += dice_loss_val.item() if isinstance(dice_loss_val, torch.Tensor) else dice_loss_val
 
             # Track auxiliary metrics if available
             aux_fg_bg_loss += loss_dict.get('aux_fg_bg_loss', 0)

@@ -8,6 +8,7 @@ import time
 from typing import Dict, Optional, Tuple
 import warnings
 import logging
+import copy
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ from src.human_edge_detection.visualize import ValidationVisualizer
 from src.human_edge_detection.advanced.multi_scale_extractor import MultiScaleYOLOFeatureExtractor
 from src.human_edge_detection.advanced.multi_scale_model import create_multiscale_model
 from src.human_edge_detection.advanced.variable_roi_model import (
-    create_variable_roi_model, 
+    create_variable_roi_model,
     create_rgb_enhanced_variable_roi_model
 )
 from src.human_edge_detection.advanced.distance_aware_loss import create_distance_aware_loss
@@ -70,6 +71,9 @@ from src.human_edge_detection.advanced.cascade_segmentation import create_cascad
 from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
 from src.human_edge_detection.advanced.auxiliary_fg_bg_task import (
     MultiTaskSegmentationModel, MultiTaskLoss, AuxiliaryFgBgHead
+)
+from src.human_edge_detection.advanced.knowledge_distillation import (
+    DistillationLoss, DistillationModelWrapper
 )
 
 # Import experiment management
@@ -110,18 +114,21 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                 fusion_method=config.multiscale.fusion_method,
                 execution_provider=config.model.execution_provider
             )
-        
+
         # Wrap with hierarchical architecture
         from src.human_edge_detection.advanced.hierarchical_segmentation import create_hierarchical_model
         model = create_hierarchical_model(base_model)
         feature_extractor = None
-        
+
     elif config.model.use_rgb_hierarchical:
         # RGB-based hierarchical model without YOLOv9 features
         from src.human_edge_detection.advanced.hierarchical_segmentation_rgb import create_rgb_hierarchical_model
-        
+
         multi_scale = config.multiscale.enabled and config.model.variable_roi_sizes
-        
+
+        # Determine encoder name - use student encoder if distillation is enabled
+        encoder_name = config.distillation.student_encoder if config.distillation.enabled else 'timm-efficientnet-b3'
+
         model = create_rgb_hierarchical_model(
             roi_size=config.model.roi_size,
             mask_size=config.model.mask_size,
@@ -146,13 +153,14 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             pretrained_weights_path=getattr(config.model, 'pretrained_weights_path', ''),
             freeze_pretrained_weights=getattr(config.model, 'freeze_pretrained_weights', False),
             use_full_image_unet=getattr(config.model, 'use_full_image_unet', False),
+            encoder_name=encoder_name  # Pass encoder name
         )
-        
+
         feature_extractor = None  # RGB model doesn't need external feature extractor
-        
+
     elif config.model.use_hierarchical_unet or config.model.use_hierarchical_unet_v2 or config.model.use_hierarchical_unet_v3 or config.model.use_hierarchical_unet_v4:
         # Build multi-scale model with UNet-based hierarchical architecture
-        
+
         # Check if we should use external features (no integrated feature extractor)
         if config.model.use_external_features:
             # Check if variable ROI sizes are specified
@@ -198,7 +206,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                 fusion_method=config.multiscale.fusion_method,
                 execution_provider=config.model.execution_provider
             )
-        
+
         # Wrap with appropriate UNet-based hierarchical architecture
         if config.model.use_hierarchical_unet_v4:
             from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet_v4
@@ -212,7 +220,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         else:  # config.model.use_hierarchical_unet (V1)
             from src.human_edge_detection.advanced.hierarchical_segmentation_unet import create_hierarchical_model_unet
             model = create_hierarchical_model_unet(base_model)
-        
+
         # If using external features, create a separate feature extractor
         if config.model.use_external_features:
             from src.human_edge_detection.advanced.multi_scale_extractor import MultiScaleYOLOFeatureExtractor
@@ -223,13 +231,13 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             )
         else:
             feature_extractor = None
-        
+
     elif config.model.use_class_specific_decoder:
         # Build model with class-specific decoder
         if config.model.variable_roi_sizes:
             # Create custom variable ROI model with class-specific decoder
             from src.human_edge_detection.advanced.class_specific_decoder import ClassBalancedSegmentationHead
-            
+
             # Create base model
             base_model = create_variable_roi_model(
                 onnx_model_path=config.model.onnx_model,
@@ -239,7 +247,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                 mask_size=config.model.mask_size,
                 execution_provider=config.model.execution_provider
             )
-            
+
             # Replace segmentation head with class-balanced version
             old_head = base_model.segmentation_head
             base_model.segmentation_head = ClassBalancedSegmentationHead(
@@ -251,13 +259,13 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             # Copy necessary components
             base_model.segmentation_head.var_roi_align = old_head.var_roi_align
             base_model.segmentation_head.feature_fusion = old_head.feature_fusion
-            
+
             model = base_model
         else:
             raise NotImplementedError("Class-specific decoder only implemented for variable ROI models")
-        
+
         feature_extractor = None
-        
+
     elif config.multiscale.enabled:
         # Check if variable ROI sizes are specified
         if config.model.variable_roi_sizes:
@@ -323,12 +331,12 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
     if config.auxiliary_task.enabled:
         # Check if model is already a hierarchical model (which has its own auxiliary outputs)
         is_hierarchical = config.model.use_hierarchical or any(
-            getattr(config.model, attr, False) 
-            for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 
+            getattr(config.model, attr, False)
+            for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2',
                          'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4',
                          'use_rgb_hierarchical']
         )
-        
+
         if not is_hierarchical:
             # Only wrap non-hierarchical models
             # Get feature channels based on model type
@@ -344,7 +352,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             else:
                 # Standard model feature channels
                 feature_channels = 1024  # From YOLO extractor
-            
+
             # Wrap model with auxiliary task
             model = MultiTaskSegmentationModel(
                 base_segmentation_head=model,
@@ -354,6 +362,146 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             )
         else:
             print("Note: Hierarchical models have built-in auxiliary outputs, skipping MultiTaskSegmentationModel wrapper")
+
+    # Handle knowledge distillation if enabled
+    if config.distillation.enabled:
+        print(f"\nSetting up knowledge distillation from teacher checkpoint: {config.distillation.teacher_checkpoint}")
+
+        # Build teacher model with same configuration but B3 encoder
+        teacher_config = copy.deepcopy(config)
+        teacher_config.distillation.enabled = False  # Disable distillation for teacher
+
+        # For RGB hierarchical models with distillation
+        if config.model.use_rgb_hierarchical:
+            from src.human_edge_detection.advanced.hierarchical_segmentation_rgb import create_rgb_hierarchical_model
+
+            # Build teacher model (B3)
+            teacher_model = create_rgb_hierarchical_model(
+                roi_size=config.model.roi_size,
+                mask_size=config.model.mask_size,
+                multi_scale=config.multiscale.enabled and config.model.variable_roi_sizes,
+                roi_sizes=config.model.variable_roi_sizes if config.multiscale.enabled else None,
+                fusion_method=config.multiscale.fusion_method if config.multiscale.enabled else 'concat',
+                use_attention_module=config.model.use_attention_module,
+                # Binary mask refinement modules
+                use_boundary_refinement=getattr(config.model, 'use_boundary_refinement', False),
+                use_progressive_upsampling=getattr(config.model, 'use_progressive_upsampling', False),
+                use_subpixel_conv=getattr(config.model, 'use_subpixel_conv', False),
+                use_contour_detection=getattr(config.model, 'use_contour_detection', False),
+                use_distance_transform=getattr(config.model, 'use_distance_transform', False),
+                # Normalization configuration
+                normalization_type=getattr(config.model, 'normalization_type', 'layernorm2d'),
+                normalization_groups=getattr(config.model, 'normalization_groups', 8),
+                # Activation function configuration
+                activation_function=getattr(config.model, 'activation_function', 'relu'),
+                activation_beta=getattr(config.model, 'activation_beta', 1.0),
+                # Pre-trained model configuration - TEACHER USES B3
+                use_pretrained_unet=getattr(config.model, 'use_pretrained_unet', False),
+                pretrained_weights_path=getattr(config.model, 'pretrained_weights_path', ''),
+                freeze_pretrained_weights=False,  # We'll freeze the entire teacher model
+                use_full_image_unet=getattr(config.model, 'use_full_image_unet', False),
+                encoder_name="timm-efficientnet-b3"  # Teacher uses B3
+            )
+
+            # Build student model (B0) - reuse the already created model but ensure it uses B0
+            # The model variable already contains the student model built earlier
+            # We need to ensure it uses the correct encoder
+            if hasattr(model, 'fg_bg_branch') and hasattr(model.fg_bg_branch, 'model'):
+                # Update the encoder name for the student model if needed
+                pass  # Model already built with correct settings
+
+        # Load teacher checkpoint
+        if not config.distillation.teacher_checkpoint:
+            raise ValueError("Teacher checkpoint path is empty. Please specify --teacher_checkpoint or set it in the config.")
+
+        if not os.path.exists(config.distillation.teacher_checkpoint):
+            raise FileNotFoundError(
+                f"Teacher checkpoint not found: {config.distillation.teacher_checkpoint}\n"
+                f"Please check the path and ensure the file exists."
+            )
+
+        print(f"Loading teacher model from {config.distillation.teacher_checkpoint}")
+        try:
+            checkpoint = torch.load(config.distillation.teacher_checkpoint, map_location=device)
+            
+            # Check if checkpoint needs key remapping (old structure without wrapper)
+            state_dict = checkpoint['model_state_dict']
+            if 'pretrained_unet.norm_mean' in state_dict:
+                # Old checkpoint structure - needs remapping to new wrapper structure
+                print("Detected old checkpoint format, remapping keys for PreTrainedPeopleSegmentationUNetWrapper...")
+                new_state_dict = {}
+                for key, value in state_dict.items():
+                    if key.startswith('pretrained_unet.'):
+                        # Split the key to insert 'model' after 'pretrained_unet'
+                        parts = key.split('.', 1)  # Split at first dot
+                        if len(parts) == 2:
+                            # Insert 'model' between 'pretrained_unet' and the rest
+                            new_key = f"pretrained_unet.model.{parts[1]}"
+                            new_state_dict[new_key] = value
+                        else:
+                            new_state_dict[key] = value
+                    else:
+                        new_state_dict[key] = value
+                # Filter out incompatible keys (feature_combiner might have different dimensions)
+                model_state = teacher_model.state_dict()
+                filtered_state_dict = {}
+                for key, value in new_state_dict.items():
+                    if key in model_state:
+                        if model_state[key].shape == value.shape:
+                            filtered_state_dict[key] = value
+                        else:
+                            print(f"Skipping {key} due to shape mismatch: checkpoint {value.shape} vs model {model_state[key].shape}")
+                    else:
+                        # Key doesn't exist in model (might be from older version)
+                        pass
+                
+                # Try loading with strict=False to handle missing keys
+                incompatible = teacher_model.load_state_dict(filtered_state_dict, strict=False)
+                if incompatible.missing_keys:
+                    print(f"Warning: Missing keys in teacher checkpoint: {len(incompatible.missing_keys)} keys")
+                    if len(incompatible.missing_keys) <= 10:
+                        for key in incompatible.missing_keys:
+                            print(f"  - {key}")
+                if incompatible.unexpected_keys:
+                    print(f"Warning: Unexpected keys in teacher checkpoint: {incompatible.unexpected_keys[:5]}...")
+            else:
+                # New checkpoint structure or doesn't need remapping
+                # Filter out incompatible keys
+                model_state = teacher_model.state_dict()
+                filtered_state_dict = {}
+                for key, value in state_dict.items():
+                    if key in model_state:
+                        if model_state[key].shape == value.shape:
+                            filtered_state_dict[key] = value
+                        else:
+                            print(f"Skipping {key} due to shape mismatch: checkpoint {value.shape} vs model {model_state[key].shape}")
+                    else:
+                        # Key doesn't exist in model
+                        pass
+                
+                # Try loading with strict=False to handle missing keys
+                incompatible = teacher_model.load_state_dict(filtered_state_dict, strict=False)
+                if incompatible.missing_keys:
+                    print(f"Warning: Missing keys in teacher checkpoint: {len(incompatible.missing_keys)} keys")
+                    if len(incompatible.missing_keys) <= 10:
+                        for key in incompatible.missing_keys:
+                            print(f"  - {key}")
+                if incompatible.unexpected_keys:
+                    print(f"Warning: Unexpected keys in teacher checkpoint: {incompatible.unexpected_keys[:5]}...")
+            
+            teacher_model = teacher_model.to(device)
+            print(f"Successfully loaded teacher model (epoch {checkpoint.get('epoch', 'unknown')})")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load teacher checkpoint: {e}")
+
+        # Wrap models with distillation wrapper
+        model = DistillationModelWrapper(
+            teacher_model=teacher_model,
+            student_model=model,
+            freeze_teacher=config.distillation.freeze_teacher
+        )
+
+        print(f"Distillation setup complete. Student encoder: {config.distillation.student_encoder}")
 
     return model.to(device), feature_extractor
 
@@ -365,7 +513,7 @@ def build_loss_function(
     separation_aware_weights: Optional[dict] = None
 ) -> nn.Module:
     """Build loss function based on configuration."""
-    
+
     # Check for hierarchical model first (including RGB hierarchical)
     if config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         # Check if refinement modules are enabled
@@ -375,14 +523,14 @@ def build_loss_function(
             getattr(config.model, 'use_contour_detection', False),
             getattr(config.model, 'use_distance_transform', False),
         ])
-        
+
         # Check if this is the fixed weights config
         use_dynamic_weights = config.name != 'hierarchical_unet_v2_fixed_weights'
-        
+
         if use_refinement:
             from src.human_edge_detection.advanced.hierarchical_segmentation_refinement import RefinedHierarchicalLoss
-            
-            return RefinedHierarchicalLoss(
+
+            loss_fn = RefinedHierarchicalLoss(
                 bg_weight=1.5,
                 fg_weight=1.5,
                 target_weight=1.2,
@@ -402,8 +550,8 @@ def build_loss_function(
             )
         else:
             from src.human_edge_detection.advanced.hierarchical_segmentation import HierarchicalLoss
-            
-            return HierarchicalLoss(
+
+            loss_fn = HierarchicalLoss(
                 bg_weight=1.5,
                 fg_weight=1.5,
                 target_weight=1.2,
@@ -413,7 +561,7 @@ def build_loss_function(
                 ce_weight=config.training.ce_weight
             )
 
-    if config.distance_loss.enabled:
+    elif config.distance_loss.enabled:
         # Distance-aware loss
         loss_fn = create_distance_aware_loss(
             pixel_ratios=pixel_ratios,
@@ -453,16 +601,27 @@ def build_loss_function(
     # Wrap with multi-task loss if auxiliary task is enabled
     # BUT skip for hierarchical models as they handle auxiliary outputs internally
     is_hierarchical = config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(
-        getattr(config.model, attr, False) 
-        for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 
+        getattr(config.model, attr, False)
+        for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2',
                      'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']
     )
-    
+
     if config.auxiliary_task.enabled and not is_hierarchical:
         loss_fn = MultiTaskLoss(
             main_loss_fn=loss_fn,
             aux_weight=config.auxiliary_task.weight,
             aux_pos_weight=config.auxiliary_task.pos_weight
+        )
+
+    # Wrap with distillation loss if enabled
+    if config.distillation.enabled:
+        loss_fn = DistillationLoss(
+            base_loss_fn=loss_fn,
+            temperature=config.distillation.temperature,
+            alpha=config.distillation.alpha,
+            distill_logits=config.distillation.distill_logits,
+            distill_features=config.distillation.distill_features,
+            feature_match_layers=config.distillation.feature_match_layers
         )
 
     return loss_fn
@@ -541,8 +700,16 @@ def train_epoch(
                 # Compute loss
                 instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
+                # Handle distillation model output (returns student and teacher predictions)
+                if config.distillation.enabled:
+                    # Model is wrapped in DistillationModelWrapper
+                    student_predictions, teacher_predictions = predictions
+                    # Pass both to distillation loss with masks as targets
+                    # DistillationLoss.forward expects (student_outputs, teacher_outputs, targets)
+                    # The aux_outputs will be extracted from student/teacher predictions if they are tuples
+                    loss, loss_dict = loss_fn(student_predictions, teacher_predictions, masks)
                 # Handle hierarchical model output
-                if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
+                elif config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
                     if isinstance(predictions, tuple):
                         logits, aux_outputs = predictions
                         loss, loss_dict = loss_fn(logits, masks, aux_outputs)
@@ -597,8 +764,16 @@ def train_epoch(
 
             instance_info = batch.get('instance_info') if config.distance_loss.enabled else None
 
+            # Handle distillation model output (returns student and teacher predictions)
+            if config.distillation.enabled:
+                # Model is wrapped in DistillationModelWrapper
+                student_predictions, teacher_predictions = predictions
+                # Pass both to distillation loss with masks as targets
+                # DistillationLoss.forward expects (student_outputs, teacher_outputs, targets)
+                # The aux_outputs will be extracted from student/teacher predictions if they are tuples
+                loss, loss_dict = loss_fn(student_predictions, teacher_predictions, masks)
             # Handle hierarchical model output
-            if config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
+            elif config.model.use_hierarchical or config.model.use_rgb_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
                 if isinstance(predictions, tuple):
                     logits, aux_outputs = predictions
                     loss, loss_dict = loss_fn(logits, masks, aux_outputs)
@@ -619,53 +794,23 @@ def train_epoch(
                     loss, loss_dict = loss_fn(predictions, masks)
 
             # Check for NaN before backward
-
-
             if torch.isnan(loss):
-
-
                 logger.warning(f"NaN loss detected at epoch {epoch}, batch {batch_idx}")
-
-
                 logger.warning(f"Loss components: {loss_dict}")
 
-
                 # Skip this batch
-
-
                 optimizer.zero_grad()
-
-
                 continue
-
-
-                
-
 
             loss.backward()
 
-
-            
-
-
             # Check gradients after backward
-
-
             grad_norm_before_clip = compute_gradient_norm(model)
-
-
             has_nan, nan_param = check_for_nan_gradients(model)
 
-
             if has_nan:
-
-
                 logger.warning(f"NaN gradient detected in {nan_param}")
-
-
                 optimizer.zero_grad()
-
-
                 continue
 
             if config.training.gradient_clip > 0:
@@ -678,15 +823,16 @@ def train_epoch(
 
         # Update metrics
         total_loss += loss.item()
-        total_ce_loss += loss_dict.get('ce_loss', 0)
-        total_dice_loss += loss_dict.get('dice_loss', 0)
+        # Handle both direct and distillation (base_) prefixed loss keys
+        total_ce_loss += loss_dict.get('ce_loss', loss_dict.get('base_ce_loss', 0))
+        total_dice_loss += loss_dict.get('dice_loss', loss_dict.get('base_dice_loss', 0))
         num_batches += 1
-        
+
         # Track auxiliary metrics if available
         aux_fg_bg_loss += loss_dict.get('aux_fg_bg_loss', 0)
         aux_fg_accuracy += loss_dict.get('aux_fg_accuracy', 0)
         aux_fg_iou += loss_dict.get('aux_fg_iou', 0)
-        
+
         # Track refinement losses if available
         active_contour_loss += loss_dict.get('active_contour', 0)
         boundary_aware_loss += loss_dict.get('boundary_aware', 0)
@@ -716,13 +862,13 @@ def train_epoch(
         'dice_loss': total_dice_loss / num_batches,
         'grad_norm': grad_norm_before_clip if num_batches > 0 else 0.0
     }
-    
+
     # Add auxiliary metrics if available
     if aux_fg_bg_loss > 0:
         metrics['aux_fg_bg_loss'] = aux_fg_bg_loss / num_batches
         metrics['aux_fg_accuracy'] = aux_fg_accuracy / num_batches
         metrics['aux_fg_iou'] = aux_fg_iou / num_batches
-    
+
     # Add refinement losses if available
     if active_contour_loss > 0:
         metrics['active_contour'] = active_contour_loss / num_batches
@@ -732,7 +878,7 @@ def train_epoch(
         metrics['contour'] = contour_loss / num_batches
     if distance_transform_loss > 0:
         metrics['distance_transform'] = distance_transform_loss / num_batches
-    
+
     return metrics
 
 
@@ -748,6 +894,13 @@ def main():
     # Override options
     parser.add_argument('--resume', type=str, help='Resume from checkpoint')
     parser.add_argument('--test_only', action='store_true', help='Only run validation')
+    parser.add_argument('--epochs', type=int, help='Number of epochs to train')
+    parser.add_argument('--batch_size', type=int, help='Batch size for training')
+
+    # Distillation options
+    parser.add_argument('--teacher_checkpoint', type=str, help='Path to teacher model checkpoint for distillation')
+    parser.add_argument('--distillation_temperature', type=float, help='Temperature for distillation')
+    parser.add_argument('--distillation_alpha', type=float, help='Alpha weight for distillation (0-1)')
 
     args = parser.parse_args()
 
@@ -763,6 +916,30 @@ def main():
     if args.config_modifications != '{}':
         mods = json.loads(args.config_modifications)
         config = ConfigManager.create_custom_config(config.name, mods)
+
+    # Override distillation settings from command line if provided
+    if args.teacher_checkpoint is not None:
+        config.distillation.teacher_checkpoint = args.teacher_checkpoint
+        config.distillation.enabled = True  # Auto-enable distillation if teacher checkpoint is provided
+        print(f"Overriding teacher checkpoint: {args.teacher_checkpoint}")
+
+    if args.distillation_temperature is not None:
+        config.distillation.temperature = args.distillation_temperature
+        print(f"Overriding distillation temperature: {args.distillation_temperature}")
+
+    if args.distillation_alpha is not None:
+        config.distillation.alpha = args.distillation_alpha
+        print(f"Overriding distillation alpha: {args.distillation_alpha}")
+
+    # Override epochs if provided
+    if args.epochs is not None:
+        config.training.num_epochs = args.epochs
+        print(f"Overriding number of epochs: {args.epochs}")
+
+    # Override batch size if provided
+    if args.batch_size is not None:
+        config.training.batch_size = args.batch_size
+        print(f"Overriding batch size: {args.batch_size}")
 
     # Create experiment directories
     exp_dirs = create_experiment_dirs(config)
@@ -818,27 +995,27 @@ def main():
 
     # Create datasets
     print("\nLoading datasets...")
-    # Handle mask_size as either int or tuple
-    if isinstance(config.model.mask_size, tuple):
-        mask_size = config.model.mask_size
+    # Handle mask_size as either int, tuple, or list
+    if isinstance(config.model.mask_size, (tuple, list)):
+        mask_size = tuple(config.model.mask_size)  # Convert to tuple if list
     else:
         mask_size = (config.model.mask_size, config.model.mask_size)
-    
+
     # Create transforms for training
     train_transform = None
     if config.data.use_augmentation:
         from src.human_edge_detection.augmentations import (
             get_train_transforms, get_val_transforms, get_roi_safe_transforms
         )
-        
+
         # Check if this model uses ROI coordinates
         # Even "full-image" models in this project use ROI coordinates for segmentation
         # So we should always use ROI-safe transforms to avoid coordinate misalignment
         uses_roi_coordinates = True  # All models in this project use ROI coordinates
-        
+
         # The original logic was incorrect - even models with use_full_image_unet=True
         # still extract ROI regions for segmentation, so they need ROI-safe transforms
-        
+
         if uses_roi_coordinates:
             # Use ROI-safe transforms for all models (avoids geometric transform misalignment)
             train_transform = get_roi_safe_transforms(
@@ -856,14 +1033,14 @@ def main():
             )
             print(f"Data augmentation enabled (standard mode):")
             print(f"  - Heavy augmentation: {config.data.use_heavy_augmentation}")
-        
+
         val_transform = get_val_transforms(
             input_size=(640, 640)  # Using fixed size as dataset handles resizing
         )
     else:
         val_transform = None
         print("Data augmentation disabled")
-    
+
     train_dataset = COCOInstanceSegmentationDataset(
         annotation_file=config.data.train_annotation,
         image_dir=config.data.train_img_dir,
@@ -942,7 +1119,7 @@ def main():
 
     # Setup tensorboard
     writer = SummaryWriter(exp_dirs['logs'])
-    
+
     # Setup text logger
     text_logger = TextLogger(exp_dirs['logs'])
     text_logger.log_config(config.to_dict())
@@ -952,12 +1129,15 @@ def main():
     from src.human_edge_detection.advanced.visualization_adapter import AdvancedValidationVisualizer
 
     val_coco = COCO(config.data.val_annotation)
-    
+
+    # If using distillation, use student model for visualization
+    model_for_vis = model.get_student() if isinstance(model, DistillationModelWrapper) else model
+
     # Use auxiliary visualizer if auxiliary task is enabled
     if config.auxiliary_task.enabled:
         from src.human_edge_detection.visualize_auxiliary import ValidationVisualizerWithAuxiliary
         visualizer = ValidationVisualizerWithAuxiliary(
-            model=model,
+            model=model_for_vis,
             feature_extractor=feature_extractor,
             coco=val_coco,
             image_dir=config.data.val_img_dir,
@@ -972,7 +1152,7 @@ def main():
     elif any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical', 'use_pretrained_unet', 'use_full_image_unet']):
         from src.human_edge_detection.advanced.hierarchical_unet_visualizer import HierarchicalUNetVisualizer
         visualizer = HierarchicalUNetVisualizer(
-            model=model,
+            model=model_for_vis,
             feature_extractor=feature_extractor,
             coco=val_coco,
             image_dir=config.data.val_img_dir,
@@ -983,7 +1163,7 @@ def main():
         )
     else:
         visualizer = AdvancedValidationVisualizer(
-            model=model,
+            model=model_for_vis,
             feature_extractor=feature_extractor,
             coco=val_coco,
             image_dir=config.data.val_img_dir,
@@ -999,15 +1179,18 @@ def main():
     if args.resume:
         print(f"\nResuming from checkpoint: {args.resume}")
         checkpoint = torch.load(args.resume, map_location=device)
-        
+
+        # Get the model to load weights into (student if distillation, otherwise the model itself)
+        model_to_load = model.get_student() if isinstance(model, DistillationModelWrapper) else model
+
         # Try to load model state dict with better error handling
         try:
-            model.load_state_dict(checkpoint['model_state_dict'])
+            model_to_load.load_state_dict(checkpoint['model_state_dict'])
         except RuntimeError as e:
             print(f"Warning: Failed to load model weights with strict=True, trying strict=False...")
             print(f"Error: {e}")
             # Try non-strict loading
-            incompatible_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+            incompatible_keys = model_to_load.load_state_dict(checkpoint['model_state_dict'], strict=False)
             if incompatible_keys.missing_keys:
                 print(f"Missing keys: {len(incompatible_keys.missing_keys)}")
                 if len(incompatible_keys.missing_keys) < 10:
@@ -1018,7 +1201,7 @@ def main():
                 if len(incompatible_keys.unexpected_keys) < 10:
                     for key in incompatible_keys.unexpected_keys:
                         print(f"  - {key}")
-        
+
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_miou = checkpoint.get('best_miou', 0)
@@ -1059,9 +1242,11 @@ def main():
     if not args.resume:
         print("\nSaving untrained model...")
         untrained_checkpoint_path = exp_dirs['checkpoints'] / 'untrained_model.pth'
+        # If using distillation, save student model only
+        model_to_save = model.get_student() if isinstance(model, DistillationModelWrapper) else model
         torch.save({
             'epoch': -1,  # -1 indicates untrained
-            'model_state_dict': model.state_dict(),
+            'model_state_dict': model_to_save.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
             'best_miou': 0.0,
@@ -1075,11 +1260,11 @@ def main():
                 # Export two versions for auxiliary-enabled models
                 from src.human_edge_detection.export_onnx_advanced_auxiliary import export_model_inference_only
                 from src.human_edge_detection.export_onnx_advanced import export_checkpoint_to_onnx_advanced
-                
+
                 # 1. Export with auxiliary branch
                 untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
                 print("\nExporting untrained model to ONNX (with auxiliary branch)...")
-                
+
                 # Determine model type
                 if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4', 'use_rgb_hierarchical']):
                     model_type = 'hierarchical'
@@ -1089,7 +1274,7 @@ def main():
                     model_type = 'multiscale'
                 else:
                     model_type = 'baseline'
-                
+
                 success_with_aux = export_checkpoint_to_onnx_advanced(
                     checkpoint_path=str(untrained_checkpoint_path),
                     output_path=str(untrained_onnx_path),
@@ -1099,7 +1284,7 @@ def main():
                     verify=False,  # Skip verification for untrained models
                     include_auxiliary=True  # Include auxiliary branches in export
                 )
-                
+
                 # 2. Export without auxiliary branch (optimized for inference)
                 untrained_opt_onnx_path = exp_dirs['checkpoints'] / 'untrained_opt_model.onnx'
                 print("\nExporting untrained model to ONNX (inference only, no auxiliary)...")
@@ -1121,12 +1306,12 @@ def main():
                     model_type = 'multiscale'
                 else:
                     model_type = 'baseline'
-                
+
                 if hasattr(config.model, 'use_rgb_enhancement') and config.model.use_rgb_enhancement:
                     print("\nExporting RGB enhanced decoder to ONNX...")
                 else:
                     print("\nExporting untrained model to ONNX...")
-                    
+
                 success = export_checkpoint_to_onnx_advanced(
                     checkpoint_path=str(untrained_checkpoint_path),
                     output_path=str(untrained_onnx_path),
@@ -1153,7 +1338,7 @@ def main():
 
     # Training loop
     print(f"\nStarting training for {config.training.num_epochs} epochs...")
-    
+
     try:
         for epoch in range(start_epoch, config.training.num_epochs):
             # Train
@@ -1163,21 +1348,21 @@ def main():
             )
 
             # Log training metrics with hierarchical naming
-            
+
             # 01. Primary Training Metrics
             writer.add_scalar('train/01_primary/total_loss', train_metrics['total_loss'], epoch)
             writer.add_scalar('train/01_primary/learning_rate', optimizer.param_groups[0]['lr'], epoch)
-            
+
             # 02. Loss Components
             writer.add_scalar('train/02_loss_components/ce_loss', train_metrics['ce_loss'], epoch)
             writer.add_scalar('train/02_loss_components/dice_loss', train_metrics['dice_loss'], epoch)
-            
+
             # 03. Auxiliary Task Metrics (if available)
             if 'aux_fg_bg_loss' in train_metrics:
                 writer.add_scalar('train/03_auxiliary/fg_bg_loss', train_metrics['aux_fg_bg_loss'], epoch)
                 writer.add_scalar('train/03_auxiliary/fg_accuracy', train_metrics['aux_fg_accuracy'], epoch)
                 writer.add_scalar('train/03_auxiliary/fg_iou', train_metrics['aux_fg_iou'], epoch)
-            
+
             # 04. Refinement Losses (if available)
             if 'active_contour' in train_metrics:
                 writer.add_scalar('train/04_refinement/active_contour', train_metrics['active_contour'], epoch)
@@ -1187,7 +1372,7 @@ def main():
                 writer.add_scalar('train/04_refinement/contour', train_metrics['contour'], epoch)
             if 'distance_transform' in train_metrics:
                 writer.add_scalar('train/04_refinement/distance_transform', train_metrics['distance_transform'], epoch)
-            
+
             # 05. Other Metrics
             if 'grad_norm' in train_metrics:
                 writer.add_scalar('train/05_other/gradient_norm', train_metrics['grad_norm'], epoch)
@@ -1203,44 +1388,44 @@ def main():
                 )
 
                 # Log validation metrics with hierarchical naming for better organization
-                
+
                 # 01. Primary Metrics (most important)
                 writer.add_scalar('val/01_primary/target_iou', val_metrics['target_iou'], epoch)
                 writer.add_scalar('val/01_primary/detection_rate_0.5', val_metrics['detection_rate_0.5'], epoch)
                 writer.add_scalar('val/01_primary/detection_rate_0.7', val_metrics['detection_rate_0.7'], epoch)
-                
+
                 # 02. Target Performance
                 writer.add_scalar('val/02_target/precision', val_metrics.get('target_precision', 0), epoch)
                 writer.add_scalar('val/02_target/recall', val_metrics.get('target_recall', 0), epoch)
                 writer.add_scalar('val/02_target/f1_score', val_metrics.get('target_f1', 0), epoch)
-                
+
                 # 03. Instance Separation
-                writer.add_scalar('val/03_instance/separation_accuracy', 
+                writer.add_scalar('val/03_instance/separation_accuracy',
                                 val_metrics.get('instance_separation_accuracy', 0), epoch)
-                
+
                 # 04. Class-wise IoU
                 class_names = ['background', 'target', 'nontarget']
                 for i in range(config.model.num_classes):
-                    writer.add_scalar(f'val/04_class_iou/{i}_{class_names[i]}', 
+                    writer.add_scalar(f'val/04_class_iou/{i}_{class_names[i]}',
                                     val_metrics[f'iou_class_{i}'], epoch)
-                
+
                 # 05. Loss Components
                 writer.add_scalar('val/05_loss/total', val_metrics['total_loss'], epoch)
                 writer.add_scalar('val/05_loss/ce', val_metrics.get('ce_loss', 0), epoch)
                 writer.add_scalar('val/05_loss/dice', val_metrics.get('dice_loss', 0), epoch)
-                
+
                 # 06. Overall Metrics
                 writer.add_scalar('val/06_overall/accuracy', val_metrics.get('overall_accuracy', 0), epoch)
-                
+
                 # Legacy metric for backward compatibility
                 writer.add_scalar('val/miou', val_metrics['miou'], epoch)
-                
+
                 # 07. Auxiliary Task Metrics (if available)
                 if 'aux_fg_bg_loss' in val_metrics:
                     writer.add_scalar('val/07_auxiliary/fg_bg_loss', val_metrics['aux_fg_bg_loss'], epoch)
                     writer.add_scalar('val/07_auxiliary/fg_accuracy', val_metrics['aux_fg_accuracy'], epoch)
                     writer.add_scalar('val/07_auxiliary/fg_iou', val_metrics['aux_fg_iou'], epoch)
-                
+
                 # 08. Refinement Losses (if available)
                 if 'active_contour' in val_metrics:
                     writer.add_scalar('val/08_refinement/active_contour', val_metrics['active_contour'], epoch)
@@ -1257,7 +1442,7 @@ def main():
                 print(f"  Detection Rates: IoU>0.5: {val_metrics['detection_rate_0.5']:.2%}, IoU>0.7: {val_metrics['detection_rate_0.7']:.2%}")
                 print(f"  Target Metrics: Prec={val_metrics.get('target_precision', 0):.3f}, Rec={val_metrics.get('target_recall', 0):.3f}, F1={val_metrics.get('target_f1', 0):.3f}")
                 print(f"  Instance Separation: {val_metrics.get('instance_separation_accuracy', 0):.3f}")
-                
+
                 # Log epoch summary to text file
                 text_logger.log_epoch_summary(
                     epoch=epoch,
@@ -1274,16 +1459,18 @@ def main():
                 if val_metrics['miou'] > best_miou:
                     best_miou = val_metrics['miou']
                     checkpoint_path = exp_dirs['checkpoints'] / 'best_model.pth'
+                    # If using distillation, save student model only
+                    model_to_save = model.get_student() if isinstance(model, DistillationModelWrapper) else model
                     torch.save({
                         'epoch': epoch,
-                        'model_state_dict': model.state_dict(),
+                        'model_state_dict': model_to_save.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
                         'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
                         'best_miou': best_miou,
                         'config': config.to_dict()
                     }, checkpoint_path)
                     print(f"  Saved best model (mIoU: {best_miou:.4f})")
-                    
+
                     # Log best model save
                     text_logger.log_best_model(
                         epoch=epoch,
@@ -1302,9 +1489,11 @@ def main():
             # Save checkpoint
             if epoch % config.training.save_every == 0:
                 checkpoint_path = exp_dirs['checkpoints'] / f'checkpoint_epoch_{epoch+1:04d}.pth'
+                # If using distillation, save student model only
+                model_to_save = model.get_student() if isinstance(model, DistillationModelWrapper) else model
                 torch.save({
                     'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
+                    'model_state_dict': model_to_save.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict() if scheduler else None,
                     'best_miou': best_miou,
@@ -1322,12 +1511,12 @@ def main():
     finally:
         writer.close()
         text_logger.close()
-    
+
     # Export best model to ONNX
     print("\nExporting best model to ONNX...")
     best_model_path = exp_dirs['checkpoints'] / 'best_model.pth'
     best_onnx_path = exp_dirs['checkpoints'] / 'best_model.onnx'
-    
+
     if best_model_path.exists():
         try:
             if config.auxiliary_task.enabled:
@@ -1351,7 +1540,7 @@ def main():
                     model_type = 'multiscale'
                 else:
                     model_type = 'baseline'
-                
+
                 export_checkpoint_to_onnx_advanced(
                     checkpoint_path=str(best_model_path),
                     output_path=str(best_onnx_path),
@@ -1361,13 +1550,13 @@ def main():
                     verify=True
                 )
             print(f"Best model exported to: {best_onnx_path}")
-            
+
         except Exception as e:
             import traceback
             print(f"Warning: Could not export best model to ONNX: {e}")
             print("Full traceback:")
             traceback.print_exc()
-    
+
     print(f"\nTraining completed! Best mIoU: {best_miou:.4f}")
 
 

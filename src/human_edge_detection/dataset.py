@@ -221,7 +221,11 @@ class COCOInstanceSegmentationDataset(Dataset):
                 # Note: roi_mask remains unchanged for legacy transforms
         # Resize ROI mask to fixed size (common for all paths)
         # cv2.resize expects (width, height) but mask_size is (height, width)
-        mask_size_cv2 = (self.mask_size[1], self.mask_size[0]) if isinstance(self.mask_size, tuple) else (self.mask_size, self.mask_size)
+        # Ensure mask_size values are integers (handle tuple, list, or scalar)
+        if isinstance(self.mask_size, (tuple, list)):
+            mask_size_cv2 = (int(self.mask_size[1]), int(self.mask_size[0]))
+        else:
+            mask_size_cv2 = (int(self.mask_size), int(self.mask_size))
         roi_mask_resized = cv2.resize(roi_mask, mask_size_cv2, interpolation=cv2.INTER_NEAREST)
         
         # Convert image to tensor if needed (since ToTensorV2 was removed from augmentations)

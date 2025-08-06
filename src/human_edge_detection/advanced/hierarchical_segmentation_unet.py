@@ -1711,7 +1711,8 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
         pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
         mean: list = None,
         std: list = None,
-        freeze_weights: bool = False
+        freeze_weights: bool = False,
+        encoder_name: str = "timm-efficientnet-b3"  # Allow customization of encoder
     ):
         """Initialize pre-trained UNet model.
 
@@ -1722,10 +1723,12 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
             mean: Mean values for normalization [0.485, 0.456, 0.406]
             std: Std values for normalization [0.229, 0.224, 0.225]
             freeze_weights: If True, freeze all model weights (no gradient updates)
+            encoder_name: Name of the encoder to use (default: "timm-efficientnet-b3")
         """
         super().__init__()
         self.in_channels = in_channels
         self.classes = classes
+        self.encoder_name = encoder_name
         # Use simple normalization as it works best for this model
         # Convert [0, 1] to [-1, 1] range
         self.mean = mean if mean is not None else [0.5, 0.5, 0.5]
@@ -1740,15 +1743,15 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
                 "uv add segmentation-models-pytorch"
             )
 
-        # Create the same model architecture as people_segmentation
+        # Create the model architecture
         self.model = smp.Unet(
-            encoder_name="timm-efficientnet-b3",
+            encoder_name=encoder_name,
             classes=classes,
             encoder_weights=None  # We'll load our own weights
         )
 
-        # Load pre-trained weights if available
-        if pretrained_weights_path and os.path.exists(pretrained_weights_path):
+        # Load pre-trained weights if available (only for EfficientNet-B3)
+        if pretrained_weights_path and os.path.exists(pretrained_weights_path) and encoder_name == "timm-efficientnet-b3":
             print(f"Loading pre-trained weights from {pretrained_weights_path}")
 
             # Use state_dict_from_disk approach for proper loading
@@ -1788,6 +1791,8 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
                 print("Pre-trained weights loaded successfully (all keys matched)")
             else:
                 print(f"Pre-trained weights loaded with {len(missing_keys)} missing and {len(unexpected_keys)} unexpected keys")
+        elif encoder_name != "timm-efficientnet-b3":
+            print(f"Skipping pre-trained weights loading for encoder: {encoder_name} (weights are for EfficientNet-B3)")
         else:
             print(f"Warning: Pre-trained weights not found at {pretrained_weights_path}")
 
@@ -1856,7 +1861,8 @@ class PreTrainedPeopleSegmentationUNetWrapper(nn.Module):
         normalization_type: str = 'layernorm2d',  # Ignored, kept for compatibility
         normalization_groups: int = 8,  # Ignored, kept for compatibility
         pretrained_weights_path: str = "ext_extractor/2020-09-23a.pth",
-        freeze_weights: bool = False
+        freeze_weights: bool = False,
+        encoder_name: str = "timm-efficientnet-b3"  # Allow encoder customization
     ):
         """Initialize wrapper with pre-trained model.
 
@@ -1869,6 +1875,7 @@ class PreTrainedPeopleSegmentationUNetWrapper(nn.Module):
             normalization_groups: Ignored, kept for API compatibility
             pretrained_weights_path: Path to pre-trained weights
             freeze_weights: If True, freeze pre-trained model weights
+            encoder_name: Name of encoder architecture (e.g., "timm-efficientnet-b3", "timm-efficientnet-b0")
         """
         super().__init__()
 
@@ -1877,7 +1884,8 @@ class PreTrainedPeopleSegmentationUNetWrapper(nn.Module):
             in_channels=in_channels,
             classes=1,  # Binary segmentation for foreground/background
             pretrained_weights_path=pretrained_weights_path,
-            freeze_weights=freeze_weights
+            freeze_weights=freeze_weights,
+            encoder_name=encoder_name
         )
 
         # Add a final conv to match the expected 2-channel output

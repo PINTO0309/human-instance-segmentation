@@ -172,13 +172,16 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
     return success
 
 
-def run_experiment(config_name: str, additional_args: List[str] = None, resume_checkpoint: str = None) -> Dict:
+def run_experiment(config_name: str, additional_args: List[str] = None, resume_checkpoint: str = None,
+                  teacher_checkpoint: str = None, distillation_params: dict = None) -> Dict:
     """Run a single experiment with given configuration.
 
     Args:
         config_name: Configuration name
         additional_args: Additional command line arguments
         resume_checkpoint: Path to checkpoint to resume from
+        teacher_checkpoint: Path to teacher model checkpoint for distillation
+        distillation_params: Dictionary with distillation parameters (temperature, alpha)
 
     Returns:
         Dictionary with experiment results
@@ -187,6 +190,8 @@ def run_experiment(config_name: str, additional_args: List[str] = None, resume_c
     print(f"Running experiment: {config_name}")
     if resume_checkpoint:
         print(f"Resuming from: {resume_checkpoint}")
+    if teacher_checkpoint:
+        print(f"Using teacher checkpoint: {teacher_checkpoint}")
     print(f"{'='*60}")
 
     # Build command
@@ -197,6 +202,16 @@ def run_experiment(config_name: str, additional_args: List[str] = None, resume_c
 
     if resume_checkpoint:
         cmd.extend(['--resume', resume_checkpoint])
+    
+    # Add distillation parameters
+    if teacher_checkpoint:
+        cmd.extend(['--teacher_checkpoint', teacher_checkpoint])
+    
+    if distillation_params:
+        if 'temperature' in distillation_params:
+            cmd.extend(['--distillation_temperature', str(distillation_params['temperature'])])
+        if 'alpha' in distillation_params:
+            cmd.extend(['--distillation_alpha', str(distillation_params['alpha'])])
 
     if additional_args:
         cmd.extend(additional_args)
@@ -424,6 +439,14 @@ def main():
                         help='Number of additional epochs to train (adds to checkpoint epoch)')
     parser.add_argument('--total_epochs', type=int, default=None,
                         help='Total epochs to train to (overrides --epochs)')
+    
+    # Distillation arguments
+    parser.add_argument('--teacher_checkpoint', type=str, default=None,
+                        help='Path to teacher model checkpoint for distillation')
+    parser.add_argument('--distillation_temperature', type=float, default=None,
+                        help='Temperature for distillation (default: from config)')
+    parser.add_argument('--distillation_alpha', type=float, default=None,
+                        help='Alpha weight for distillation loss (default: from config)')
 
     args = parser.parse_args()
     
@@ -505,7 +528,20 @@ def main():
                 })
             ]
 
-            result = run_experiment(config, additional_args, resume_checkpoint=args.resume)
+            # Prepare distillation parameters if provided
+            distillation_params = {}
+            if args.distillation_temperature is not None:
+                distillation_params['temperature'] = args.distillation_temperature
+            if args.distillation_alpha is not None:
+                distillation_params['alpha'] = args.distillation_alpha
+            
+            result = run_experiment(
+                config, 
+                additional_args, 
+                resume_checkpoint=args.resume,
+                teacher_checkpoint=args.teacher_checkpoint,
+                distillation_params=distillation_params if distillation_params else None
+            )
             results.append(result)
 
             # Save intermediate results

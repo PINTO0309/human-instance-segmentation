@@ -900,6 +900,7 @@ class RefinedHierarchicalLoss(nn.Module):
         Returns:
             Tuple of (total loss, loss components dict)
         """
+        
         # Get base hierarchical loss
         base_loss, base_components = self.base_loss(pred, target, aux_outputs)
 
