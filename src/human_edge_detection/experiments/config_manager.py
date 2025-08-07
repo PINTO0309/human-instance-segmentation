@@ -101,7 +101,7 @@ class TrainingConfig:
 
     # Validation
     validate_every: int = 1
-    save_every: int = 1
+    save_every: int = 10
     early_stopping_patience: int = 10
 
     # Loss weights
@@ -122,7 +122,7 @@ class DataConfig:
     data_stats: str = 'data_analyze_full.json'
 
     # Data loading
-    num_workers: int = 16
+    num_workers: int = 4
     pin_memory: bool = True
 
     # ROI settings
@@ -2668,7 +2668,7 @@ class ConfigManager:
                 val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4,
+                num_workers=16,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
                 use_roi_comparison=False,

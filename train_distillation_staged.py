@@ -397,7 +397,6 @@ def evaluate(
 
     if visualize_dir is not None:
         # Get specific test images with 1, 2, 3, 5 people
-        print("  Selecting test images with 1, 2, 3, and 5 people...")
         test_images, test_masks = get_test_images_by_person_count(dataloader, device)
 
     with torch.no_grad():
@@ -555,26 +554,18 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
     # Get the underlying dataset to access COCO annotations
     dataset = dataloader.dataset
 
-    # Check if we should use full val2017 annotations instead
-    use_full_val = True  # Force using full val2017
-    if use_full_val:
-        print("  Loading full val2017 annotations for test image selection...")
-        from pycocotools.coco import COCO
-        # Load full val2017 annotations
+    # Load full val2017 annotations
+    from pycocotools.coco import COCO
+    import sys
+    import io
+    
+    # Suppress COCO loading messages
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
         coco_full = COCO('data/annotations/instances_val2017_person_only_no_crowd.json')
-
-        # Get all images grouped by person count
-        img_by_count = {count: [] for count in target_counts}
-        for img_id in coco_full.imgs.keys():
-            ann_ids = coco_full.getAnnIds(imgIds=img_id, iscrowd=None)
-            anns = coco_full.loadAnns(ann_ids)
-            person_count = sum(1 for ann in anns if not ann.get('iscrowd', 0))
-            if person_count in target_counts:
-                img_by_count[person_count].append(img_id)
-
-        # Show available counts
-        for count in target_counts:
-            print(f"    Found {len(img_by_count[count])} images with {count} person(s)")
+    finally:
+        sys.stdout = old_stdout
 
     # Use pre-selected images with large ROIs
     # These image IDs were selected based on having large ROI areas
@@ -596,11 +587,7 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
     #     5: 579635   # Large ROI - five people group
     # }
 
-    print("  Using pre-selected images with large ROIs:")
-    for count, img_id in large_roi_img_ids.items():
-        if img_id in coco_full.imgs:
-            img_info = coco_full.imgs[img_id]
-            print(f"    {count} person(s): {img_info['file_name']} (ID: {img_id})")
+    # No need to print - using pre-selected images with large ROIs
 
     # Search through the dataset to find these specific images
     found_images = {count: False for count in target_counts}
@@ -625,7 +612,7 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
                         img_id
                     )]
                     found_images[count] = True
-                    print(f"    Found image for {count} person(s): img_id {img_id}")
+                    pass  # Found image in dataloader
                     break
 
         # Stop after checking many batches
@@ -639,7 +626,7 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
 
     for count, target_img_id in large_roi_img_ids.items():
         if not found_images[count] and target_img_id in coco_full.imgs:
-            print(f"    Loading {count} person(s) image directly from file: img_id {target_img_id}")
+            # Load image directly from file
 
             # Load image
             img_info = coco_full.imgs[target_img_id]
@@ -689,7 +676,7 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
 
             selected_samples[count] = [(img_tensor, mask_tensor, target_img_id)]
             found_images[count] = True
-            print(f"    Successfully loaded {count} person(s) image: {img_info['file_name']}")
+            # Successfully loaded image
 
     # If we couldn't find exact counts, use whatever we have
     # Fill missing samples with first available image
@@ -711,14 +698,14 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
             if len(sample) > 2:
                 img_info = coco_full.imgs.get(sample[2], {})
                 file_name = img_info.get('file_name', 'unknown')
-                print(f"  Using large ROI image with {count} person(s) - {file_name} (img_id: {sample[2]})")
+                pass  # Using large ROI image
             else:
-                print(f"  Using image with {count} person(s)")
+                pass  # Using image
         else:
             # Use fallback if the specific image wasn't found in the batch
             result_images.append(fallback_img[0:1])
             result_masks.append(fallback_mask[0:1])
-            print(f"  Warning: Could not find pre-selected large ROI image with {count} person(s), using fallback")
+            pass  # Using fallback image
 
     # Concatenate results
     images_tensor = torch.cat(result_images, dim=0)
