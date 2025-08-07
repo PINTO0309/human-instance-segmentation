@@ -67,6 +67,10 @@ class DistillationConfig:
     feature_match_layers: List[str] = field(default_factory=list)  # Layers for feature matching
     freeze_teacher: bool = True  # Freeze teacher model weights
     student_encoder: str = "timm-efficientnet-b0"  # Student model encoder
+    # Staged training configuration
+    encoder_only_epochs: int = 0  # Number of epochs to train encoder only (0 = disabled)
+    encoder_lr_scale: float = 1.0  # Learning rate scale for encoder-only training
+    full_model_lr_scale: float = 0.5  # Learning rate scale after encoder training
 
 
 @dataclass
@@ -152,6 +156,7 @@ class ModelConfig:
     use_class_specific_decoder: bool = False  # Use class-specific decoders
     use_external_features: bool = False  # If True, expect pre-extracted features instead of images
     use_rgb_hierarchical: bool = False  # Use RGB-based hierarchical model without YOLOv9 features
+    use_unet_encoder_only: bool = False  # Use UNet encoder only for distillation training
     use_attention_module: bool = False  # Use attention modules in target/non-target branch
     # Binary mask refinement modules
     use_boundary_refinement: bool = False  # Boundary Refinement Network (BRN)
@@ -2603,31 +2608,33 @@ class ConfigManager:
             ),
         ),
 
-        # Knowledge distillation configuration
+        # Knowledge distillation configuration - UNet encoder only
         'rgb_hierarchical_unet_v2_distillation_b0_from_b3': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_distillation_b0_from_b3',
-            description='Knowledge distillation from EfficientNet-B3 teacher to EfficientNet-B0 student',
+            description='UNet encoder only distillation from B3 teacher to B0 student',
             model=ModelConfig(
-                use_rgb_hierarchical=True,
+                # Use special flag for UNet-only distillation
+                use_unet_encoder_only=True,
+                use_rgb_hierarchical=False,  # Disable hierarchical model
                 use_external_features=False,
-                use_attention_module=True,
-                roi_size=(80, 60),  # Same as teacher
-                mask_size=(160, 120),  # Same as teacher
+                use_attention_module=False,  # No attention for pure UNet
+                roi_size=None,  # No ROI for full image UNet
+                mask_size=None,  # Output same as input size
                 onnx_model=None,
                 # Student model configuration (B0)
-                use_pretrained_unet=True,  # Still using the UNet architecture
-                pretrained_weights_path="",  # No pre-trained weights for B0
+                use_pretrained_unet=False,  # Not using pretrained for student
+                pretrained_weights_path="",  # No pre-trained weights for B0 student
                 freeze_pretrained_weights=False,  # Student needs to be trainable
-                use_full_image_unet=True,  # Same as teacher
-                # Refinement modules (same as teacher)
+                use_full_image_unet=False,  # Not using the full hierarchical model
+                # Disable all refinement modules for pure UNet
                 use_boundary_refinement=False,
-                use_boundary_aware_loss=True,
-                use_contour_detection=True,
+                use_boundary_aware_loss=False,
+                use_contour_detection=False,
                 use_active_contour_loss=False,
-                use_distance_transform=True,
+                use_distance_transform=False,
                 use_progressive_upsampling=False,
                 use_subpixel_conv=False,
-                # Normalization and activation (same as teacher)
+                # Normalization and activation (default for UNet)
                 normalization_type='batchnorm',
                 normalization_groups=8,
                 activation_function='relu',
@@ -2639,16 +2646,17 @@ class ConfigManager:
                 fusion_method='concat'
             ),
             auxiliary_task=AuxiliaryTaskConfig(
-                enabled=True,
-                weight=0.3,
+                enabled=False,  # Disable auxiliary task for pure UNet
+                weight=0.0,
                 mid_channels=128,
-                visualize=True
+                visualize=False
             ),
             distillation=DistillationConfig(
                 enabled=True,
-                teacher_checkpoint="experiments/rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware/checkpoints/checkpoint_epoch_0048.pth",
-                temperature=4.0,
-                alpha=0.7,  # 70% distillation, 30% ground truth
+                teacher_checkpoint="ext_extractor/2020-09-23a.pth",  # Teacher B3 weights
+                temperature=4.0,  # Higher temperature for softer distributions
+                alpha=0.3,  # Lower weight for distillation, more on ground truth
+                encoder_only_epochs=0,
                 distill_logits=True,
                 distill_features=False,
                 feature_match_layers=[],
@@ -2656,8 +2664,8 @@ class ConfigManager:
                 student_encoder="timm-efficientnet-b0"
             ),
             data=DataConfig(
-                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
-                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
                 num_workers=4,
@@ -2667,15 +2675,15 @@ class ConfigManager:
                 use_edge_visualize=False,
             ),
             training=TrainingConfig(
-                learning_rate=1e-4,
-                warmup_epochs=5,
+                learning_rate=1e-4,  # Reduced for stability
+                warmup_epochs=5,  # More warmup for stable start
                 scheduler='cosine',
-                num_epochs=100,
-                batch_size=2,
-                gradient_clip=1.0,
-                dice_weight=1.0,
+                num_epochs=50,  # Fewer epochs for distillation
+                batch_size=4,  # Larger batch size for stable distillation
+                gradient_clip=5.0,  # Higher clip threshold
+                dice_weight=0.0,  # No dice loss for distillation
                 ce_weight=1.0,
-                weight_decay=0.01,
+                weight_decay=1e-4,
                 min_lr=1e-6,
             ),
         ),

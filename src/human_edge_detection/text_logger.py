@@ -140,6 +140,18 @@ class TextLogger:
             f.write(config_str)
             f.write("\n\n")
     
+    def log(self, message: str):
+        """Log a general message to the log file.
+        
+        Args:
+            message: Message to log
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_str = f"[{timestamp}] {message}\n"
+        
+        with open(self.log_path, 'a') as f:
+            f.write(log_str)
+    
     def log_error(self, error_msg: str):
         """Log error messages to the log file.
         

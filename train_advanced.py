@@ -489,6 +489,21 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                 if incompatible.unexpected_keys:
                     print(f"Warning: Unexpected keys in teacher checkpoint: {incompatible.unexpected_keys[:5]}...")
             
+            # Fix randomly initialized output_conv in teacher if it wasn't loaded
+            if hasattr(teacher_model, 'pretrained_unet') and hasattr(teacher_model.pretrained_unet, 'output_conv'):
+                output_conv_key = 'pretrained_unet.output_conv.weight'
+                if output_conv_key not in filtered_state_dict and output_conv_key not in state_dict:
+                    print("Initializing teacher's output_conv to stable values for binary mask prediction...")
+                    with torch.no_grad():
+                        # Initialize to convert 1-channel mask to 2-channel [background, foreground]
+                        teacher_model.pretrained_unet.output_conv.weight.zero_()
+                        # Channel 0: background (inverse of mask)
+                        teacher_model.pretrained_unet.output_conv.weight[0, 0] = -1.0
+                        # Channel 1: foreground (mask)
+                        teacher_model.pretrained_unet.output_conv.weight[1, 0] = 1.0
+                        # Zero bias
+                        teacher_model.pretrained_unet.output_conv.bias.zero_()
+            
             teacher_model = teacher_model.to(device)
             print(f"Successfully loaded teacher model (epoch {checkpoint.get('epoch', 'unknown')})")
         except Exception as e:
@@ -1336,11 +1351,103 @@ def main():
             print(f"Warning: Failed to export untrained model to ONNX: {e}")
         print("Continuing with training...")
 
+    # Setup staged training if enabled (check both staged_training and distillation config)
+    staged_training_enabled = False
+    stages = []
+    
+    # Check for encoder_only_epochs in distillation config (priority)
+    if config.distillation.enabled and hasattr(config.distillation, 'encoder_only_epochs') and config.distillation.encoder_only_epochs > 0:
+        from src.human_edge_detection.staged_training import (
+            StageConfig, get_current_stage, apply_stage_freezing, update_optimizer_for_stage
+        )
+        staged_training_enabled = True
+        
+        # Create stages based on distillation config
+        stages = [
+            StageConfig(
+                name="encoder_only",
+                start_epoch=0,
+                end_epoch=config.distillation.encoder_only_epochs,
+                freeze_encoder=False,
+                freeze_decoder=True,
+                freeze_rgb_extractor=True,
+                learning_rate_scale=getattr(config.distillation, 'encoder_lr_scale', 1.0)
+            ),
+            StageConfig(
+                name="full_model",
+                start_epoch=config.distillation.encoder_only_epochs,
+                end_epoch=None,
+                freeze_encoder=False,
+                freeze_decoder=False,
+                freeze_rgb_extractor=False,
+                learning_rate_scale=getattr(config.distillation, 'full_model_lr_scale', 0.5)
+            )
+        ]
+        print(f"\nStaged training enabled via distillation config: {config.distillation.encoder_only_epochs} encoder-only epochs")
+        
+    # Fallback to explicit staged_training config if exists
+    elif hasattr(config, 'staged_training') and config.staged_training.get('enabled', False):
+        from src.human_edge_detection.staged_training import (
+            StageConfig, get_current_stage, apply_stage_freezing, update_optimizer_for_stage
+        )
+        staged_training_enabled = True
+        
+        # Parse stage configurations
+        for stage_dict in config.staged_training.get('stages', []):
+            stages.append(StageConfig(
+                name=stage_dict['name'],
+                start_epoch=stage_dict['start_epoch'],
+                end_epoch=stage_dict.get('end_epoch'),
+                freeze_encoder=stage_dict.get('freeze_encoder', False),
+                freeze_decoder=stage_dict.get('freeze_decoder', False),
+                freeze_rgb_extractor=stage_dict.get('freeze_rgb_extractor', False),
+                learning_rate_scale=stage_dict.get('learning_rate_scale', 1.0)
+            ))
+        print(f"\nStaged training enabled with {len(stages)} stages")
+    
+    if staged_training_enabled:
+        current_stage_name = None
+    
     # Training loop
     print(f"\nStarting training for {config.training.num_epochs} epochs...")
 
     try:
         for epoch in range(start_epoch, config.training.num_epochs):
+            # Apply staged training configuration if enabled
+            if staged_training_enabled:
+                stage = get_current_stage(epoch, stages)
+                if stage and stage.name != current_stage_name:
+                    print(f"\n{'='*60}")
+                    print(f"Entering training stage: {stage.name} (epoch {epoch})")
+                    print(f"{'='*60}")
+                    
+                    # Apply freezing configuration
+                    apply_stage_freezing(model, stage, verbose=True)
+                    
+                    # Update optimizer with new parameters
+                    optimizer = update_optimizer_for_stage(
+                        optimizer, model, stage, config.training.learning_rate
+                    )
+                    
+                    # Update scheduler if needed
+                    if scheduler:
+                        # Recreate scheduler with new optimizer
+                        if config.training.scheduler == 'cosine':
+                            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                                optimizer,
+                                T_max=config.training.num_epochs - epoch,
+                                eta_min=config.training.min_lr
+                            )
+                        elif config.training.scheduler == 'cosine_warm_restarts':
+                            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                                optimizer,
+                                T_0=config.training.T_0,
+                                T_mult=config.training.T_mult,
+                                eta_min=config.training.eta_min_restart
+                            )
+                    
+                    current_stage_name = stage.name
+            
             # Train
             train_metrics = train_epoch(
                 model, train_loader, loss_fn, optimizer, device,

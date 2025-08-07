@@ -1,0 +1,22 @@
+{
+  "1_person": {
+    "img_id": 500716,
+    "file_name": "000000500716.jpg",
+    "roi_percentage": 83.49258426966291
+  },
+  "2_person": {
+    "img_id": 468954,
+    "file_name": "000000468954.jpg",
+    "roi_percentage": 33.21090090749414
+  },
+  "3_person": {
+    "img_id": 23899,
+    "file_name": "000000023899.jpg",
+    "roi_percentage": 20.145710784313724
+  },
+  "5_person": {
+    "img_id": 31817,
+    "file_name": "000000031817.jpg",
+    "roi_percentage": 12.122707709580837
+  }
+}
