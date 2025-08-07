@@ -162,13 +162,11 @@ def create_dataloader(config: ExperimentConfig, is_training: bool = True, use_he
             A.OneOf([
                 A.RandomRain(drop_length=20, drop_width=1, drop_color=(200, 200, 200),
                            blur_value=5, brightness_coefficient=0.7, rain_type='drizzle', p=1.0),
-                A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3, alpha_coef=0.1, p=1.0),
+                A.RandomFog(fog_coef_range=(0.1, 0.3), alpha_coef=0.1, p=1.0),
                 A.RandomSunFlare(
                     flare_roi=(0, 0, 1, 0.5),
-                    angle_lower=0,
-                    angle_upper=1,
-                    num_flare_circles_lower=3,
-                    num_flare_circles_upper=6,
+                    angle_range=(0, 1),
+                    num_flare_circles_range=(3, 6),
                     src_radius=100,
                     src_color=(255, 255, 255),
                     p=1.0
@@ -184,14 +182,14 @@ def create_dataloader(config: ExperimentConfig, is_training: bool = True, use_he
 
             # Noise
             A.OneOf([
-                A.GaussNoise(var_limit=(10.0, 50.0), p=1.0),
+                A.GaussNoise(noise_scale_factor=1.0, p=1.0),
                 A.ISONoise(color_shift=(0.01, 0.05), intensity=(0.1, 0.5), p=1.0),
             ], p=0.05),
 
             # Image quality degradation
             A.OneOf([
-                A.ImageCompression(quality_lower=70, quality_upper=95, p=1.0),
-                A.Downscale(scale_min=0.5, scale_max=0.9, p=1.0),
+                A.ImageCompression(quality_range=(70, 95), p=1.0),
+                A.Downscale(scale_range=(0.5, 0.9), p=1.0),
             ], p=0.1),
 
             # ImageNet normalization
@@ -587,7 +585,7 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
         1: 500716,  # 83.5% ROI coverage - 000000500716.jpg
         2: 468954,  # 33.2% ROI coverage - 000000468954.jpg
         3: 23899,   # 20.1% ROI coverage - 000000023899.jpg
-        5: 31817    # 12.1% ROI coverage - 000000031817.jpg
+        5: 162732   # Best 5-person image - all ROIs > 16%, avg 22.7% - 000000162732.jpg
     }
 
     # Alternative Set 2: Second largest ROIs (uncomment to use)
@@ -674,19 +672,19 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
             img_np = np.array(img)
 
             # Create transform for preprocessing
-            # Use zero mean and unit std to match training normalization
+            # Use ImageNet normalization to match training
             transform = A.Compose([
                 A.Resize(640, 640),
                 A.Normalize(
-                    mean=[0.000, 0.000, 0.000],
-                    std=[1.000, 1.000, 1.000]
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225]
                 ),
                 ToTensorV2()
             ])
 
             transformed = transform(image=img_np, mask=mask)
             img_tensor = transformed['image'].unsqueeze(0).to(device)
-            mask_tensor = torch.from_numpy(transformed['mask']).unsqueeze(0).unsqueeze(0).float().to(device)
+            mask_tensor = transformed['mask'].unsqueeze(0).unsqueeze(0).float().to(device)
             mask_tensor = (mask_tensor > 0.5).float()
 
             selected_samples[count] = [(img_tensor, mask_tensor, target_img_id)]
