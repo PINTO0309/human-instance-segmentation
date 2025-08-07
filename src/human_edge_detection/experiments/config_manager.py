@@ -101,7 +101,7 @@ class TrainingConfig:
 
     # Validation
     validate_every: int = 1
-    save_every: int = 10
+    save_every: int = 1
     early_stopping_patience: int = 10
 
     # Loss weights
@@ -122,7 +122,7 @@ class DataConfig:
     data_stats: str = 'data_analyze_full.json'
 
     # Data loading
-    num_workers: int = 8
+    num_workers: int = 16
     pin_memory: bool = True
 
     # ROI settings

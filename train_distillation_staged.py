@@ -620,8 +620,8 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
             for count, target_img_id in large_roi_img_ids.items():
                 if img_id == target_img_id and not found_images[count]:
                     selected_samples[count] = [(
-                        images[i:i+1].clone(),
-                        masks[i:i+1].clone(),
+                        images[i:i+1].clone().to(device),
+                        masks[i:i+1].clone().to(device),
                         img_id
                     )]
                     found_images[count] = True
@@ -694,6 +694,8 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
     # If we couldn't find exact counts, use whatever we have
     # Fill missing samples with first available image
     fallback_img, fallback_mask = next(iter(dataloader))
+    fallback_img = fallback_img.to(device)
+    fallback_mask = fallback_mask.to(device)
 
     result_images = []
     result_masks = []
@@ -719,8 +721,8 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
             print(f"  Warning: Could not find pre-selected large ROI image with {count} person(s), using fallback")
 
     # Concatenate results
-    images_tensor = torch.cat(result_images, dim=0).to(device)
-    masks_tensor = torch.cat(result_masks, dim=0).to(device)
+    images_tensor = torch.cat(result_images, dim=0)
+    masks_tensor = torch.cat(result_masks, dim=0)
 
     return images_tensor, masks_tensor
 
