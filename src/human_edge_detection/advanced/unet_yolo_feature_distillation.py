@@ -236,9 +236,21 @@ class YOLOFeatureDistillationWrapper(nn.Module):
         if self.cache_input_hash == input_hash and self.yolo_features_cache is not None:
             return self.yolo_features_cache
         
-        # Extract features using YOLO
+        # YOLO expects images normalized to [0, 1] without ImageNet normalization
+        # Denormalize from ImageNet normalization
         with torch.no_grad():
-            yolo_features = self.yolo_extractor.extract_features(x)
+            # ImageNet mean and std
+            mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(x.device)
+            std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(x.device)
+            
+            # Denormalize: x = (x_norm * std) + mean
+            x_denorm = (x * std) + mean
+            
+            # Clamp to [0, 1] range (YOLO expects this)
+            x_denorm = torch.clamp(x_denorm, 0, 1)
+            
+            # Extract features using YOLO
+            yolo_features = self.yolo_extractor.extract_features(x_denorm)
         
         # Cache the features
         self.yolo_features_cache = yolo_features.detach()
