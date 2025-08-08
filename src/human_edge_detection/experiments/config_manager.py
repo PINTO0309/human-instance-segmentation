@@ -2762,7 +2762,7 @@ class ConfigManager:
                 val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=16,
+                num_workers=4,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
                 use_roi_comparison=False,
