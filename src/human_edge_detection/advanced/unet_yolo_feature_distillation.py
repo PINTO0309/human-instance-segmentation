@@ -57,25 +57,27 @@ class UNetWithYOLOFeatureDistillation(nn.Module):
         
         # Get encoder output channels at different levels
         # For EfficientNet-B0, the channels are typically:
-        # [16, 24, 40, 112, 320] at different resolutions
+        # [3, 32, 24, 40, 112, 320] at different resolutions
+        # [640, 320, 160, 80, 40, 20] spatial resolutions
         self.encoder_channels = self.unet.encoder.out_channels
         
-        # The bottleneck (last encoder output) has the most channels
-        # For B0: 320 channels at 80x80 resolution (after 8x downsampling)
-        bottleneck_channels = self.encoder_channels[-1]  # 320 for B0
+        # Use feature at 80x80 resolution (index 3) for YOLO feature matching
+        # For B0: 40 channels at 80x80 resolution
+        self.feature_index = 3  # Index of 80x80 feature
+        feature_channels = self.encoder_channels[self.feature_index]  # 40 for B0 at 80x80
         
         # Feature projection layer (only used during training)
-        # Projects from student bottleneck (320 for B0) to YOLO features (1024)
+        # Projects from student feature (40 for B0 at 80x80) to YOLO features (1024 at 80x80)
         if projection_hidden_dim is not None:
             self.feature_projector = nn.Sequential(
-                nn.Conv2d(bottleneck_channels, projection_hidden_dim, kernel_size=1),
+                nn.Conv2d(feature_channels, projection_hidden_dim, kernel_size=1),
                 nn.BatchNorm2d(projection_hidden_dim),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(projection_hidden_dim, 1024, kernel_size=1)
             )
         else:
             # Direct projection
-            self.feature_projector = nn.Conv2d(bottleneck_channels, 1024, kernel_size=1)
+            self.feature_projector = nn.Conv2d(feature_channels, 1024, kernel_size=1)
         
         # Initialize projection weights
         for m in self.feature_projector.modules():
@@ -101,13 +103,15 @@ class UNetWithYOLOFeatureDistillation(nn.Module):
         # Encode features
         features = self.unet.encoder(x)
         
-        # Get bottleneck features if needed for distillation
+        # Get features at 80x80 resolution if needed for distillation
         if return_features:
-            bottleneck = features[-1]  # Last encoder output (320x80x80 for B0)
-            projected_features = self.feature_projector(bottleneck)  # Project to 1024x80x80
+            # Use feature at index 3 which is 80x80 resolution (40 channels for B0)
+            feature_80x80 = features[self.feature_index]  # 40x80x80 for B0
+            projected_features = self.feature_projector(feature_80x80)  # Project to 1024x80x80
         
         # Decode to segmentation
-        decoder_output = self.unet.decoder(*features)
+        # UnetDecoder expects features as a list/tuple, not unpacked
+        decoder_output = self.unet.decoder(features)
         segmentation = self.unet.segmentation_head(decoder_output)
         
         if return_features:
@@ -180,10 +184,24 @@ class YOLOFeatureDistillationWrapper(nn.Module):
         
         # Load teacher checkpoint
         checkpoint = torch.load(teacher_checkpoint_path, map_location=device)
-        if 'model_state_dict' in checkpoint:
-            self.teacher.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Extract state dict from checkpoint
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
         else:
-            self.teacher.load_state_dict(checkpoint)
+            state_dict = checkpoint
+        
+        # Process state dict keys to remove 'model.' prefix if present
+        processed_state_dict = {}
+        for key, value in state_dict.items():
+            # Remove 'model.' prefix if present
+            new_key = key.replace('model.', '') if key.startswith('model.') else key
+            processed_state_dict[new_key] = value
+        
+        # Load the processed state dict
+        self.teacher.load_state_dict(processed_state_dict)
         
         # Freeze teacher
         if freeze_teacher:
@@ -369,11 +387,24 @@ class YOLODistillationLoss(nn.Module):
         student_output = outputs['student_output']
         teacher_output = outputs['teacher_output']
         
-        # Output distillation losses (same as before)
-        # KL Divergence loss
-        student_log_probs = F.log_softmax(student_output / self.temperature, dim=1)
-        teacher_probs = F.softmax(teacher_output.detach() / self.temperature, dim=1)
-        kl_loss = self.kl_loss(student_log_probs, teacher_probs) * (self.temperature ** 2)
+        # Output distillation losses for binary segmentation
+        # For binary outputs, use KL divergence between sigmoid outputs
+        with torch.no_grad():
+            teacher_sigmoid = torch.sigmoid(teacher_output / self.temperature)
+        student_sigmoid = torch.sigmoid(student_output / self.temperature)
+        
+        # Compute KL divergence for binary distributions
+        # KL(P||Q) = P * log(P/Q) + (1-P) * log((1-P)/(1-Q))
+        eps = 1e-7  # Small value to avoid log(0)
+        
+        # Teacher probabilities (detached)
+        p = teacher_sigmoid.clamp(eps, 1 - eps)
+        # Student probabilities
+        q = student_sigmoid.clamp(eps, 1 - eps)
+        
+        # KL divergence for Bernoulli distributions
+        kl_loss = p * torch.log(p / q) + (1 - p) * torch.log((1 - p) / (1 - q))
+        kl_loss = kl_loss.mean() * self.temperature
         
         # MSE loss
         mse_loss = self.mse_loss(student_output, teacher_output.detach())

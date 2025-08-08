@@ -2689,8 +2689,8 @@ class ConfigManager:
         ),
 
         # Knowledge distillation with YOLO feature alignment
-        'rgb_unet_yolo_feature_distillation_b0_from_b3': ExperimentConfig(
-            name='rgb_unet_yolo_feature_distillation_b0_from_b3',
+        'rgb_hierarchical_unet_v2_distillation_b0_from_b3_yolo': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_distillation_b0_from_b3_yolo',
             description='UNet distillation from B3 teacher to B0 student with YOLOv9 feature alignment',
             model=ModelConfig(
                 # Use special flag for UNet-only distillation
@@ -2739,19 +2739,21 @@ class ConfigManager:
                 encoder_only_epochs=0,
                 distill_logits=True,
                 distill_features=True,  # Enable feature distillation with YOLO
-                feature_match_layers=["segmentation_model_34_Concat_output_0"],  # YOLO layer
+                # Use feature_match_layers to store YOLO settings as a list
+                # Format: ["layer_name", "onnx_path", "loss_type", "loss_weight", "hidden_dim"]
+                feature_match_layers=[
+                    "segmentation_model_34_Concat_output_0",  # YOLO target layer
+                    "ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx",  # YOLO ONNX path
+                    "mse",  # Feature loss type
+                    "0.5",  # Feature loss weight
+                    "768",  # Projection hidden dimension
+                ],
                 freeze_teacher=True,
                 student_encoder="timm-efficientnet-b0",
-                # YOLO-specific settings (stored as additional params)
-                yolo_onnx_path="ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx",
-                yolo_target_layer="segmentation_model_34_Concat_output_0",
-                feature_loss_weight=0.5,  # Weight for YOLO feature alignment
-                feature_loss_type="mse",  # MSE or cosine similarity
-                projection_hidden_dim=768,  # Hidden dim for projection layer
             ),
             data=DataConfig(
-                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
-                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
                 num_workers=16,

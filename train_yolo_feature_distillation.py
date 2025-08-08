@@ -417,10 +417,10 @@ def evaluate(
             images = images.to(device)
             masks = masks.to(device)
 
-            # Forward pass (without features for validation)
-            outputs = model(images, extract_features=False)
+            # Forward pass with features for validation to compute feature loss
+            outputs = model(images, extract_features=True)
 
-            # Compute loss (feature loss will be 0 since we're not extracting features)
+            # Compute loss (including feature loss)
             loss, loss_dict = loss_fn(outputs, masks)
 
             # Update metrics
@@ -953,24 +953,45 @@ def main():
     # Setup tensorboard
     writer = SummaryWriter(exp_dirs['logs'])
 
+    # Extract YOLO settings from feature_match_layers
+    # Format: ["layer_name", "onnx_path", "loss_type", "loss_weight", "hidden_dim"]
+    if config.distillation.feature_match_layers and len(config.distillation.feature_match_layers) >= 5:
+        yolo_target_layer = config.distillation.feature_match_layers[0]
+        yolo_onnx_path = config.distillation.feature_match_layers[1]
+        feature_loss_type = config.distillation.feature_match_layers[2]
+        feature_loss_weight = float(config.distillation.feature_match_layers[3])
+        projection_hidden_dim = int(config.distillation.feature_match_layers[4])
+    else:
+        # Default values if not properly configured
+        yolo_target_layer = "segmentation_model_34_Concat_output_0"
+        yolo_onnx_path = "ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx"
+        feature_loss_type = "mse"
+        feature_loss_weight = 0.5
+        projection_hidden_dim = 768
+    
+    # Override feature weight if provided via command line
+    if args.feature_weight is not None:
+        feature_loss_weight = args.feature_weight
+
     # Create model and loss with YOLO features
     model = YOLOFeatureDistillationWrapper(
         student_encoder=config.distillation.student_encoder,
         teacher_checkpoint_path=config.distillation.teacher_checkpoint,
-        yolo_onnx_path="ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx",
+        yolo_onnx_path=yolo_onnx_path,
+        yolo_target_layer=yolo_target_layer,
         device=args.device,
         freeze_teacher=True,
-        projection_hidden_dim=768
+        projection_hidden_dim=projection_hidden_dim
     )
 
     loss_fn = YOLODistillationLoss(
         kl_weight=1.0,
         mse_weight=0.5,
         bce_weight=0.5,
-        dice_weight=1.0,
-        feature_weight=args.feature_weight,
-        feature_loss_type="mse",
-        temperature=3.0
+        dice_weight=config.training.dice_weight,
+        feature_weight=feature_loss_weight,
+        feature_loss_type=feature_loss_type,
+        temperature=config.distillation.temperature
     )
 
     # Create optimizer (only optimize student parameters including projection)
