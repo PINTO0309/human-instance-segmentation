@@ -288,7 +288,7 @@ def train_epoch(
             with torch.amp.autocast('cuda'):
                 # Forward pass with feature extraction
                 outputs = model(images, extract_features=True)
-                
+
                 # Compute loss
                 loss, loss_dict = loss_fn(outputs, masks)
 
@@ -419,7 +419,7 @@ def evaluate(
 
             # Forward pass (without features for validation)
             outputs = model(images, extract_features=False)
-            
+
             # Compute loss (feature loss will be 0 since we're not extracting features)
             loss, loss_dict = loss_fn(outputs, masks)
 
@@ -434,7 +434,7 @@ def evaluate(
             # Compute mIoU for both student and teacher predictions
             student_output = outputs['student_output']
             teacher_output = outputs['teacher_output']
-            
+
             student_preds = (torch.sigmoid(student_output) > 0.5).float()
             teacher_preds = (torch.sigmoid(teacher_output) > 0.5).float()
             masks_binary = (masks > 0.5).float()
@@ -566,7 +566,7 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
     from pycocotools.coco import COCO
     import sys
     import io
-    
+
     # Suppress COCO loading messages
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
@@ -838,7 +838,7 @@ def export_onnx_model(model: nn.Module, save_dir: Path, device: str):
         # Export to ONNX (without feature extraction)
         # The model will use return_features=False by default
         onnx_path = save_dir / 'model.onnx'
-        
+
         # Export the student model directly, ensuring no feature extraction
         with torch.no_grad():
             torch.onnx.export(
@@ -962,7 +962,7 @@ def main():
         freeze_teacher=True,
         projection_hidden_dim=768
     )
-    
+
     loss_fn = YOLODistillationLoss(
         kl_weight=1.0,
         mse_weight=0.5,
@@ -1007,7 +1007,7 @@ def main():
 
     # Resume from checkpoint if specified
     if args.resume:
-        checkpoint = torch.load(args.resume)
+        checkpoint = torch.load(args.resume, weights_only=False)
         model.student.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         if scheduler and 'scheduler_state_dict' in checkpoint:
@@ -1038,7 +1038,7 @@ def main():
         if teacher_miou_cache is None:
             teacher_miou_cache = val_metrics['teacher_miou']
             text_logger.log(f"Cached Teacher B3 mIoU: {teacher_miou_cache:.4f}")
-        
+
         text_logger.log(f"Epoch {epoch+1:03d} - Val - Loss: {val_metrics['total_loss']:.4f}, "
                        f"Dice: {val_metrics['dice_loss']:.4f}, B0_mIoU: {val_metrics['student_miou']:.4f}, "
                        f"B3_mIoU: {val_metrics['teacher_miou']:.4f}, Agreement: {val_metrics['agreement']:.4f}")
