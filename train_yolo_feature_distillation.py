@@ -941,26 +941,27 @@ def main():
     # Create experiment directories
     exp_dirs = create_experiment_dirs(config)
 
-    # Setup logging
-    text_logger = TextLogger(exp_dirs['logs'])
-    text_logger.log(f"Starting UNet YOLO feature distillation training with config: {config.name}")
-    text_logger.log(f"Batch size: {config.training.batch_size}")
-    text_logger.log(f"Epochs: {config.training.num_epochs}")
-    text_logger.log(f"Heavy augmentation: {'Enabled' if args.use_heavy_augmentation else 'Disabled'}")
-    text_logger.log(f"Feature weight: {args.feature_weight}")
-    text_logger.log(f"Configuration:\n{json.dumps(config.__dict__, default=str, indent=2)}")
-
-    # Setup tensorboard
-    writer = SummaryWriter(exp_dirs['logs'])
-
-    # Extract YOLO settings from feature_match_layers
-    # Format: ["layer_name", "onnx_path", "loss_type", "loss_weight", "hidden_dim"]
+    # Extract YOLO settings from feature_match_layers FIRST (before logging)
+    # Format: ["layer_name", "onnx_path", "loss_type", "loss_weight", "hidden_dim", 
+    #          "enable_temp_schedule", "initial_temp", "final_temp", "schedule_type"]
     if config.distillation.feature_match_layers and len(config.distillation.feature_match_layers) >= 5:
         yolo_target_layer = config.distillation.feature_match_layers[0]
         yolo_onnx_path = config.distillation.feature_match_layers[1]
         feature_loss_type = config.distillation.feature_match_layers[2]
         feature_loss_weight = float(config.distillation.feature_match_layers[3])
         projection_hidden_dim = int(config.distillation.feature_match_layers[4])
+        
+        # Parse temperature scheduling parameters if available
+        enable_temp_scheduling = False
+        initial_temperature = config.distillation.temperature
+        final_temperature = 1.0
+        schedule_type = "linear"
+        
+        if len(config.distillation.feature_match_layers) >= 9:
+            enable_temp_scheduling = config.distillation.feature_match_layers[5].lower() == "true"
+            initial_temperature = float(config.distillation.feature_match_layers[6])
+            final_temperature = float(config.distillation.feature_match_layers[7])
+            schedule_type = config.distillation.feature_match_layers[8]
     else:
         # Default values if not properly configured
         yolo_target_layer = "segmentation_model_34_Concat_output_0"
@@ -968,10 +969,36 @@ def main():
         feature_loss_type = "mse"
         feature_loss_weight = 0.5
         projection_hidden_dim = 768
+        enable_temp_scheduling = False
+        initial_temperature = config.distillation.temperature
+        final_temperature = 1.0
+        schedule_type = "linear"
     
     # Override feature weight if provided via command line
     if args.feature_weight is not None:
         feature_loss_weight = args.feature_weight
+
+    # Setup logging (after parsing configs)
+    text_logger = TextLogger(exp_dirs['logs'])
+    text_logger.log(f"Starting UNet YOLO feature distillation training with config: {config.name}")
+    text_logger.log(f"Batch size: {config.training.batch_size}")
+    text_logger.log(f"Epochs: {config.training.num_epochs}")
+    text_logger.log(f"Heavy augmentation: {'Enabled' if args.use_heavy_augmentation else 'Disabled'}")
+    text_logger.log(f"Feature weight: {feature_loss_weight}")
+    
+    # Log temperature scheduling configuration
+    if enable_temp_scheduling:
+        text_logger.log(f"Temperature scheduling: Enabled")
+        text_logger.log(f"  Initial temperature: {initial_temperature:.2f}")
+        text_logger.log(f"  Final temperature: {final_temperature:.2f}")
+        text_logger.log(f"  Schedule type: {schedule_type}")
+    else:
+        text_logger.log(f"Temperature: Fixed at {initial_temperature:.2f}")
+    
+    text_logger.log(f"Configuration:\n{json.dumps(config.__dict__, default=str, indent=2)}")
+
+    # Setup tensorboard
+    writer = SummaryWriter(exp_dirs['logs'])
 
     # Create model and loss with YOLO features
     model = YOLOFeatureDistillationWrapper(
@@ -991,7 +1018,7 @@ def main():
         dice_weight=config.training.dice_weight,
         feature_weight=feature_loss_weight,
         feature_loss_type=feature_loss_type,
-        temperature=config.distillation.temperature
+        temperature=initial_temperature  # Use initial temperature from config
     )
 
     # Create optimizer (only optimize student parameters including projection)
@@ -1038,6 +1065,17 @@ def main():
         text_logger.log(f"Resumed from epoch {start_epoch}")
 
     for epoch in range(start_epoch, config.training.num_epochs):
+        # Update temperature if scheduling is enabled
+        if enable_temp_scheduling:
+            current_temp = loss_fn.update_temperature(
+                current_epoch=epoch,
+                total_epochs=config.training.num_epochs,
+                final_temperature=final_temperature,
+                schedule_type=schedule_type
+            )
+            text_logger.log(f"Epoch {epoch+1:03d} - Temperature updated to: {current_temp:.3f}")
+            writer.add_scalar('Train/Temperature', current_temp, epoch)
+        
         # Train
         train_metrics = train_epoch(
             model, train_loader, loss_fn, optimizer,

@@ -272,10 +272,39 @@ uv run python train_yolo_feature_distillation.py \
 2. **Memory Usage**: Training requires loading all three models
 3. **Feature Alignment**: Fixed projection architecture may not be optimal for all cases
 
+## Temperature Scheduling
+
+Progressive distillation is supported, allowing temperature to gradually decrease during training:
+
+### Configuration
+Add these parameters to `feature_match_layers` in config_manager.py:
+```python
+feature_match_layers=[
+    "segmentation_model_34_Concat_output_0",  # YOLO target layer
+    "ext_extractor/yolov9_e_wholebody25.onnx",  # ONNX path
+    "mse",    # Feature loss type
+    "0.5",    # Feature loss weight
+    "768",    # Projection hidden dimension
+    "true",   # Enable temperature scheduling
+    "3.0",    # Initial temperature
+    "1.0",    # Final temperature
+    "cosine", # Schedule type (linear/cosine/exponential)
+]
+```
+
+### Schedule Types
+- **linear**: Linear interpolation from initial to final temperature
+- **cosine**: Cosine annealing for smooth decay curve
+- **exponential**: Exponential decay (rapid initial decrease, then gradual)
+
+### Benefits
+- **Early training**: Learn from soft targets with high temperature
+- **Late training**: Approach hard targets with low temperature
+- **Result**: More stable convergence and improved final accuracy
+
 ## Future Improvements
 
 1. **Dynamic Feature Selection**: Learn which YOLO layers to use
 2. **Attention Mechanisms**: Weight important spatial regions
 3. **Multi-Scale Features**: Use multiple YOLO layers at different resolutions
-4. **Progressive Distillation**: Gradually reduce temperature during training
-5. **Feature Adaptation**: Learn task-specific transformations of YOLO features
+4. **Feature Adaptation**: Learn task-specific transformations of YOLO features

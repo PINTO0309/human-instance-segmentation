@@ -2739,14 +2739,20 @@ class ConfigManager:
                 encoder_only_epochs=0,
                 distill_logits=True,
                 distill_features=True,  # Enable feature distillation with YOLO
-                # Use feature_match_layers to store YOLO settings as a list
-                # Format: ["layer_name", "onnx_path", "loss_type", "loss_weight", "hidden_dim"]
+                # Use feature_match_layers to store YOLO settings and temperature scheduling as a list
+                # Format: ["layer_name", "onnx_path", "loss_type", "loss_weight", "hidden_dim",
+                #          "temp_schedule_enabled", "initial_temp", "final_temp", "schedule_type"]
                 feature_match_layers=[
                     "segmentation_model_34_Concat_output_0",  # YOLO target layer
                     "ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx",  # YOLO ONNX path
                     "mse",  # Feature loss type
                     "0.5",  # Feature loss weight
                     "768",  # Projection hidden dimension
+                    # Temperature scheduling parameters
+                    "true",  # Enable temperature scheduling
+                    "3.0",   # Initial temperature
+                    "1.0",   # Final temperature
+                    "cosine", # Schedule type: "linear", "cosine", or "exponential"
                 ],
                 freeze_teacher=True,
                 student_encoder="timm-efficientnet-b0",
