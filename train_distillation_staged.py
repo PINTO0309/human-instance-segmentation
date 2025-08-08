@@ -558,7 +558,7 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
     from pycocotools.coco import COCO
     import sys
     import io
-    
+
     # Suppress COCO loading messages
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
@@ -1024,7 +1024,7 @@ def main():
 
     # Resume from checkpoint if specified
     if args.resume:
-        checkpoint = torch.load(args.resume)
+        checkpoint = torch.load(args.resume, weights_only=False)
         model.student.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         if scheduler and 'scheduler_state_dict' in checkpoint:
