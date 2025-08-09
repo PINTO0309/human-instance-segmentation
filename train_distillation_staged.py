@@ -1089,12 +1089,71 @@ def main():
     if args.resume:
         checkpoint = torch.load(args.resume, weights_only=False)
         model.student.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if scheduler and 'scheduler_state_dict' in checkpoint:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        # Get the resume epoch first
         start_epoch = checkpoint['epoch'] + 1
         best_iou = checkpoint.get('best_iou', 0)
-        text_logger.log(f"Resumed from epoch {start_epoch}")
+        
+        # Check if checkpoint has progressive unfreeze state
+        if 'progressive_unfreeze_state' in checkpoint and checkpoint['progressive_unfreeze_state']:
+            prev_blocks_unfrozen = checkpoint['progressive_unfreeze_state'].get('blocks_unfrozen', 0)
+            text_logger.log(f"Restoring progressive unfreeze state: {prev_blocks_unfrozen} blocks unfrozen")
+        
+        # Handle optimizer state dict carefully with progressive unfreezing
+        # Check if we need to recreate optimizer due to different parameter groups
+        try:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            text_logger.log("Optimizer state loaded successfully")
+        except ValueError as e:
+            if "different number of parameter groups" in str(e):
+                text_logger.log("Warning: Optimizer state has different parameter groups")
+                text_logger.log("Recreating optimizer for current epoch configuration")
+                
+                # Check if we need to unfreeze blocks based on schedule
+                if enable_progressive_unfreeze and unfreeze_schedule:
+                    blocks_to_unfreeze = unfreeze_schedule.get(start_epoch, 0)
+                    
+                    if blocks_to_unfreeze > 0:
+                        text_logger.log(f"Unfreezing {blocks_to_unfreeze} encoder blocks for epoch {start_epoch}")
+                        
+                        # Unfreeze encoder blocks
+                        unfrozen_params = model.unfreeze_encoder_blocks(
+                            num_blocks=blocks_to_unfreeze,
+                            learning_rate_scale=encoder_lr_scale
+                        )
+                        
+                        if unfrozen_params:
+                            # Get decoder parameters
+                            decoder_params = model.student.get_decoder_parameters()
+                            
+                            # Create new optimizer with discriminative learning rates
+                            optimizer = torch.optim.AdamW([
+                                {'params': decoder_params, 'lr': config.training.learning_rate},
+                                {'params': unfrozen_params, 'lr': config.training.learning_rate * encoder_lr_scale}
+                            ], weight_decay=config.training.weight_decay)
+                            
+                            text_logger.log(f"Optimizer recreated with {len(unfrozen_params)} unfrozen parameters")
+                            prev_blocks_unfrozen = blocks_to_unfreeze
+                
+                # Try to load optimizer state again with matching structure
+                try:
+                    # Load only the state values that match current parameter groups
+                    old_state = checkpoint['optimizer_state_dict']
+                    if 'state' in old_state:
+                        optimizer.state = old_state['state']
+                        text_logger.log("Loaded optimizer state values")
+                except:
+                    text_logger.log("Could not restore optimizer state, using fresh optimizer")
+            else:
+                raise e
+        
+        if scheduler and 'scheduler_state_dict' in checkpoint:
+            try:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            except:
+                text_logger.log("Could not restore scheduler state, using fresh scheduler")
+                
+        text_logger.log(f"Resumed from epoch {start_epoch}, best IoU: {best_iou:.4f}")
 
     for epoch in range(start_epoch, config.training.num_epochs):
         # Progressive unfreezing check
@@ -1185,7 +1244,15 @@ def main():
             'train_metrics': train_metrics,
             'val_metrics': val_metrics,
             'best_iou': best_iou,
-            'config': config.__dict__
+            'config': config.__dict__,
+            # Save progressive unfreezing state
+            'progressive_unfreeze_state': {
+                'enabled': enable_progressive_unfreeze,
+                'blocks_unfrozen': prev_blocks_unfrozen if enable_progressive_unfreeze else 0,
+                'unfreeze_start_epoch': unfreeze_start_epoch,
+                'unfreeze_rate': unfreeze_rate,
+                'encoder_lr_scale': encoder_lr_scale,
+            } if enable_progressive_unfreeze else None
         }
 
         # Save regular checkpoint
