@@ -298,8 +298,8 @@ def train_epoch(
             # Unscale the gradients of optimizer's assigned params in-place
             scaler.unscale_(optimizer)
 
-            # Clip gradients only for parameters being optimized
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.student.get_decoder_parameters(), max_norm=1.0)
+            # Clip gradients only for parameters being optimized (stricter for mixed precision)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.student.get_decoder_parameters(), max_norm=0.5)
 
             # Step optimizer with scaler
             scaler.step(optimizer)
@@ -311,7 +311,7 @@ def train_epoch(
             loss.backward()
 
             # Gradient clipping for stability
-            torch.nn.utils.clip_grad_norm_(model.student.get_decoder_parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.student.get_decoder_parameters(), max_norm=0.5)
 
             optimizer.step()
 
@@ -1022,10 +1022,17 @@ def main():
     )
 
     # Create optimizer (only optimize student parameters including projection)
+    # Use lower learning rate for mixed precision stability
+    initial_lr = config.training.learning_rate
+    if args.mixed_precision:
+        initial_lr = initial_lr * 0.5  # Reduce LR for mixed precision
+        text_logger.log(f"Mixed precision enabled: Reducing learning rate to {initial_lr}")
+    
     optimizer = torch.optim.AdamW(
         model.student.get_decoder_parameters(),
-        lr=config.training.learning_rate,
-        weight_decay=config.training.weight_decay
+        lr=initial_lr,
+        weight_decay=config.training.weight_decay,
+        eps=1e-4 if args.mixed_precision else 1e-8  # Larger epsilon for fp16
     )
 
     # Create scheduler
@@ -1038,8 +1045,17 @@ def main():
     else:
         scheduler = None
 
-    # Mixed precision scaler
-    scaler = GradScaler() if args.mixed_precision else None
+    # Mixed precision scaler with conservative settings
+    if args.mixed_precision:
+        scaler = GradScaler(
+            init_scale=2**10,  # Start with lower scale (default is 2^16)
+            growth_factor=2,    # Default growth factor
+            backoff_factor=0.5, # Default backoff
+            growth_interval=100 # Update scale less frequently
+        )
+        text_logger.log("Mixed precision scaler configured with conservative settings")
+    else:
+        scaler = None
 
     # Create dataloaders
     train_loader = create_dataloader(config, is_training=True, use_heavy_augmentation=args.use_heavy_augmentation)
@@ -1065,6 +1081,18 @@ def main():
         text_logger.log(f"Resumed from epoch {start_epoch}")
 
     for epoch in range(start_epoch, config.training.num_epochs):
+        # Warmup for first epoch with mixed precision
+        if epoch == 0 and args.mixed_precision:
+            # Use very low learning rate for first epoch
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = initial_lr * 0.1
+            text_logger.log(f"Epoch {epoch+1:03d} - Warmup with LR: {initial_lr * 0.1:.6f}")
+        elif epoch == 1 and args.mixed_precision:
+            # Restore normal learning rate after warmup
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = initial_lr
+            text_logger.log(f"Epoch {epoch+1:03d} - Normal LR: {initial_lr:.6f}")
+        
         # Update temperature if scheduling is enabled
         if enable_temp_scheduling:
             current_temp = loss_fn.update_temperature(

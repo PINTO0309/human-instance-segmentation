@@ -982,6 +982,30 @@ def main():
 
     # Setup tensorboard
     writer = SummaryWriter(exp_dirs['logs'])
+    
+    # Parse temperature scheduling parameters from feature_match_layers
+    enable_temp_scheduling = False
+    initial_temperature = config.distillation.temperature
+    final_temperature = 1.0
+    schedule_type = "linear"
+    
+    # Check if temperature scheduling is configured
+    if (config.distillation.feature_match_layers and 
+        len(config.distillation.feature_match_layers) >= 5 and 
+        config.distillation.feature_match_layers[0] == "temp_scheduling"):
+        enable_temp_scheduling = config.distillation.feature_match_layers[1].lower() == "true"
+        initial_temperature = float(config.distillation.feature_match_layers[2])
+        final_temperature = float(config.distillation.feature_match_layers[3])
+        schedule_type = config.distillation.feature_match_layers[4]
+        
+    # Log temperature scheduling configuration
+    if enable_temp_scheduling:
+        text_logger.log(f"Temperature scheduling: Enabled")
+        text_logger.log(f"  Initial temperature: {initial_temperature:.2f}")
+        text_logger.log(f"  Final temperature: {final_temperature:.2f}")
+        text_logger.log(f"  Schedule type: {schedule_type}")
+    else:
+        text_logger.log(f"Temperature: Fixed at {initial_temperature:.2f}")
 
     # Create model and loss
     model, loss_fn = create_unet_distillation_model(
@@ -989,6 +1013,10 @@ def main():
         teacher_checkpoint=config.distillation.teacher_checkpoint,
         device=args.device
     )
+    
+    # Set initial temperature
+    loss_fn.temperature = initial_temperature
+    loss_fn.initial_temperature = initial_temperature
 
     # Create optimizer (only optimize student parameters)
     optimizer = torch.optim.AdamW(
@@ -1034,6 +1062,17 @@ def main():
         text_logger.log(f"Resumed from epoch {start_epoch}")
 
     for epoch in range(start_epoch, config.training.num_epochs):
+        # Update temperature if scheduling is enabled
+        if enable_temp_scheduling:
+            current_temp = loss_fn.update_temperature(
+                current_epoch=epoch,
+                total_epochs=config.training.num_epochs,
+                final_temperature=final_temperature,
+                schedule_type=schedule_type
+            )
+            text_logger.log(f"Epoch {epoch+1:03d} - Temperature updated to: {current_temp:.3f}")
+            writer.add_scalar('Train/Temperature', current_temp, epoch)
+        
         # Train
         train_metrics = train_epoch(
             model, train_loader, loss_fn, optimizer,

@@ -210,6 +210,7 @@ class UNetDistillationLoss(nn.Module):
         """
         super().__init__()
         self.temperature = temperature
+        self.initial_temperature = temperature  # Store initial temperature for scheduling
         self.alpha = alpha
         self.task_weight = task_weight
         self.use_feature_matching = use_feature_matching
@@ -225,6 +226,54 @@ class UNetDistillationLoss(nn.Module):
         self.mse_loss = nn.MSELoss()
         # We'll create BCE loss in forward to ensure correct device
         self.bce_loss = None
+    
+    def update_temperature(self, current_epoch: int, total_epochs: int, 
+                          final_temperature: float = 1.0, 
+                          schedule_type: str = "linear") -> float:
+        """Update temperature based on schedule.
+        
+        Args:
+            current_epoch: Current training epoch (0-indexed)
+            total_epochs: Total number of training epochs
+            final_temperature: Target temperature at the end of training
+            schedule_type: Type of schedule ("linear", "cosine", or "exponential")
+            
+        Returns:
+            Updated temperature value
+        """
+        if total_epochs <= 1:
+            self.temperature = final_temperature
+            return self.temperature
+            
+        progress = current_epoch / (total_epochs - 1)
+        
+        if schedule_type == "linear":
+            # Linear interpolation from initial to final
+            self.temperature = self.initial_temperature + \
+                             (final_temperature - self.initial_temperature) * progress
+                             
+        elif schedule_type == "cosine":
+            # Cosine annealing
+            import math
+            cosine_factor = 0.5 * (1 + math.cos(math.pi * progress))
+            self.temperature = final_temperature + \
+                             (self.initial_temperature - final_temperature) * cosine_factor
+                             
+        elif schedule_type == "exponential":
+            # Exponential decay
+            import math
+            decay_rate = math.log(final_temperature / self.initial_temperature)
+            self.temperature = self.initial_temperature * math.exp(decay_rate * progress)
+            
+        else:
+            # Default to no scheduling
+            pass
+            
+        return self.temperature
+    
+    def get_temperature(self) -> float:
+        """Get current temperature value."""
+        return self.temperature
     
     def dice_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Calculate Dice loss for binary segmentation.

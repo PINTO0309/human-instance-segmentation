@@ -391,12 +391,21 @@ class YOLODistillationLoss(nn.Module):
         return self.temperature
     
     def dice_loss(self, pred: torch.Tensor, target: torch.Tensor, smooth: float = 1e-5) -> torch.Tensor:
-        """Compute Dice loss."""
+        """Compute Dice loss with mixed precision stability."""
+        # Use larger smooth value for fp16
+        if pred.dtype == torch.float16:
+            smooth = 1e-4
+        
         pred_sigmoid = torch.sigmoid(pred)
         intersection = (pred_sigmoid * target).sum(dim=(2, 3))
         union = pred_sigmoid.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
-        dice = (2.0 * intersection + smooth) / (union + smooth)
-        return 1.0 - dice.mean()
+        
+        # Clamp to prevent division issues
+        dice = (2.0 * intersection + smooth) / (union + smooth).clamp(min=smooth)
+        dice_loss = 1.0 - dice.mean()
+        
+        # Safety clamp
+        return torch.clamp(dice_loss, min=0.0, max=2.0)
     
     def feature_alignment_loss(self, student_features: torch.Tensor, yolo_features: torch.Tensor) -> torch.Tensor:
         """Compute feature alignment loss.
@@ -409,8 +418,10 @@ class YOLODistillationLoss(nn.Module):
             Feature alignment loss
         """
         if self.feature_loss_type == "mse":
-            # Simple MSE loss
-            return F.mse_loss(student_features, yolo_features)
+            # MSE loss with gradient clipping for stability
+            loss = F.mse_loss(student_features, yolo_features)
+            # Clamp to prevent explosion in mixed precision
+            return torch.clamp(loss, min=0.0, max=10.0)
         
         elif self.feature_loss_type == "cosine":
             # Cosine similarity loss
@@ -456,16 +467,26 @@ class YOLODistillationLoss(nn.Module):
         
         # Compute KL divergence for binary distributions
         # KL(P||Q) = P * log(P/Q) + (1-P) * log((1-P)/(1-Q))
-        eps = 1e-7  # Small value to avoid log(0)
+        # Use larger epsilon for mixed precision stability
+        eps = 1e-6 if student_output.dtype == torch.float16 else 1e-7
         
         # Teacher probabilities (detached)
         p = teacher_sigmoid.clamp(eps, 1 - eps)
         # Student probabilities
         q = student_sigmoid.clamp(eps, 1 - eps)
         
-        # KL divergence for Bernoulli distributions
-        kl_loss = p * torch.log(p / q) + (1 - p) * torch.log((1 - p) / (1 - q))
-        kl_loss = kl_loss.mean() * self.temperature
+        # KL divergence for Bernoulli distributions with stability checks
+        kl_pos = p * torch.log(p / q.clamp(min=eps))
+        kl_neg = (1 - p) * torch.log((1 - p).clamp(min=eps) / (1 - q).clamp(min=eps))
+        
+        # Check for NaN/Inf and clamp extreme values
+        kl_pos = torch.nan_to_num(kl_pos, nan=0.0, posinf=10.0, neginf=-10.0)
+        kl_neg = torch.nan_to_num(kl_neg, nan=0.0, posinf=10.0, neginf=-10.0)
+        
+        kl_loss = (kl_pos + kl_neg).mean() * self.temperature
+        
+        # Additional safety clamp for the final loss
+        kl_loss = torch.clamp(kl_loss, min=0.0, max=100.0)
         
         # MSE loss
         mse_loss = self.mse_loss(student_output, teacher_output.detach())
@@ -484,7 +505,7 @@ class YOLODistillationLoss(nn.Module):
                 outputs['yolo_features'].detach()  # Detach YOLO features
             )
         
-        # Combine losses
+        # Combine losses with NaN checking
         total_loss = (
             self.kl_weight * kl_loss +
             self.mse_weight * mse_loss +
@@ -492,6 +513,13 @@ class YOLODistillationLoss(nn.Module):
             self.dice_weight * dice_loss +
             self.feature_weight * feature_loss
         )
+        
+        # Final safety check for NaN/Inf
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print(f"Warning: NaN/Inf detected in loss. KL: {kl_loss.item():.4f}, "
+                  f"MSE: {mse_loss.item():.4f}, BCE: {bce_loss.item():.4f}, "
+                  f"Dice: {dice_loss.item():.4f}, Feature: {feature_loss.item():.4f}")
+            total_loss = torch.tensor(1.0, device=total_loss.device, requires_grad=True)
         
         # Return losses
         loss_dict = {
