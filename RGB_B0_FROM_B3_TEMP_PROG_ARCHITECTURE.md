@@ -53,7 +53,7 @@
 ```
 教師出力 (Teacher)          生徒出力 (Student)
       │                           │
-      │    温度T=4.0→1.0          │
+      │    温度T=4.0→1.0           │
       ▼                           ▼
  Soft Labels                 Predictions
       │                           │
