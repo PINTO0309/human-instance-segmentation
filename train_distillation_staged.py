@@ -989,6 +989,12 @@ def main():
     final_temperature = 1.0
     schedule_type = "linear"
     
+    # Parse progressive unfreezing parameters
+    enable_progressive_unfreeze = False
+    unfreeze_start_epoch = 10
+    unfreeze_rate = 5
+    encoder_lr_scale = 0.1
+    
     # Check if temperature scheduling is configured
     if (config.distillation.feature_match_layers and 
         len(config.distillation.feature_match_layers) >= 5 and 
@@ -998,6 +1004,14 @@ def main():
         final_temperature = float(config.distillation.feature_match_layers[3])
         schedule_type = config.distillation.feature_match_layers[4]
         
+        # Check for progressive unfreezing parameters (if present)
+        if len(config.distillation.feature_match_layers) >= 10:
+            if config.distillation.feature_match_layers[5] == "progressive_unfreeze":
+                enable_progressive_unfreeze = config.distillation.feature_match_layers[6].lower() == "true"
+                unfreeze_start_epoch = int(config.distillation.feature_match_layers[7])
+                unfreeze_rate = int(config.distillation.feature_match_layers[8])
+                encoder_lr_scale = float(config.distillation.feature_match_layers[9])
+        
     # Log temperature scheduling configuration
     if enable_temp_scheduling:
         text_logger.log(f"Temperature scheduling: Enabled")
@@ -1006,12 +1020,22 @@ def main():
         text_logger.log(f"  Schedule type: {schedule_type}")
     else:
         text_logger.log(f"Temperature: Fixed at {initial_temperature:.2f}")
+    
+    # Log progressive unfreezing configuration
+    if enable_progressive_unfreeze:
+        text_logger.log(f"Progressive unfreezing: Enabled")
+        text_logger.log(f"  Start epoch: {unfreeze_start_epoch}")
+        text_logger.log(f"  Unfreeze rate: 1 block every {unfreeze_rate} epochs")
+        text_logger.log(f"  Encoder LR scale: {encoder_lr_scale}")
+    else:
+        text_logger.log(f"Progressive unfreezing: Disabled")
 
     # Create model and loss
     model, loss_fn = create_unet_distillation_model(
         student_encoder=config.distillation.student_encoder,
         teacher_checkpoint=config.distillation.teacher_checkpoint,
-        device=args.device
+        device=args.device,
+        progressive_unfreeze=enable_progressive_unfreeze  # Pass progressive unfreeze flag
     )
     
     # Set initial temperature
@@ -1049,6 +1073,17 @@ def main():
     best_iou = 0
     start_epoch = 0
     teacher_miou_cache = None  # Cache for teacher mIoU
+    
+    # Get progressive unfreezing schedule if enabled
+    unfreeze_schedule = None
+    prev_blocks_unfrozen = 0
+    if enable_progressive_unfreeze:
+        unfreeze_schedule = model.get_progressive_unfreeze_schedule(
+            total_epochs=config.training.num_epochs,
+            unfreeze_start_epoch=unfreeze_start_epoch,
+            unfreeze_rate=unfreeze_rate
+        )
+        text_logger.log(f"Progressive unfreeze schedule created")
 
     # Resume from checkpoint if specified
     if args.resume:
@@ -1062,6 +1097,44 @@ def main():
         text_logger.log(f"Resumed from epoch {start_epoch}")
 
     for epoch in range(start_epoch, config.training.num_epochs):
+        # Progressive unfreezing check
+        if enable_progressive_unfreeze and unfreeze_schedule:
+            blocks_to_unfreeze = unfreeze_schedule[epoch]
+            
+            # Check if we need to unfreeze more blocks
+            if blocks_to_unfreeze > prev_blocks_unfrozen:
+                text_logger.log(f"Epoch {epoch+1:03d} - Unfreezing {blocks_to_unfreeze} encoder blocks")
+                
+                # Unfreeze encoder blocks
+                unfrozen_params = model.unfreeze_encoder_blocks(
+                    num_blocks=blocks_to_unfreeze,
+                    learning_rate_scale=encoder_lr_scale
+                )
+                
+                # Update optimizer with new parameter groups
+                if unfrozen_params:
+                    # Get decoder parameters
+                    decoder_params = model.student.get_decoder_parameters()
+                    
+                    # Create new optimizer with discriminative learning rates
+                    optimizer = torch.optim.AdamW([
+                        {'params': decoder_params, 'lr': config.training.learning_rate},
+                        {'params': unfrozen_params, 'lr': config.training.learning_rate * encoder_lr_scale}
+                    ], weight_decay=config.training.weight_decay)
+                    
+                    # Recreate scheduler with new optimizer
+                    if config.training.scheduler == 'cosine':
+                        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                            optimizer,
+                            T_max=config.training.num_epochs - epoch,  # Remaining epochs
+                            eta_min=config.training.min_lr
+                        )
+                    
+                    text_logger.log(f"  Optimizer updated with {len(unfrozen_params)} unfrozen parameters")
+                    text_logger.log(f"  Decoder LR: {config.training.learning_rate:.6f}, Encoder LR: {config.training.learning_rate * encoder_lr_scale:.6f}")
+                
+                prev_blocks_unfrozen = blocks_to_unfreeze
+        
         # Update temperature if scheduling is enabled
         if enable_temp_scheduling:
             current_temp = loss_fn.update_temperature(

@@ -74,6 +74,11 @@ class UNetDecoderOnly(nn.Module):
     def get_decoder_parameters(self):
         """Get decoder parameters for optimization."""
         return self.unet.decoder.parameters()
+    
+    @property
+    def encoder(self):
+        """Get encoder for progressive unfreezing."""
+        return self.unet.encoder
 
 
 class DistillationUNetWrapper(nn.Module):
@@ -87,7 +92,8 @@ class DistillationUNetWrapper(nn.Module):
         self,
         student_encoder: str = "timm-efficientnet-b0",
         teacher_checkpoint_path: str = "ext_extractor/2020-09-23a.pth",
-        freeze_teacher: bool = True
+        freeze_teacher: bool = True,
+        progressive_unfreeze: bool = False
     ):
         """Initialize distillation wrapper.
         
@@ -95,14 +101,19 @@ class DistillationUNetWrapper(nn.Module):
             student_encoder: Student model encoder name
             teacher_checkpoint_path: Path to teacher model checkpoint
             freeze_teacher: Whether to freeze teacher model
+            progressive_unfreeze: Whether to enable progressive unfreezing of encoder
         """
         super().__init__()
+        
+        # Store progressive unfreeze flag
+        self.progressive_unfreeze = progressive_unfreeze
+        self.student_encoder_name = student_encoder
         
         # Create student model (B0) with pretrained encoder
         self.student = UNetDecoderOnly(
             encoder_name=student_encoder,
             encoder_weights="imagenet",  # Use ImageNet pretrained weights
-            freeze_encoder=True,  # Freeze encoder, train decoder only
+            freeze_encoder=True,  # Initially freeze encoder, will unfreeze progressively
             freeze_decoder=False  # Decoder needs to be trainable
         )
         
@@ -111,6 +122,10 @@ class DistillationUNetWrapper(nn.Module):
             teacher_checkpoint_path,
             freeze=freeze_teacher
         )
+        
+        # Track encoder blocks for progressive unfreezing
+        if self.progressive_unfreeze:
+            self._setup_encoder_blocks()
         
     def _load_teacher_model(self, checkpoint_path: str, freeze: bool = True) -> nn.Module:
         """Load teacher model from checkpoint.
@@ -163,6 +178,85 @@ class DistillationUNetWrapper(nn.Module):
                 
         teacher.eval()
         return teacher
+    
+    def _setup_encoder_blocks(self):
+        """Setup encoder blocks for progressive unfreezing."""
+        # Get encoder blocks from the student model
+        # EfficientNet has 7 blocks (0-6) after the stem
+        self.encoder_blocks = []
+        
+        # Access the encoder directly from UNetDecoderOnly
+        encoder = self.student.encoder
+        
+        # Get all sequential blocks
+        if hasattr(encoder, 'blocks'):
+            for idx, block in enumerate(encoder.blocks):
+                self.encoder_blocks.append((f"block_{idx}", block))
+                
+        print(f"Found {len(self.encoder_blocks)} encoder blocks for progressive unfreezing")
+    
+    def unfreeze_encoder_blocks(self, num_blocks: int, learning_rate_scale: float = 0.1):
+        """Progressively unfreeze encoder blocks from deepest to shallowest.
+        
+        Args:
+            num_blocks: Number of blocks to unfreeze (from the end)
+            learning_rate_scale: Scale factor for encoder learning rate (discriminative LR)
+        
+        Returns:
+            List of parameter groups for optimizer
+        """
+        if not self.progressive_unfreeze:
+            print("Progressive unfreeze not enabled")
+            return []
+            
+        # First, freeze all encoder parameters
+        for param in self.student.encoder.parameters():
+            param.requires_grad = False
+            
+        # Unfreeze the last num_blocks blocks
+        unfrozen_params = []
+        block_start = max(0, len(self.encoder_blocks) - num_blocks)
+        
+        for i in range(block_start, len(self.encoder_blocks)):
+            block_name, block = self.encoder_blocks[i]
+            for param in block.parameters():
+                param.requires_grad = True
+                unfrozen_params.append(param)
+                    
+        print(f"Unfroze {num_blocks} encoder blocks (blocks {block_start}-{len(self.encoder_blocks)-1})")
+        print(f"Total unfrozen parameters: {len(unfrozen_params)}")
+        
+        # Return parameter groups for discriminative learning rates
+        return unfrozen_params
+    
+    def get_progressive_unfreeze_schedule(self, total_epochs: int, 
+                                         unfreeze_start_epoch: int = 10,
+                                         unfreeze_rate: int = 5):
+        """Get schedule for progressive unfreezing.
+        
+        Args:
+            total_epochs: Total number of training epochs
+            unfreeze_start_epoch: Epoch to start unfreezing
+            unfreeze_rate: Unfreeze one block every N epochs
+            
+        Returns:
+            Dict mapping epoch to number of blocks to unfreeze
+        """
+        schedule = {}
+        max_blocks = len(self.encoder_blocks) if hasattr(self, 'encoder_blocks') else 7
+        
+        for epoch in range(total_epochs):
+            if epoch < unfreeze_start_epoch:
+                schedule[epoch] = 0  # Keep all frozen
+            else:
+                epochs_since_start = epoch - unfreeze_start_epoch
+                blocks_to_unfreeze = min(
+                    1 + epochs_since_start // unfreeze_rate,
+                    max_blocks
+                )
+                schedule[epoch] = blocks_to_unfreeze
+                
+        return schedule
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass through both student and teacher.
@@ -447,7 +541,8 @@ class UNetDistillationLoss(nn.Module):
 def create_unet_distillation_model(
     student_encoder: str = "timm-efficientnet-b0",
     teacher_checkpoint: str = "ext_extractor/2020-09-23a.pth",
-    device: str = "cuda"
+    device: str = "cuda",
+    progressive_unfreeze: bool = False
 ) -> Tuple[nn.Module, nn.Module]:
     """Create UNet distillation model and loss.
     
@@ -455,6 +550,7 @@ def create_unet_distillation_model(
         student_encoder: Student encoder architecture
         teacher_checkpoint: Path to teacher checkpoint
         device: Device to use
+        progressive_unfreeze: Enable progressive unfreezing of encoder
         
     Returns:
         Tuple of (model, loss_fn)
@@ -463,7 +559,8 @@ def create_unet_distillation_model(
     model = DistillationUNetWrapper(
         student_encoder=student_encoder,
         teacher_checkpoint_path=teacher_checkpoint,
-        freeze_teacher=True
+        freeze_teacher=True,
+        progressive_unfreeze=progressive_unfreeze
     ).to(device)
     
     # Create loss function with class balancing and stability settings
