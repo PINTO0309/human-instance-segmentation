@@ -70,8 +70,8 @@ Total Loss = α × KL_Loss(T) + β × MSE_Loss + γ × BCE_Loss + δ × Dice_Los
 ここで:
 - α = 0.3 (蒸留重み)
 - β = 0.5 (MSE重み)
-- γ = 1.0 (BCE重み)
-- δ = 0.0 (Dice重み - 無効)
+- γ = 0.5 (BCE重み)
+- δ = 1.0 (Dice重み - 有効)
 - T = 温度（4.0 → 1.0へ動的変化）
 ```
 
@@ -111,19 +111,19 @@ Total Loss = α × KL_Loss(T) + β × MSE_Loss + γ × BCE_Loss + δ × Dice_Los
 ```
 エンコーダーブロック構造（EfficientNet-B0）
 ┌─────────────────────────────────────────────┐
-│ Block 0: Stem (32ch)                        │ ← Epoch 40+
+│ Block 0: Stem (32ch)                        │ ← Epoch 23+
 ├─────────────────────────────────────────────┤
-│ Block 1: MBConv1 (40ch, 160×160)           │ ← Epoch 35
+│ Block 1: MBConv1 (40ch, 160×160)           │ ← Epoch 20
 ├─────────────────────────────────────────────┤
-│ Block 2: MBConv6 (80ch, 80×80)             │ ← Epoch 30
+│ Block 2: MBConv6 (80ch, 80×80)             │ ← Epoch 17
 ├─────────────────────────────────────────────┤
-│ Block 3: MBConv6 (80ch, 80×80)             │ ← Epoch 25
+│ Block 3: MBConv6 (80ch, 80×80)             │ ← Epoch 14
 ├─────────────────────────────────────────────┤
-│ Block 4: MBConv6 (112ch, 40×40)            │ ← Epoch 20
+│ Block 4: MBConv6 (112ch, 40×40)            │ ← Epoch 11
 ├─────────────────────────────────────────────┤
-│ Block 5: MBConv6 (192ch, 20×20)            │ ← Epoch 15
+│ Block 5: MBConv6 (192ch, 20×20)            │ ← Epoch 8
 ├─────────────────────────────────────────────┤
-│ Block 6: MBConv6 (320ch, 20×20)            │ ← Epoch 10
+│ Block 6: MBConv6 (320ch, 20×20)            │ ← Epoch 5
 └─────────────────────────────────────────────┘
          ↑
     最初に解凍（深い層から）
@@ -133,39 +133,39 @@ Total Loss = α × KL_Loss(T) + β × MSE_Loss + γ × BCE_Loss + δ × Dice_Los
 
 | エポック | 温度 | 解凍ブロック | 学習パラメータ | 学習率 |
 |---------|------|-------------|---------------|--------|
-| 0-9 | 4.0→3.5 | 0 | デコーダーのみ | 1e-4 |
-| 10-14 | 3.5→3.2 | 1 (Block 6) | デコーダー + Block 6 | デコーダー: 1e-4<br>Block 6: 1e-5 |
-| 15-19 | 3.2→2.8 | 2 (Block 5-6) | デコーダー + Block 5-6 | デコーダー: 1e-4<br>エンコーダー: 1e-5 |
-| 20-24 | 2.8→2.4 | 3 (Block 4-6) | デコーダー + Block 4-6 | デコーダー: 1e-4<br>エンコーダー: 1e-5 |
-| 25-29 | 2.4→2.0 | 4 (Block 3-6) | デコーダー + Block 3-6 | デコーダー: 1e-4<br>エンコーダー: 1e-5 |
-| 30-34 | 2.0→1.7 | 5 (Block 2-6) | デコーダー + Block 2-6 | デコーダー: 1e-4<br>エンコーダー: 1e-5 |
-| 35-39 | 1.7→1.4 | 6 (Block 1-6) | デコーダー + Block 1-6 | デコーダー: 1e-4<br>エンコーダー: 1e-5 |
-| 40+ | 1.4→1.0 | 7 (全ブロック) | 全パラメータ | デコーダー: 1e-4<br>エンコーダー: 1e-5 |
+| 0-4 | 4.0→3.6 | 0 | デコーダーのみ | 1e-4 |
+| 5-7 | 3.6→3.2 | 1 (Block 6) | デコーダー + Block 6 | デコーダー: 1e-4<br>Block 6: 3e-5 |
+| 8-10 | 3.2→2.9 | 2 (Block 5-6) | デコーダー + Block 5-6 | デコーダー: 1e-4<br>エンコーダー: 3e-5 |
+| 11-13 | 2.9→2.5 | 3 (Block 4-6) | デコーダー + Block 4-6 | デコーダー: 1e-4<br>エンコーダー: 3e-5 |
+| 14-16 | 2.5→2.2 | 4 (Block 3-6) | デコーダー + Block 3-6 | デコーダー: 1e-4<br>エンコーダー: 3e-5 |
+| 17-19 | 2.2→1.9 | 5 (Block 2-6) | デコーダー + Block 2-6 | デコーダー: 1e-4<br>エンコーダー: 3e-5 |
+| 20-22 | 1.9→1.6 | 6 (Block 1-6) | デコーダー + Block 1-6 | デコーダー: 1e-4<br>エンコーダー: 3e-5 |
+| 23-50 | 1.6→1.0 | 7 (全ブロック) | 全パラメータ | デコーダー: 1e-4<br>エンコーダー: 3e-5 |
 
 ## 📊 学習ダイナミクス
 
 ### パラメータ更新の流れ
 
 ```
-エポック 0-9: デコーダー集中学習
+エポック 0-4: デコーダー集中学習
 ┌─────────────┐
 │  Encoder    │ ❄️ 凍結
 ├─────────────┤
 │  Decoder    │ 🔥 学習中 (LR: 1e-4)
 └─────────────┘
 
-エポック 10-39: 段階的解凍
+エポック 5-22: 段階的解凍
 ┌─────────────┐
 │  Encoder    │ 
 │  - Block 0-3│ ❄️ 凍結
-│  - Block 4-6│ 🔥 学習中 (LR: 1e-5)
+│  - Block 4-6│ 🔥 学習中 (LR: 3e-5)
 ├─────────────┤
 │  Decoder    │ 🔥 学習中 (LR: 1e-4)
 └─────────────┘
 
-エポック 40+: 全体微調整
+エポック 23-50: 全体微調整
 ┌─────────────┐
-│  Encoder    │ 🔥 全体学習 (LR: 1e-5)
+│  Encoder    │ 🔥 全体学習 (LR: 3e-5)
 ├─────────────┤
 │  Decoder    │ 🔥 学習中 (LR: 1e-4)
 └─────────────┘
@@ -210,11 +210,14 @@ mIoU
 
 ```yaml
 # 基本設定
-epochs: 100
-batch_size: 4-16
+epochs: 50
+batch_size: 4
 optimizer: AdamW
 base_learning_rate: 1e-4
-encoder_lr_scale: 0.1  # エンコーダーは1/10の学習率
+encoder_lr_scale: 0.3  # エンコーダーは30%の学習率
+weight_decay: 1e-4
+min_lr: 1e-6
+gradient_clip: 5.0
 
 # 温度スケジューリング
 initial_temperature: 4.0
@@ -222,13 +225,15 @@ final_temperature: 1.0
 schedule_type: cosine
 
 # 段階的解凍
-unfreeze_start_epoch: 10
-unfreeze_rate: 5  # 5エポックごとに1ブロック
+unfreeze_start_epoch: 5
+unfreeze_rate: 3  # 3エポックごとに1ブロック
 total_blocks: 7
 
 # 損失重み
 alpha: 0.3  # 蒸留損失
-task_weight: 0.7  # タスク損失（BCE）
+task_weight: 0.7  # タスク損失
+ce_weight: 0.5  # BCE重み
+dice_weight: 1.0  # Dice重み
 ```
 
 ### データ拡張
@@ -255,7 +260,7 @@ task_weight: 0.7  # タスク損失（BCE）
 
 ### 3. **差別的学習率**
 - デコーダー：標準学習率（1e-4）
-- エンコーダー：低学習率（1e-5）
+- エンコーダー：低学習率（3e-5、デコーダーの30%）
 - 事前学習知識を保持
 
 ## 📈 監視指標
@@ -283,8 +288,8 @@ task_weight: 0.7  # タスク損失（BCE）
 # 訓練開始
 uv run python train_distillation_staged.py \
   --config rgb_hierarchical_unet_v2_distillation_b0_from_b3_temp_prog \
-  --epochs 100 \
-  --batch_size 16 \
+  --epochs 50 \
+  --batch_size 4 \
   --mixed_precision
 
 # TensorBoardで監視
