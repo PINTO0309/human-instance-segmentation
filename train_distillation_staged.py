@@ -810,18 +810,18 @@ def save_visualization(
         axes[i, 2].set_title(student_title)
         axes[i, 2].axis('off')
 
-        # Comparison overlay (Teacher vs Student) - Column 3
+        # Comparison overlay (Ground Truth vs Student) - Column 3
         comparison = img.copy()
-        teacher_mask = teacher_preds[i, 0] > 0.5
+        gt_mask = masks_np[i, 0] > 0.5  # Ground truth mask
         student_mask = student_preds[i, 0] > 0.5
 
         # Identify different pixel categories
-        # Background: both predict no person (False)
-        background_both = (~teacher_mask) & (~student_mask)
-        # Foreground: both predict person (True)
-        foreground_both = teacher_mask & student_mask
-        # Mismatch: predictions differ
-        mismatch = (teacher_mask != student_mask)
+        # Background: both have no person (False)
+        background_both = (~gt_mask) & (~student_mask)
+        # Foreground: both have person (True)
+        foreground_both = gt_mask & student_mask
+        # Mismatch: predictions differ from ground truth
+        mismatch = (gt_mask != student_mask)
 
         # Alpha values - use same as Ground Truth for green
         alpha_green = 0.4  # Same as Ground Truth
@@ -846,7 +846,7 @@ def save_visualization(
         comparison[:, :, 2] = comparison[:, :, 2] * (1 - alpha_red * mismatch)  # Reduce blue
 
         axes[i, 3].imshow(comparison)
-        axes[i, 3].set_title('Teacher vs Student\n(Green=FG Match, Red=Mismatch)')
+        axes[i, 3].set_title('Ground Truth vs Student\n(Green=Correct, Red=Error)')
         axes[i, 3].axis('off')
 
     plt.suptitle(f'Epoch {epoch+1:03d}', fontsize=16)
@@ -958,6 +958,8 @@ def main():
                        help='Use heavy augmentations during training (default: True)')
     parser.add_argument('--no_heavy_augmentation', dest='use_heavy_augmentation', action='store_false',
                        help='Disable heavy augmentations during training')
+    parser.add_argument('--test_only', action='store_true',
+                       help='Only run validation without training (requires --resume)')
     args = parser.parse_args()
 
     # Load configuration
@@ -974,7 +976,12 @@ def main():
 
     # Setup logging (pass logs directory, not a file path)
     text_logger = TextLogger(exp_dirs['logs'])
-    text_logger.log(f"Starting UNet decoder distillation training with config: {config.name}")
+    if args.test_only:
+        text_logger.log(f"Running validation only with config: {config.name}")
+        if not args.resume:
+            raise ValueError("--test_only requires --resume to specify checkpoint")
+    else:
+        text_logger.log(f"Starting UNet decoder distillation training with config: {config.name}")
     text_logger.log(f"Batch size: {config.training.batch_size}")
     text_logger.log(f"Epochs: {config.training.num_epochs}")
     text_logger.log(f"Heavy augmentation: {'Enabled' if args.use_heavy_augmentation else 'Disabled'}")
@@ -982,28 +989,28 @@ def main():
 
     # Setup tensorboard
     writer = SummaryWriter(exp_dirs['logs'])
-    
+
     # Parse temperature scheduling parameters from feature_match_layers
     enable_temp_scheduling = False
     initial_temperature = config.distillation.temperature
     final_temperature = 1.0
     schedule_type = "linear"
-    
+
     # Parse progressive unfreezing parameters
     enable_progressive_unfreeze = False
     unfreeze_start_epoch = 10
     unfreeze_rate = 5
     encoder_lr_scale = 0.1
-    
+
     # Check if temperature scheduling is configured
-    if (config.distillation.feature_match_layers and 
-        len(config.distillation.feature_match_layers) >= 5 and 
+    if (config.distillation.feature_match_layers and
+        len(config.distillation.feature_match_layers) >= 5 and
         config.distillation.feature_match_layers[0] == "temp_scheduling"):
         enable_temp_scheduling = config.distillation.feature_match_layers[1].lower() == "true"
         initial_temperature = float(config.distillation.feature_match_layers[2])
         final_temperature = float(config.distillation.feature_match_layers[3])
         schedule_type = config.distillation.feature_match_layers[4]
-        
+
         # Check for progressive unfreezing parameters (if present)
         if len(config.distillation.feature_match_layers) >= 10:
             if config.distillation.feature_match_layers[5] == "progressive_unfreeze":
@@ -1011,7 +1018,7 @@ def main():
                 unfreeze_start_epoch = int(config.distillation.feature_match_layers[7])
                 unfreeze_rate = int(config.distillation.feature_match_layers[8])
                 encoder_lr_scale = float(config.distillation.feature_match_layers[9])
-        
+
     # Log temperature scheduling configuration
     if enable_temp_scheduling:
         text_logger.log(f"Temperature scheduling: Enabled")
@@ -1020,7 +1027,7 @@ def main():
         text_logger.log(f"  Schedule type: {schedule_type}")
     else:
         text_logger.log(f"Temperature: Fixed at {initial_temperature:.2f}")
-    
+
     # Log progressive unfreezing configuration
     if enable_progressive_unfreeze:
         text_logger.log(f"Progressive unfreezing: Enabled")
@@ -1037,7 +1044,7 @@ def main():
         device=args.device,
         progressive_unfreeze=enable_progressive_unfreeze  # Pass progressive unfreeze flag
     )
-    
+
     # Set initial temperature
     loss_fn.temperature = initial_temperature
     loss_fn.initial_temperature = initial_temperature
@@ -1069,14 +1076,47 @@ def main():
     # Export initial model to ONNX
     export_onnx_model(model.student, exp_dirs['checkpoints'], args.device)
 
+    # Test only mode - skip training and run validation
+    if args.test_only:
+        text_logger.log("\n" + "="*50)
+        text_logger.log("Running validation only...")
+        
+        # Run validation
+        val_metrics = evaluate(
+            model, 
+            val_loader, 
+            loss_fn,
+            args.device, 
+            0,  # Use epoch 0 for test_only mode
+            writer,
+            visualize_dir=exp_dirs['visualizations'],
+            teacher_miou_cache=None
+        )
+        
+        # Log results
+        text_logger.log(f"\nValidation Results:")
+        text_logger.log(f"  Total Loss: {val_metrics['total_loss']:.4f}")
+        text_logger.log(f"  Student B0 mIoU: {val_metrics['student_miou']:.4f}")
+        text_logger.log(f"  Teacher B3 mIoU: {val_metrics['teacher_miou']:.4f}")
+        text_logger.log(f"  Agreement Rate: {val_metrics['agreement']:.4f}")
+        text_logger.log(f"  KL Loss: {val_metrics['kl_loss']:.4f}")
+        text_logger.log(f"  MSE Loss: {val_metrics['mse_loss']:.4f}")
+        text_logger.log(f"  BCE Loss: {val_metrics['bce_loss']:.4f}")
+        text_logger.log(f"  Dice Loss: {val_metrics['dice_loss']:.4f}")
+        
+        text_logger.log("\nValidation completed!")
+        writer.close()
+        return
+    
     # Training loop
     best_iou = 0
     start_epoch = 0
     teacher_miou_cache = None  # Cache for teacher mIoU
-    
+
     # Get progressive unfreezing schedule if enabled
     unfreeze_schedule = None
     prev_blocks_unfrozen = 0
+
     if enable_progressive_unfreeze:
         unfreeze_schedule = model.get_progressive_unfreeze_schedule(
             total_epochs=config.training.num_epochs,
@@ -1086,114 +1126,180 @@ def main():
         text_logger.log(f"Progressive unfreeze schedule created")
 
     # Resume from checkpoint if specified
-    if args.resume:
+    if args.resume or args.test_only:
         checkpoint = torch.load(args.resume, weights_only=False)
         model.student.load_state_dict(checkpoint['model_state_dict'])
-        
+
         # Get the resume epoch first
         start_epoch = checkpoint['epoch'] + 1
         best_iou = checkpoint.get('best_iou', 0)
-        
-        # Check if checkpoint has progressive unfreeze state
-        if 'progressive_unfreeze_state' in checkpoint and checkpoint['progressive_unfreeze_state']:
-            prev_blocks_unfrozen = checkpoint['progressive_unfreeze_state'].get('blocks_unfrozen', 0)
-            text_logger.log(f"Restoring progressive unfreeze state: {prev_blocks_unfrozen} blocks unfrozen")
-        
-        # Handle optimizer state dict carefully with progressive unfreezing
-        # Check if we need to recreate optimizer due to different parameter groups
-        try:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            text_logger.log("Optimizer state loaded successfully")
-        except ValueError as e:
-            if "different number of parameter groups" in str(e):
-                text_logger.log("Warning: Optimizer state has different parameter groups")
-                text_logger.log("Recreating optimizer for current epoch configuration")
+
+        # Restore progressive unfreeze state from checkpoint
+        if enable_progressive_unfreeze and 'progressive_unfreeze_state' in checkpoint and checkpoint['progressive_unfreeze_state']:
+            saved_blocks_unfrozen = checkpoint['progressive_unfreeze_state'].get('blocks_unfrozen', 0)
+            text_logger.log(f"Checkpoint has {saved_blocks_unfrozen} blocks unfrozen")
+            
+            # If blocks were unfrozen in the checkpoint, restore that exact state
+            if saved_blocks_unfrozen > 0:
+                text_logger.log(f"Restoring progressive unfreeze state: unfreezing {saved_blocks_unfrozen} encoder blocks")
                 
-                # Check if we need to unfreeze blocks based on schedule
-                if enable_progressive_unfreeze and unfreeze_schedule:
-                    blocks_to_unfreeze = unfreeze_schedule.get(start_epoch, 0)
+                # Unfreeze the same number of blocks as in checkpoint
+                unfrozen_params = model.unfreeze_encoder_blocks(
+                    num_blocks=saved_blocks_unfrozen,
+                    learning_rate_scale=encoder_lr_scale
+                )
+                
+                if unfrozen_params:
+                    # Get decoder parameters
+                    decoder_params = model.student.get_decoder_parameters()
                     
-                    if blocks_to_unfreeze > 0:
-                        text_logger.log(f"Unfreezing {blocks_to_unfreeze} encoder blocks for epoch {start_epoch}")
-                        
-                        # Unfreeze encoder blocks
-                        unfrozen_params = model.unfreeze_encoder_blocks(
-                            num_blocks=blocks_to_unfreeze,
-                            learning_rate_scale=encoder_lr_scale
+                    # Convert to lists to get counts
+                    decoder_params_list = list(decoder_params)
+                    unfrozen_params_list = list(unfrozen_params)
+                    
+                    # Recreate optimizer with the same structure as checkpoint
+                    optimizer = torch.optim.AdamW([
+                        {'params': decoder_params_list, 'lr': config.training.learning_rate},
+                        {'params': unfrozen_params_list, 'lr': config.training.learning_rate * encoder_lr_scale}
+                    ], weight_decay=config.training.weight_decay)
+                    
+                    text_logger.log(f"Optimizer recreated with {len(decoder_params_list)} decoder params and {len(unfrozen_params_list)} encoder params")
+                    prev_blocks_unfrozen = saved_blocks_unfrozen
+                    
+                    # Set initial_lr for scheduler
+                    for group in optimizer.param_groups:
+                        if 'initial_lr' not in group:
+                            group['initial_lr'] = group['lr']
+                    
+                    # Now load the optimizer state - it should match since we recreated the same structure
+                    try:
+                        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                        text_logger.log("Optimizer state restored successfully")
+                    except Exception as e:
+                        text_logger.log(f"Warning: Could not fully restore optimizer state: {e}")
+                        text_logger.log("Newly unfrozen parameters will use fresh optimizer state")
+                    
+                    # Recreate scheduler at the correct position
+                    if config.training.scheduler == 'cosine':
+                        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                            optimizer,
+                            T_max=config.training.num_epochs,
+                            eta_min=config.training.min_lr,
+                            last_epoch=start_epoch-1
                         )
-                        
-                        if unfrozen_params:
-                            # Get decoder parameters
-                            decoder_params = model.student.get_decoder_parameters()
-                            
-                            # Create new optimizer with discriminative learning rates
-                            optimizer = torch.optim.AdamW([
-                                {'params': decoder_params, 'lr': config.training.learning_rate},
-                                {'params': unfrozen_params, 'lr': config.training.learning_rate * encoder_lr_scale}
-                            ], weight_decay=config.training.weight_decay)
-                            
-                            text_logger.log(f"Optimizer recreated with {len(unfrozen_params)} unfrozen parameters")
-                            prev_blocks_unfrozen = blocks_to_unfreeze
-                
-                # Try to load optimizer state again with matching structure
-                try:
-                    # Load only the state values that match current parameter groups
-                    old_state = checkpoint['optimizer_state_dict']
-                    if 'state' in old_state:
-                        optimizer.state = old_state['state']
-                        text_logger.log("Loaded optimizer state values")
-                except:
-                    text_logger.log("Could not restore optimizer state, using fresh optimizer")
+                        text_logger.log(f"Scheduler recreated at epoch {start_epoch}")
             else:
-                raise e
-        
+                # No blocks were unfrozen yet, just load optimizer normally
+                prev_blocks_unfrozen = 0
+                try:
+                    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                    text_logger.log("Optimizer state loaded successfully")
+                except Exception as e:
+                    text_logger.log(f"Warning: Could not load optimizer state: {e}")
+        else:
+            # No progressive unfreezing or not enabled, load optimizer normally
+            try:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                text_logger.log("Optimizer state loaded successfully")
+            except Exception as e:
+                text_logger.log(f"Warning: Could not load optimizer state: {e}")
+
         if scheduler and 'scheduler_state_dict' in checkpoint:
             try:
                 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             except:
-                text_logger.log("Could not restore scheduler state, using fresh scheduler")
-                
+                text_logger.log("Could not restore scheduler state, maintaining recreated scheduler")
+
         text_logger.log(f"Resumed from epoch {start_epoch}, best IoU: {best_iou:.4f}")
 
     for epoch in range(start_epoch, config.training.num_epochs):
         # Progressive unfreezing check
         if enable_progressive_unfreeze and unfreeze_schedule:
             blocks_to_unfreeze = unfreeze_schedule[epoch]
-            
+
             # Check if we need to unfreeze more blocks
             if blocks_to_unfreeze > prev_blocks_unfrozen:
                 text_logger.log(f"Epoch {epoch+1:03d} - Unfreezing {blocks_to_unfreeze} encoder blocks")
-                
+
                 # Unfreeze encoder blocks
                 unfrozen_params = model.unfreeze_encoder_blocks(
                     num_blocks=blocks_to_unfreeze,
                     learning_rate_scale=encoder_lr_scale
                 )
-                
+
                 # Update optimizer with new parameter groups
                 if unfrozen_params:
-                    # Get decoder parameters
-                    decoder_params = model.student.get_decoder_parameters()
-                    
+                    # Get decoder parameters and convert to lists
+                    decoder_params = list(model.student.get_decoder_parameters())
+                    unfrozen_params = list(unfrozen_params)
+
                     # Create new optimizer with discriminative learning rates
-                    optimizer = torch.optim.AdamW([
+                    new_optimizer = torch.optim.AdamW([
                         {'params': decoder_params, 'lr': config.training.learning_rate},
                         {'params': unfrozen_params, 'lr': config.training.learning_rate * encoder_lr_scale}
                     ], weight_decay=config.training.weight_decay)
+
+                    # Transfer optimizer state from old to new optimizer
+                    # Only transfer state for decoder parameters that existed before
+                    if hasattr(optimizer, 'state') and optimizer.state:
+                        transferred_count = 0
+                        # The first param group in new optimizer is decoder params
+                        decoder_group = new_optimizer.param_groups[0]
+                        
+                        # The old optimizer also had decoder params as first group
+                        old_decoder_group = optimizer.param_groups[0]
+                        
+                        # Map decoder parameters (they should be the same objects)
+                        for new_p in decoder_group['params']:
+                            for old_p in old_decoder_group['params']:
+                                if new_p is old_p and old_p in optimizer.state:
+                                    new_optimizer.state[new_p] = optimizer.state[old_p]
+                                    transferred_count += 1
+                                    break
+                        
+                        text_logger.log(f"  Transferred optimizer state for {transferred_count} decoder parameters")
                     
+                    # Replace old optimizer with new one
+                    optimizer = new_optimizer
+                    
+                    # Set initial_lr for scheduler restoration
+                    for group in optimizer.param_groups:
+                        if 'initial_lr' not in group:
+                            group['initial_lr'] = group['lr']
+
                     # Recreate scheduler with new optimizer
                     if config.training.scheduler == 'cosine':
+                        # Create a new scheduler but maintain the current learning rate schedule
+                        # Use last_epoch parameter to set the current position without calling step()
                         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                             optimizer,
-                            T_max=config.training.num_epochs - epoch,  # Remaining epochs
-                            eta_min=config.training.min_lr
+                            T_max=config.training.num_epochs,  # Total epochs
+                            eta_min=config.training.min_lr,
+                            last_epoch=epoch-1  # Set current position without calling step()
                         )
-                    
-                    text_logger.log(f"  Optimizer updated with {len(unfrozen_params)} unfrozen parameters")
-                    text_logger.log(f"  Decoder LR: {config.training.learning_rate:.6f}, Encoder LR: {config.training.learning_rate * encoder_lr_scale:.6f}")
-                
+
+                    text_logger.log(f"  Optimizer updated with {len(unfrozen_params)} unfrozen encoder parameters")
+                    text_logger.log(f"  Total parameters in optimizer: decoder={len(decoder_params)}, encoder={len(unfrozen_params)}")
+                    # Log current learning rates after scheduler update
+                    if scheduler:
+                        current_lrs = scheduler.get_last_lr()
+                        if len(current_lrs) > 1:
+                            text_logger.log(f"  Current LR - Decoder: {current_lrs[0]:.6f}, Encoder: {current_lrs[1]:.6f}")
+                        else:
+                            text_logger.log(f"  Current LR: {current_lrs[0]:.6f}")
+                    else:
+                        text_logger.log(f"  Decoder LR: {config.training.learning_rate:.6f}, Encoder LR: {config.training.learning_rate * encoder_lr_scale:.6f}")
+
                 prev_blocks_unfrozen = blocks_to_unfreeze
-        
+
+        # Log current learning rates and scheduler status at the start of epoch
+        if scheduler:
+            current_lrs = scheduler.get_last_lr()
+            if len(current_lrs) > 1:
+                text_logger.log(f"Epoch {epoch+1:03d} - Learning Rates - Decoder: {current_lrs[0]:.6f}, Encoder: {current_lrs[1]:.6f}")
+            else:
+                text_logger.log(f"Epoch {epoch+1:03d} - Learning Rate: {current_lrs[0]:.6f}")
+
         # Update temperature if scheduling is enabled
         if enable_temp_scheduling:
             current_temp = loss_fn.update_temperature(
@@ -1204,7 +1310,7 @@ def main():
             )
             text_logger.log(f"Epoch {epoch+1:03d} - Temperature updated to: {current_temp:.3f}")
             writer.add_scalar('Train/Temperature', current_temp, epoch)
-        
+
         # Train
         train_metrics = train_epoch(
             model, train_loader, loss_fn, optimizer,
@@ -1233,7 +1339,16 @@ def main():
         # Update scheduler
         if scheduler:
             scheduler.step()
-            writer.add_scalar('Train/LR', scheduler.get_last_lr()[0], epoch)
+            # Log learning rates for all parameter groups
+            current_lrs = scheduler.get_last_lr()
+            if len(current_lrs) == 1:
+                writer.add_scalar('Train/LR', current_lrs[0], epoch)
+            else:
+                # Multiple parameter groups (decoder and encoder)
+                writer.add_scalar('Train/LR_Decoder', current_lrs[0], epoch)
+                writer.add_scalar('Train/LR_Encoder', current_lrs[1], epoch)
+                # Also log the main LR (decoder) for backward compatibility
+                writer.add_scalar('Train/LR', current_lrs[0], epoch)
 
         # Save checkpoint
         checkpoint = {
