@@ -359,7 +359,9 @@ def evaluate(
     epoch: int,
     writer: Optional[SummaryWriter] = None,
     visualize_dir: Optional[Path] = None,
-    teacher_miou_cache: Optional[float] = None
+    teacher_miou_cache: Optional[float] = None,
+    student_name: str = 'Student',
+    teacher_name: str = 'Teacher'
 ) -> Dict[str, float]:
     """Evaluate model.
 
@@ -387,7 +389,7 @@ def evaluate(
     # Use cached teacher mIoU if available
     use_cached_teacher_miou = teacher_miou_cache is not None
     if use_cached_teacher_miou:
-        print(f"  Using cached Teacher B3 mIoU: {teacher_miou_cache:.4f}")
+        print(f"  Using cached Teacher {teacher_name} mIoU: {teacher_miou_cache:.4f}")
 
     # For visualization - get selected test images first
     test_images = None
@@ -505,10 +507,10 @@ def evaluate(
     print(f"  MSE Loss: {metrics['mse_loss']:.4f}")
     print(f"  BCE Loss: {metrics['bce_loss']:.4f}")
     print(f"  Dice Loss: {metrics['dice_loss']:.4f}")
-    print(f"  Student B0 mIoU: {metrics['student_miou']:.4f}")
-    print(f"  Teacher B3 mIoU: {metrics['teacher_miou']:.4f}")
-    print(f"  B3-B0 Agreement: {metrics['agreement']:.4f} ({metrics['agreement']*100:.2f}%)")
-    print(f"  mIoU Difference (B0-B3): {metrics['miou_diff']:.4f}")
+    print(f"  Student {student_name} mIoU: {metrics['student_miou']:.4f}")
+    print(f"  Teacher {teacher_name} mIoU: {metrics['teacher_miou']:.4f}")
+    print(f"  {teacher_name}-{student_name} Agreement: {metrics['agreement']:.4f} ({metrics['agreement']*100:.2f}%)")
+    print(f"  mIoU Difference ({student_name}-{teacher_name}): {metrics['miou_diff']:.4f}")
 
     # Save visualization with mIoU values
     if visualize_dir is not None and test_images is not None:
@@ -516,7 +518,9 @@ def evaluate(
             test_images, test_masks, student_output_test, teacher_output_test,
             visualize_dir, epoch, 0, num_samples=4,
             student_miou=metrics['student_miou'],
-            teacher_miou=metrics['teacher_miou']
+            teacher_miou=metrics['teacher_miou'],
+            student_name=student_name,
+            teacher_name=teacher_name
         )
 
     # Log to tensorboard
@@ -724,7 +728,9 @@ def save_visualization(
     batch_idx: int,
     num_samples: int = 4,
     student_miou: Optional[float] = None,
-    teacher_miou: Optional[float] = None
+    teacher_miou: Optional[float] = None,
+    student_name: str = 'Student',
+    teacher_name: str = 'Teacher'
 ):
     """Save visualization of predictions with overlay.
 
@@ -795,7 +801,7 @@ def save_visualization(
         # Teacher prediction overlay (cyan) - Column 1
         teacher_overlay = create_overlay(images_np[i], teacher_preds[i, 0], color=(0, 1, 1), alpha=0.4)
         axes[i, 1].imshow(teacher_overlay)
-        teacher_title = 'Teacher B3 (Cyan)'
+        teacher_title = f'Teacher {teacher_name} (Cyan)'
         if teacher_miou is not None:
             teacher_title += f'\nmIoU: {teacher_miou:.4f}'
         axes[i, 1].set_title(teacher_title)
@@ -804,7 +810,7 @@ def save_visualization(
         # Student prediction overlay (yellow) - Column 2
         student_overlay = create_overlay(images_np[i], student_preds[i, 0], color=(1, 1, 0), alpha=0.4)
         axes[i, 2].imshow(student_overlay)
-        student_title = 'Student B0 (Yellow)'
+        student_title = f'Student {student_name} (Yellow)'
         if student_miou is not None:
             student_title += f'\nmIoU: {student_miou:.4f}'
         axes[i, 2].set_title(student_title)
@@ -940,6 +946,35 @@ def export_onnx_model(model: nn.Module, save_dir: Path, device: str):
         print(f"  Warning: Failed to export ONNX model: {e}")
 
 
+def get_encoder_name(encoder_type: str) -> str:
+    """Extract encoder name from encoder type string.
+
+    Args:
+        encoder_type: Encoder type string (e.g., 'timm-efficientnet-b0')
+
+    Returns:
+        Short name for logging (e.g., 'B0')
+    """
+    if 'efficientnet-b0' in encoder_type.lower():
+        return 'B0'
+    elif 'efficientnet-b1' in encoder_type.lower():
+        return 'B1'
+    elif 'efficientnet-b2' in encoder_type.lower():
+        return 'B2'
+    elif 'efficientnet-b3' in encoder_type.lower():
+        return 'B3'
+    elif 'efficientnet-b4' in encoder_type.lower():
+        return 'B4'
+    elif 'efficientnet-b5' in encoder_type.lower():
+        return 'B5'
+    else:
+        # Default fallback - extract last part
+        parts = encoder_type.split('-')
+        if len(parts) > 1:
+            return parts[-1].upper()
+        return encoder_type.upper()
+
+
 def main():
     parser = argparse.ArgumentParser(description='UNet Decoder Distillation Training')
     parser.add_argument('--config', type=str, default='rgb_hierarchical_unet_v2_distillation_b0_from_b3',
@@ -970,6 +1005,10 @@ def main():
         config.training.batch_size = args.batch_size
     if args.epochs is not None:
         config.training.num_epochs = args.epochs
+
+    # Get encoder names for logging
+    student_name = get_encoder_name(config.distillation.student_encoder)
+    teacher_name = get_encoder_name(config.distillation.teacher_encoder if hasattr(config.distillation, 'teacher_encoder') else 'timm-efficientnet-b3')
 
     # Create experiment directories
     exp_dirs = create_experiment_dirs(config)
@@ -1080,34 +1119,36 @@ def main():
     if args.test_only:
         text_logger.log("\n" + "="*50)
         text_logger.log("Running validation only...")
-        
+
         # Run validation
         val_metrics = evaluate(
-            model, 
-            val_loader, 
+            model,
+            val_loader,
             loss_fn,
-            args.device, 
+            args.device,
             0,  # Use epoch 0 for test_only mode
             writer,
             visualize_dir=exp_dirs['visualizations'],
-            teacher_miou_cache=None
+            teacher_miou_cache=None,
+            student_name=student_name,
+            teacher_name=teacher_name
         )
-        
+
         # Log results
         text_logger.log(f"\nValidation Results:")
         text_logger.log(f"  Total Loss: {val_metrics['total_loss']:.4f}")
-        text_logger.log(f"  Student B0 mIoU: {val_metrics['student_miou']:.4f}")
-        text_logger.log(f"  Teacher B3 mIoU: {val_metrics['teacher_miou']:.4f}")
+        text_logger.log(f"  Student {student_name} mIoU: {val_metrics['student_miou']:.4f}")
+        text_logger.log(f"  Teacher {teacher_name} mIoU: {val_metrics['teacher_miou']:.4f}")
         text_logger.log(f"  Agreement Rate: {val_metrics['agreement']:.4f}")
         text_logger.log(f"  KL Loss: {val_metrics['kl_loss']:.4f}")
         text_logger.log(f"  MSE Loss: {val_metrics['mse_loss']:.4f}")
         text_logger.log(f"  BCE Loss: {val_metrics['bce_loss']:.4f}")
         text_logger.log(f"  Dice Loss: {val_metrics['dice_loss']:.4f}")
-        
+
         text_logger.log("\nValidation completed!")
         writer.close()
         return
-    
+
     # Training loop
     best_iou = 0
     start_epoch = 0
@@ -1138,39 +1179,39 @@ def main():
         if enable_progressive_unfreeze and 'progressive_unfreeze_state' in checkpoint and checkpoint['progressive_unfreeze_state']:
             saved_blocks_unfrozen = checkpoint['progressive_unfreeze_state'].get('blocks_unfrozen', 0)
             text_logger.log(f"Checkpoint has {saved_blocks_unfrozen} blocks unfrozen")
-            
+
             # If blocks were unfrozen in the checkpoint, restore that exact state
             if saved_blocks_unfrozen > 0:
                 text_logger.log(f"Restoring progressive unfreeze state: unfreezing {saved_blocks_unfrozen} encoder blocks")
-                
+
                 # Unfreeze the same number of blocks as in checkpoint
                 unfrozen_params = model.unfreeze_encoder_blocks(
                     num_blocks=saved_blocks_unfrozen,
                     learning_rate_scale=encoder_lr_scale
                 )
-                
+
                 if unfrozen_params:
                     # Get decoder parameters
                     decoder_params = model.student.get_decoder_parameters()
-                    
+
                     # Convert to lists to get counts
                     decoder_params_list = list(decoder_params)
                     unfrozen_params_list = list(unfrozen_params)
-                    
+
                     # Recreate optimizer with the same structure as checkpoint
                     optimizer = torch.optim.AdamW([
                         {'params': decoder_params_list, 'lr': config.training.learning_rate},
                         {'params': unfrozen_params_list, 'lr': config.training.learning_rate * encoder_lr_scale}
                     ], weight_decay=config.training.weight_decay)
-                    
+
                     text_logger.log(f"Optimizer recreated with {len(decoder_params_list)} decoder params and {len(unfrozen_params_list)} encoder params")
                     prev_blocks_unfrozen = saved_blocks_unfrozen
-                    
+
                     # Set initial_lr for scheduler
                     for group in optimizer.param_groups:
                         if 'initial_lr' not in group:
                             group['initial_lr'] = group['lr']
-                    
+
                     # Now load the optimizer state - it should match since we recreated the same structure
                     try:
                         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -1178,7 +1219,7 @@ def main():
                     except Exception as e:
                         text_logger.log(f"Warning: Could not fully restore optimizer state: {e}")
                         text_logger.log("Newly unfrozen parameters will use fresh optimizer state")
-                    
+
                     # Recreate scheduler at the correct position
                     if config.training.scheduler == 'cosine':
                         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -1245,10 +1286,10 @@ def main():
                         transferred_count = 0
                         # The first param group in new optimizer is decoder params
                         decoder_group = new_optimizer.param_groups[0]
-                        
+
                         # The old optimizer also had decoder params as first group
                         old_decoder_group = optimizer.param_groups[0]
-                        
+
                         # Map decoder parameters (they should be the same objects)
                         for new_p in decoder_group['params']:
                             for old_p in old_decoder_group['params']:
@@ -1256,12 +1297,12 @@ def main():
                                     new_optimizer.state[new_p] = optimizer.state[old_p]
                                     transferred_count += 1
                                     break
-                        
+
                         text_logger.log(f"  Transferred optimizer state for {transferred_count} decoder parameters")
-                    
+
                     # Replace old optimizer with new one
                     optimizer = new_optimizer
-                    
+
                     # Set initial_lr for scheduler restoration
                     for group in optimizer.param_groups:
                         if 'initial_lr' not in group:
@@ -1325,16 +1366,18 @@ def main():
             model, val_loader, loss_fn,
             args.device, epoch, writer,
             visualize_dir=exp_dirs['visualizations'],
-            teacher_miou_cache=teacher_miou_cache
+            teacher_miou_cache=teacher_miou_cache,
+            student_name=student_name,
+            teacher_name=teacher_name
         )
 
         # Cache teacher mIoU after first evaluation
         if teacher_miou_cache is None:
             teacher_miou_cache = val_metrics['teacher_miou']
-            text_logger.log(f"Cached Teacher B3 mIoU: {teacher_miou_cache:.4f}")
+            text_logger.log(f"Cached Teacher {teacher_name} mIoU: {teacher_miou_cache:.4f}")
         text_logger.log(f"Epoch {epoch+1:03d} - Val - Loss: {val_metrics['total_loss']:.4f}, "
-                       f"Dice: {val_metrics['dice_loss']:.4f}, B0_mIoU: {val_metrics['student_miou']:.4f}, "
-                       f"B3_mIoU: {val_metrics['teacher_miou']:.4f}, Agreement: {val_metrics['agreement']:.4f}")
+                       f"Dice: {val_metrics['dice_loss']:.4f}, {student_name}_mIoU: {val_metrics['student_miou']:.4f}, "
+                       f"{teacher_name}_mIoU: {val_metrics['teacher_miou']:.4f}, Agreement: {val_metrics['agreement']:.4f}")
 
         # Update scheduler
         if scheduler:
