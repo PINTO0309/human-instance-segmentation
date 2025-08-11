@@ -473,7 +473,7 @@ def evaluate(
             # Update progress bar with current batch metrics
             progress_bar.set_postfix({
                 'loss': f"{loss.item():.4f}",
-                'mIoU_B0': f"{student_miou.mean().item():.4f}",
+                f'mIoU_{student_name}': f"{student_miou.mean().item():.4f}",
                 'agree': f"{agreement.mean().item():.4f}"
             })
 
