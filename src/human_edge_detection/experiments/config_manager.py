@@ -3112,7 +3112,7 @@ class ConfigManager:
                     "0.3",                   # Learning rate scale for encoder
                 ],
                 freeze_teacher=True,
-                student_encoder="timm-efficientnet-b3"
+                student_encoder="timm-efficientnet-b7"
             ),
             data=DataConfig(
                 train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
