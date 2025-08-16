@@ -464,11 +464,6 @@ class UNetDistillationLoss(nn.Module):
         # Average Dice loss across batch
         dice_loss = 1.0 - dice_coeff.mean()
 
-        # Debug occasionally (commented out for now)
-        # import random
-        # if random.random() < 0.0001:  # 0.01% chance
-        #     print(f"[DEBUG Dice] intersection: {intersection.mean():.4f}, pred_sum: {pred_sum.mean():.4f}, target_sum: {target_sum.mean():.4f}, dice_coeff: {dice_coeff.mean():.4f}, dice_loss: {dice_loss:.4f}")
-
         return dice_loss
 
     def forward(
@@ -551,11 +546,6 @@ class UNetDistillationLoss(nn.Module):
                 dice_loss = self.dice_loss(student_output, target_masks.float())
                 dice_value = dice_loss.item() if not torch.isnan(dice_loss) else 0.0
                 loss_dict['dice_loss'] = dice_value
-
-                # Debug: Print dice loss value occasionally (commented out for now)
-                # import random
-                # if random.random() < 0.001:  # Print 0.1% of the time
-                #     print(f"[DEBUG] Dice loss raw: {dice_value:.6f}, BCE: {bce_loss.item():.4f}")
 
                 # Combine BCE and Dice with more weight on BCE for stability
                 # BCE handles pixel-wise accuracy, Dice handles overlap
