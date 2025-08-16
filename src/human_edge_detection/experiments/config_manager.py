@@ -74,7 +74,7 @@ class DistillationConfig:
     full_model_lr_scale: float = 0.5  # Learning rate scale after encoder training
     # Adaptive distillation configuration
     adaptive_distillation: bool = True  # Enable adaptive weight adjustment based on performance
-    amplification_factor: float = 20.0  # Amplify performance differences for sensitive adjustment
+    amplification_factor: float = 30.0  # Amplify performance differences for sensitive adjustment
     min_alpha: float = 0.001  # Minimum distillation weight when student surpasses teacher
 
 
