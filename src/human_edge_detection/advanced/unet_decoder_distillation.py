@@ -151,7 +151,7 @@ class DistillationUNetWrapper(nn.Module):
         )
 
         # Load checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
         # Extract state dict from checkpoint
         if 'state_dict' in checkpoint:
@@ -166,6 +166,8 @@ class DistillationUNetWrapper(nn.Module):
         for key, value in state_dict.items():
             # Remove 'model.' prefix if present
             new_key = key.replace('model.', '') if key.startswith('model.') else key
+            # Remove 'unet.' prefix if present (for compatibility with different checkpoint formats)
+            new_key = new_key.replace('unet.', '') if new_key.startswith('unet.') else new_key
             # Only load encoder, decoder, and segmentation_head
             if any(part in new_key for part in ['encoder', 'decoder', 'segmentation_head']):
                 processed_state_dict[new_key] = value
