@@ -59,6 +59,7 @@ class AuxiliaryTaskConfig:
 class DistillationConfig:
     """Configuration for knowledge distillation."""
     enabled: bool = False
+    teacher_encoder: str = "timm-efficientnet-b3"  # Teacher model encoder
     teacher_checkpoint: str = ""  # Path to teacher model checkpoint
     temperature: float = 4.0  # Temperature for softening distributions
     alpha: float = 0.7  # Weight for distillation loss (1-alpha for base loss)
@@ -2818,6 +2819,7 @@ class ConfigManager:
             ),
             distillation=DistillationConfig(
                 enabled=True,
+                teacher_encoder="timm-efficientnet-b3",
                 teacher_checkpoint="ext_extractor/2020-09-23a.pth",  # Teacher B3 weights
                 temperature=4.0,  # Initial temperature for softer distributions
                 alpha=0.3,  # Lower weight for distillation, more on ground truth
@@ -2909,6 +2911,7 @@ class ConfigManager:
             ),
             distillation=DistillationConfig(
                 enabled=True,
+                teacher_encoder="timm-efficientnet-b3",
                 teacher_checkpoint="ext_extractor/2020-09-23a.pth",  # Teacher B3 weights
                 temperature=4.0,  # Initial temperature for softer distributions
                 alpha=0.3,  # Lower weight for distillation, more on ground truth
@@ -3000,6 +3003,7 @@ class ConfigManager:
             ),
             distillation=DistillationConfig(
                 enabled=True,
+                teacher_encoder="timm-efficientnet-b3",
                 teacher_checkpoint="ext_extractor/2020-09-23a.pth",  # Teacher B3 weights
                 temperature=4.0,  # Initial temperature for softer distributions
                 alpha=0.3,  # Lower weight for distillation, more on ground truth
@@ -3091,6 +3095,7 @@ class ConfigManager:
             ),
             distillation=DistillationConfig(
                 enabled=True,
+                teacher_encoder="timm-efficientnet-b3",
                 teacher_checkpoint="ext_extractor/2020-09-23a.pth",  # Teacher B3 weights
                 temperature=4.0,  # Initial temperature for softer distributions
                 alpha=0.3,  # Lower weight for distillation, more on ground truth
@@ -3185,6 +3190,7 @@ class ConfigManager:
             ),
             distillation=DistillationConfig(
                 enabled=True,
+                teacher_encoder="timm-efficientnet-b3",
                 teacher_checkpoint="ext_extractor/2020-09-23a.pth",  # Teacher B3 weights
                 temperature=3.0,  # Temperature for distillation
                 alpha=0.3,  # Lower weight for distillation, more on ground truth

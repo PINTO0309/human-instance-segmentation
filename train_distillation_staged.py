@@ -995,6 +995,8 @@ def main():
                        help='Disable heavy augmentations during training')
     parser.add_argument('--test_only', action='store_true',
                        help='Only run validation without training (requires --resume)')
+    parser.add_argument('--teacher_encoder', type=str, default=None,
+                       help='Teacher model encoder name (e.g., timm-efficientnet-b7)')
     args = parser.parse_args()
 
     # Load configuration
@@ -1005,10 +1007,12 @@ def main():
         config.training.batch_size = args.batch_size
     if args.epochs is not None:
         config.training.num_epochs = args.epochs
+    if args.teacher_encoder is not None:
+        config.distillation.teacher_encoder = args.teacher_encoder
 
     # Get encoder names for logging
     student_name = get_encoder_name(config.distillation.student_encoder)
-    teacher_name = get_encoder_name(config.distillation.teacher_encoder if hasattr(config.distillation, 'teacher_encoder') else 'timm-efficientnet-b3')
+    teacher_name = get_encoder_name(config.distillation.teacher_encoder)
 
     # Create experiment directories
     exp_dirs = create_experiment_dirs(config)
@@ -1079,6 +1083,7 @@ def main():
     # Create model and loss
     model, loss_fn = create_unet_distillation_model(
         student_encoder=config.distillation.student_encoder,
+        teacher_encoder=config.distillation.teacher_encoder,
         teacher_checkpoint=config.distillation.teacher_checkpoint,
         device=args.device,
         progressive_unfreeze=enable_progressive_unfreeze  # Pass progressive unfreeze flag
