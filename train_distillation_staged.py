@@ -1182,6 +1182,30 @@ def main():
         # Get the resume epoch first
         start_epoch = checkpoint['epoch'] + 1
         best_iou = checkpoint.get('best_iou', 0)
+        
+        # Restore loss function state (adaptive distillation)
+        if 'loss_fn_state' in checkpoint:
+            loss_fn_state = checkpoint['loss_fn_state']
+            if hasattr(loss_fn, 'performance_ratio'):
+                loss_fn.performance_ratio = loss_fn_state.get('performance_ratio', 1.0)
+            if hasattr(loss_fn, 'alpha'):
+                loss_fn.alpha = loss_fn_state.get('alpha', config.distillation.alpha)
+            if hasattr(loss_fn, 'task_weight'):
+                loss_fn.task_weight = loss_fn_state.get('task_weight', 0.7)
+            if hasattr(loss_fn, 'temperature'):
+                loss_fn.temperature = loss_fn_state.get('temperature', 1.0)
+            text_logger.log(f"Restored loss function state: ratio={loss_fn.performance_ratio:.4f}, "
+                           f"α={loss_fn.alpha:.3f}, task_weight={loss_fn.task_weight:.3f}")
+            
+            # Print special message if distillation was eliminated
+            if loss_fn.alpha == 0.0 and loss_fn.task_weight == 1.0:
+                text_logger.log("  🎯 Distillation was ELIMINATED in previous training - continuing with 100% ground truth")
+                print("  🎯 Distillation was ELIMINATED in previous training - continuing with 100% ground truth")
+        
+        # Restore cached teacher mIoU
+        if 'teacher_miou_cache' in checkpoint:
+            teacher_miou_cache = checkpoint['teacher_miou_cache']
+            text_logger.log(f"Restored cached teacher mIoU: {teacher_miou_cache:.4f}")
 
         # Restore progressive unfreeze state from checkpoint
         if enable_progressive_unfreeze and 'progressive_unfreeze_state' in checkpoint and checkpoint['progressive_unfreeze_state']:
@@ -1445,7 +1469,15 @@ def main():
                 'unfreeze_start_epoch': unfreeze_start_epoch,
                 'unfreeze_rate': unfreeze_rate,
                 'encoder_lr_scale': encoder_lr_scale,
-            } if enable_progressive_unfreeze else None
+            } if enable_progressive_unfreeze else None,
+            # Save loss function state (adaptive distillation)
+            'loss_fn_state': {
+                'performance_ratio': loss_fn.performance_ratio if hasattr(loss_fn, 'performance_ratio') else 1.0,
+                'alpha': loss_fn.alpha if hasattr(loss_fn, 'alpha') else config.distillation.alpha,
+                'task_weight': loss_fn.task_weight if hasattr(loss_fn, 'task_weight') else 0.7,
+                'temperature': loss_fn.temperature if hasattr(loss_fn, 'temperature') else 1.0,
+            },
+            'teacher_miou_cache': teacher_miou_cache,  # Save cached teacher mIoU
         }
 
         # Save regular checkpoint
