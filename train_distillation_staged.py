@@ -1086,7 +1086,10 @@ def main():
         teacher_encoder=config.distillation.teacher_encoder,
         teacher_checkpoint=config.distillation.teacher_checkpoint,
         device=args.device,
-        progressive_unfreeze=enable_progressive_unfreeze  # Pass progressive unfreeze flag
+        progressive_unfreeze=enable_progressive_unfreeze,  # Pass progressive unfreeze flag
+        adaptive_distillation=config.distillation.adaptive_distillation,
+        amplification_factor=config.distillation.amplification_factor,
+        min_alpha=config.distillation.min_alpha
     )
 
     # Set initial temperature
@@ -1387,10 +1390,14 @@ def main():
             old_task_weight = loss_fn.task_weight
             new_alpha = loss_fn.update_distillation_weight(
                 student_iou=val_metrics['student_miou'],
-                teacher_iou=teacher_miou_cache
+                teacher_iou=teacher_miou_cache,
+                min_alpha=config.distillation.min_alpha,
+                amplification_factor=config.distillation.amplification_factor
             )
             if old_alpha != new_alpha or old_task_weight != loss_fn.task_weight:
-                text_logger.log(f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.3f}, "
+                amplified_diff = (loss_fn.performance_ratio - 1.0) * config.distillation.amplification_factor
+                text_logger.log(f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
+                               f"amplified_diff = {amplified_diff:.3f}, "
                                f"α: {old_alpha:.3f} → {new_alpha:.3f}, "
                                f"task_weight: {old_task_weight:.3f} → {loss_fn.task_weight:.3f}")
         

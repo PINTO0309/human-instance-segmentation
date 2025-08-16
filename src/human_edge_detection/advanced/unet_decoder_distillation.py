@@ -381,7 +381,8 @@ class UNetDistillationLoss(nn.Module):
         return self.temperature
 
     def update_distillation_weight(self, student_iou: float, teacher_iou: float,
-                                  min_alpha: float = 0.01) -> float:
+                                  min_alpha: float = 0.001,
+                                  amplification_factor: float = 20.0) -> float:
         """Adaptively adjust distillation weight based on student vs teacher performance.
 
         When student surpasses teacher, reduce distillation influence.
@@ -390,6 +391,7 @@ class UNetDistillationLoss(nn.Module):
             student_iou: Current student model IoU
             teacher_iou: Teacher model IoU (baseline)
             min_alpha: Minimum distillation weight to maintain
+            amplification_factor: Factor to amplify small performance differences
 
         Returns:
             Updated alpha value
@@ -401,16 +403,30 @@ class UNetDistillationLoss(nn.Module):
         self.performance_ratio = student_iou / (teacher_iou + 1e-6)
 
         if self.performance_ratio > 1.0:
-            # Student is better than teacher - reduce distillation influence
-            # Exponential decay based on how much better student is
-            decay_factor = max(0.1, 2.0 - self.performance_ratio)  # Range: [0.1, 1.0]
+            # Student is better than teacher - aggressively reduce distillation
+            # Amplify the performance difference for more sensitive adjustment
+            amplified_diff = (self.performance_ratio - 1.0) * amplification_factor
+            
+            # Use exponential decay for alpha reduction
+            # For 3.3% improvement (ratio=1.033), amplified_diff=0.66
+            # decay_factor = exp(-0.66) ≈ 0.52 (48% reduction)
+            decay_factor = np.exp(-amplified_diff)
             self.alpha = max(min_alpha, self.initial_alpha * decay_factor)
-            # Also increase task weight when student surpasses teacher
-            self.task_weight = min(0.95, self.initial_task_weight + 0.3 * (self.performance_ratio - 1.0))
-        else:
-            # Student is worse than teacher - maintain original weights
+            
+            # Aggressively increase task weight
+            # For 3.3% improvement, task_weight increases by ~0.2 (from 0.7 to 0.9)
+            task_weight_increase = min(0.25, amplified_diff * 0.3)
+            self.task_weight = min(0.99, self.initial_task_weight + task_weight_increase)
+            
+        elif self.performance_ratio > 0.98:
+            # Student is close to teacher - maintain moderate distillation
             self.alpha = self.initial_alpha
             self.task_weight = self.initial_task_weight
+        else:
+            # Student is significantly worse - increase distillation slightly
+            # But cap the increase to avoid over-reliance on poor teacher
+            self.alpha = min(self.initial_alpha * 1.2, self.initial_alpha)
+            self.task_weight = max(0.5, self.initial_task_weight)
 
         return self.alpha
 
@@ -603,7 +619,10 @@ def create_unet_distillation_model(
     teacher_encoder: str = "timm-efficientnet-b3",
     teacher_checkpoint: str = "ext_extractor/2020-09-23a.pth",
     device: str = "cuda",
-    progressive_unfreeze: bool = False
+    progressive_unfreeze: bool = False,
+    adaptive_distillation: bool = True,
+    amplification_factor: float = 20.0,
+    min_alpha: float = 0.001
 ) -> Tuple[nn.Module, nn.Module]:
     """Create UNet distillation model and loss.
 
@@ -633,7 +652,8 @@ def create_unet_distillation_model(
         task_weight=0.7,  # Prioritize ground truth task loss (BCE + Dice)
         use_feature_matching=False,
         fg_ratio=0.162,  # Foreground ratio from dataset analysis (16.2% foreground, 83.8% background)
-        use_dice_loss=True  # Use Dice loss for better handling of class imbalance
+        use_dice_loss=True,  # Use Dice loss for better handling of class imbalance
+        adaptive_distillation=adaptive_distillation  # Enable adaptive weight adjustment
     )
 
     return model, loss_fn

@@ -72,6 +72,10 @@ class DistillationConfig:
     encoder_only_epochs: int = 0  # Number of epochs to train encoder only (0 = disabled)
     encoder_lr_scale: float = 1.0  # Learning rate scale for encoder-only training
     full_model_lr_scale: float = 0.5  # Learning rate scale after encoder training
+    # Adaptive distillation configuration
+    adaptive_distillation: bool = True  # Enable adaptive weight adjustment based on performance
+    amplification_factor: float = 20.0  # Amplify performance differences for sensitive adjustment
+    min_alpha: float = 0.001  # Minimum distillation weight when student surpasses teacher
 
 
 @dataclass
