@@ -75,7 +75,8 @@ class DistillationConfig:
     # Adaptive distillation configuration
     adaptive_distillation: bool = True  # Enable adaptive weight adjustment based on performance
     amplification_factor: float = 30.0  # Amplify performance differences for sensitive adjustment
-    min_alpha: float = 0.001  # Minimum distillation weight when student surpasses teacher
+    min_alpha: float = 0.0  # Minimum distillation weight (0 = complete elimination)
+    zero_distillation_threshold: float = 0.03  # Performance threshold for zero distillation (3%)
 
 
 @dataclass

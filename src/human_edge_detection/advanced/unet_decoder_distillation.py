@@ -381,17 +381,19 @@ class UNetDistillationLoss(nn.Module):
         return self.temperature
 
     def update_distillation_weight(self, student_iou: float, teacher_iou: float,
-                                  min_alpha: float = 0.001,
-                                  amplification_factor: float = 20.0) -> float:
+                                  min_alpha: float = 0.0,  # Allow complete elimination
+                                  amplification_factor: float = 20.0,
+                                  zero_distillation_threshold: float = 0.05) -> float:
         """Adaptively adjust distillation weight based on student vs teacher performance.
 
-        When student surpasses teacher, reduce distillation influence.
+        When student surpasses teacher, reduce distillation influence, eventually to zero.
 
         Args:
             student_iou: Current student model IoU
             teacher_iou: Teacher model IoU (baseline)
-            min_alpha: Minimum distillation weight to maintain
+            min_alpha: Minimum distillation weight (0 = complete elimination)
             amplification_factor: Factor to amplify small performance differences
+            zero_distillation_threshold: Ratio threshold for zero distillation (default 5%)
 
         Returns:
             Updated alpha value
@@ -402,21 +404,26 @@ class UNetDistillationLoss(nn.Module):
         # Calculate performance ratio
         self.performance_ratio = student_iou / (teacher_iou + 1e-6)
 
-        if self.performance_ratio > 1.0:
+        if self.performance_ratio > (1.0 + zero_distillation_threshold):
+            # Student significantly better (>5% by default) - eliminate distillation completely
+            self.alpha = 0.0  # Complete elimination of distillation
+            self.task_weight = 1.0  # 100% ground truth
+            
+        elif self.performance_ratio > 1.0:
             # Student is better than teacher - aggressively reduce distillation
             # Amplify the performance difference for more sensitive adjustment
             amplified_diff = (self.performance_ratio - 1.0) * amplification_factor
 
             # Use exponential decay for alpha reduction
-            # For 3.3% improvement (ratio=1.033), amplified_diff=0.66
-            # decay_factor = exp(-0.66) ≈ 0.52 (48% reduction)
+            # Allow alpha to go to zero for complete distillation elimination
             decay_factor = np.exp(-amplified_diff)
-            self.alpha = max(min_alpha, self.initial_alpha * decay_factor)
+            self.alpha = max(0.0, self.initial_alpha * decay_factor)
 
-            # Aggressively increase task weight
-            # For 3.3% improvement, task_weight increases by ~0.2 (from 0.7 to 0.9)
-            task_weight_increase = min(0.25, amplified_diff * 0.3)
-            self.task_weight = min(0.99, self.initial_task_weight + task_weight_increase)
+            # Aggressively increase task weight, allow it to reach 1.0 (100%)
+            # Use sigmoid-like function for smooth transition to 1.0
+            task_weight_target = 1.0 - np.exp(-amplified_diff * 2)  # Approaches 1.0 quickly
+            self.task_weight = min(1.0, self.initial_task_weight + 
+                                  (1.0 - self.initial_task_weight) * task_weight_target)
 
         elif self.performance_ratio > 0.98:
             # Student is close to teacher - maintain moderate distillation
@@ -561,17 +568,22 @@ class UNetDistillationLoss(nn.Module):
             loss_dict['bce_loss'] = 0.0
             loss_dict['dice_loss'] = 0.0
 
-        # Adaptive distillation weight based on performance
-        if self.adaptive_distillation and self.performance_ratio > 1.0:
-            # When student surpasses teacher, reduce distillation influence more aggressively
-            effective_alpha = self.alpha * max(0.1, 2.0 - self.performance_ratio)
+        # Check if distillation is completely eliminated
+        if self.adaptive_distillation and self.alpha == 0.0:
+            # Skip distillation calculation entirely when eliminated
+            distillation_loss = torch.tensor(0.0, device=student_output.device)
         else:
-            effective_alpha = self.alpha
-
-        # Start with MSE-dominated loss for stability, gradually introduce KL
-        # Use smaller weight for KL initially
-        kl_weight = min(effective_alpha, 0.1)  # Start with small KL weight
-        distillation_loss = kl_weight * kl_loss + (1 - kl_weight) * mse_loss
+            # Adaptive distillation weight based on performance
+            if self.adaptive_distillation and self.performance_ratio > 1.0:
+                # When student surpasses teacher, reduce distillation influence more aggressively
+                effective_alpha = self.alpha * max(0.1, 2.0 - self.performance_ratio)
+            else:
+                effective_alpha = self.alpha
+                
+            # Start with MSE-dominated loss for stability, gradually introduce KL
+            # Use smaller weight for KL initially
+            kl_weight = min(effective_alpha, 0.1)  # Start with small KL weight
+            distillation_loss = kl_weight * kl_loss + (1 - kl_weight) * mse_loss
 
         if target_masks is not None:
             # Adaptive weighting based on student performance

@@ -1392,14 +1392,21 @@ def main():
                 student_iou=val_metrics['student_miou'],
                 teacher_iou=teacher_miou_cache,
                 min_alpha=config.distillation.min_alpha,
-                amplification_factor=config.distillation.amplification_factor
+                amplification_factor=config.distillation.amplification_factor,
+                zero_distillation_threshold=config.distillation.zero_distillation_threshold
             )
             if old_alpha != new_alpha or old_task_weight != loss_fn.task_weight:
                 amplified_diff = (loss_fn.performance_ratio - 1.0) * config.distillation.amplification_factor
-                adaptive_msg = (f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
-                               f"amplified_diff = {amplified_diff:.3f}, "
-                               f"α: {old_alpha:.3f} → {new_alpha:.3f}, "
-                               f"task_weight: {old_task_weight:.3f} → {loss_fn.task_weight:.3f}")
+                if loss_fn.alpha == 0.0 and loss_fn.task_weight == 1.0:
+                    # Distillation completely eliminated
+                    adaptive_msg = (f"  🎯 Distillation ELIMINATED: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
+                                   f"Student surpassed teacher by {(loss_fn.performance_ratio - 1.0)*100:.1f}%, "
+                                   f"Now using 100% ground truth labels!")
+                else:
+                    adaptive_msg = (f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
+                                   f"amplified_diff = {amplified_diff:.3f}, "
+                                   f"α: {old_alpha:.3f} → {new_alpha:.3f}, "
+                                   f"task_weight: {old_task_weight:.3f} → {loss_fn.task_weight:.3f}")
                 text_logger.log(adaptive_msg)
                 print(adaptive_msg)  # Also print to console
 
