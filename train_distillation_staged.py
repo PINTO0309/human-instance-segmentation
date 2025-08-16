@@ -1396,10 +1396,12 @@ def main():
             )
             if old_alpha != new_alpha or old_task_weight != loss_fn.task_weight:
                 amplified_diff = (loss_fn.performance_ratio - 1.0) * config.distillation.amplification_factor
-                text_logger.log(f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
+                adaptive_msg = (f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
                                f"amplified_diff = {amplified_diff:.3f}, "
                                f"α: {old_alpha:.3f} → {new_alpha:.3f}, "
                                f"task_weight: {old_task_weight:.3f} → {loss_fn.task_weight:.3f}")
+                text_logger.log(adaptive_msg)
+                print(adaptive_msg)  # Also print to console
 
         text_logger.log(f"Epoch {epoch+1:03d} - Val - Loss: {val_metrics['total_loss']:.4f}, "
                        f"Dice: {val_metrics['dice_loss']:.4f}, {student_name}_mIoU: {val_metrics['student_miou']:.4f}, "
