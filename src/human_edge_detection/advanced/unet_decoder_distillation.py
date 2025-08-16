@@ -406,18 +406,18 @@ class UNetDistillationLoss(nn.Module):
             # Student is better than teacher - aggressively reduce distillation
             # Amplify the performance difference for more sensitive adjustment
             amplified_diff = (self.performance_ratio - 1.0) * amplification_factor
-            
+
             # Use exponential decay for alpha reduction
             # For 3.3% improvement (ratio=1.033), amplified_diff=0.66
             # decay_factor = exp(-0.66) ≈ 0.52 (48% reduction)
             decay_factor = np.exp(-amplified_diff)
             self.alpha = max(min_alpha, self.initial_alpha * decay_factor)
-            
+
             # Aggressively increase task weight
             # For 3.3% improvement, task_weight increases by ~0.2 (from 0.7 to 0.9)
             task_weight_increase = min(0.25, amplified_diff * 0.3)
             self.task_weight = min(0.99, self.initial_task_weight + task_weight_increase)
-            
+
         elif self.performance_ratio > 0.98:
             # Student is close to teacher - maintain moderate distillation
             self.alpha = self.initial_alpha
