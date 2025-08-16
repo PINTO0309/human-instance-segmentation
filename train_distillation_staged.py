@@ -1380,6 +1380,20 @@ def main():
         if teacher_miou_cache is None:
             teacher_miou_cache = val_metrics['teacher_miou']
             text_logger.log(f"Cached Teacher {teacher_name} mIoU: {teacher_miou_cache:.4f}")
+        
+        # Update distillation weight based on student vs teacher performance
+        if hasattr(loss_fn, 'update_distillation_weight'):
+            old_alpha = loss_fn.alpha
+            old_task_weight = loss_fn.task_weight
+            new_alpha = loss_fn.update_distillation_weight(
+                student_iou=val_metrics['student_miou'],
+                teacher_iou=teacher_miou_cache
+            )
+            if old_alpha != new_alpha or old_task_weight != loss_fn.task_weight:
+                text_logger.log(f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.3f}, "
+                               f"α: {old_alpha:.3f} → {new_alpha:.3f}, "
+                               f"task_weight: {old_task_weight:.3f} → {loss_fn.task_weight:.3f}")
+        
         text_logger.log(f"Epoch {epoch+1:03d} - Val - Loss: {val_metrics['total_loss']:.4f}, "
                        f"Dice: {val_metrics['dice_loss']:.4f}, {student_name}_mIoU: {val_metrics['student_miou']:.4f}, "
                        f"{teacher_name}_mIoU: {val_metrics['teacher_miou']:.4f}, Agreement: {val_metrics['agreement']:.4f}")

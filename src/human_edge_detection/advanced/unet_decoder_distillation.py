@@ -297,7 +297,8 @@ class UNetDistillationLoss(nn.Module):
         task_weight: float = 0.3,  # Weight for ground truth BCE loss
         use_feature_matching: bool = False,
         fg_ratio: float = 0.162,  # Foreground ratio from dataset analysis
-        use_dice_loss: bool = True  # Use Dice loss for better imbalance handling
+        use_dice_loss: bool = True,  # Use Dice loss for better imbalance handling
+        adaptive_distillation: bool = True  # Enable adaptive distillation weight
     ):
         """Initialize distillation loss.
 
@@ -312,9 +313,13 @@ class UNetDistillationLoss(nn.Module):
         self.temperature = temperature
         self.initial_temperature = temperature  # Store initial temperature for scheduling
         self.alpha = alpha
+        self.initial_alpha = alpha  # Store initial alpha for adaptive adjustment
         self.task_weight = task_weight
+        self.initial_task_weight = task_weight  # Store initial task weight
         self.use_feature_matching = use_feature_matching
         self.use_dice_loss = use_dice_loss
+        self.adaptive_distillation = adaptive_distillation
+        self.performance_ratio = 1.0  # Track student vs teacher performance
 
         # Calculate class weights based on pixel ratio
         # Use sqrt for less aggressive weighting
@@ -374,6 +379,40 @@ class UNetDistillationLoss(nn.Module):
     def get_temperature(self) -> float:
         """Get current temperature value."""
         return self.temperature
+
+    def update_distillation_weight(self, student_iou: float, teacher_iou: float,
+                                  min_alpha: float = 0.01) -> float:
+        """Adaptively adjust distillation weight based on student vs teacher performance.
+
+        When student surpasses teacher, reduce distillation influence.
+
+        Args:
+            student_iou: Current student model IoU
+            teacher_iou: Teacher model IoU (baseline)
+            min_alpha: Minimum distillation weight to maintain
+
+        Returns:
+            Updated alpha value
+        """
+        if not self.adaptive_distillation:
+            return self.alpha
+
+        # Calculate performance ratio
+        self.performance_ratio = student_iou / (teacher_iou + 1e-6)
+
+        if self.performance_ratio > 1.0:
+            # Student is better than teacher - reduce distillation influence
+            # Exponential decay based on how much better student is
+            decay_factor = max(0.1, 2.0 - self.performance_ratio)  # Range: [0.1, 1.0]
+            self.alpha = max(min_alpha, self.initial_alpha * decay_factor)
+            # Also increase task weight when student surpasses teacher
+            self.task_weight = min(0.95, self.initial_task_weight + 0.3 * (self.performance_ratio - 1.0))
+        else:
+            # Student is worse than teacher - maintain original weights
+            self.alpha = self.initial_alpha
+            self.task_weight = self.initial_task_weight
+
+        return self.alpha
 
     def dice_loss(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """Calculate Dice loss for binary segmentation.
@@ -516,14 +555,29 @@ class UNetDistillationLoss(nn.Module):
             loss_dict['bce_loss'] = 0.0
             loss_dict['dice_loss'] = 0.0
 
+        # Adaptive distillation weight based on performance
+        if self.adaptive_distillation and self.performance_ratio > 1.0:
+            # When student surpasses teacher, reduce distillation influence more aggressively
+            effective_alpha = self.alpha * max(0.1, 2.0 - self.performance_ratio)
+        else:
+            effective_alpha = self.alpha
+
         # Start with MSE-dominated loss for stability, gradually introduce KL
         # Use smaller weight for KL initially
-        kl_weight = min(self.alpha, 0.1)  # Start with small KL weight
+        kl_weight = min(effective_alpha, 0.1)  # Start with small KL weight
         distillation_loss = kl_weight * kl_loss + (1 - kl_weight) * mse_loss
 
         if target_masks is not None:
+            # Adaptive weighting based on student performance
+            # When student surpasses teacher, rely more on ground truth
+            if self.adaptive_distillation and self.performance_ratio > 1.0:
+                # Dynamically adjusted task weight (already updated in update_distillation_weight)
+                effective_task_weight = self.task_weight
+            else:
+                effective_task_weight = self.task_weight
+
             # Strong supervision from ground truth + distillation guidance
-            total_loss = self.task_weight * task_loss + (1 - self.task_weight) * distillation_loss
+            total_loss = effective_task_weight * task_loss + (1 - effective_task_weight) * distillation_loss
         else:
             # Pure distillation when no ground truth
             total_loss = distillation_loss
