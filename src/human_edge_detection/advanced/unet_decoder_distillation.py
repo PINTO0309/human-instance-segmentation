@@ -434,15 +434,10 @@ class UNetDistillationLoss(nn.Module):
             self.task_weight = min(1.0, self.initial_task_weight +
                                   (1.0 - self.initial_task_weight) * task_weight_target)
 
-        elif self.performance_ratio > 0.98:
+        else:
             # Student is close to teacher - maintain moderate distillation
             self.alpha = self.initial_alpha
             self.task_weight = self.initial_task_weight
-        else:
-            # Student is significantly worse - increase distillation slightly
-            # But cap the increase to avoid over-reliance on poor teacher
-            self.alpha = min(self.initial_alpha * 1.2, self.initial_alpha)
-            self.task_weight = max(0.5, self.initial_task_weight)
 
         return self.alpha
 
