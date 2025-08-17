@@ -1194,13 +1194,17 @@ def main():
                 loss_fn.task_weight = loss_fn_state.get('task_weight', 0.7)
             if hasattr(loss_fn, 'temperature'):
                 loss_fn.temperature = loss_fn_state.get('temperature', 1.0)
+            if hasattr(loss_fn, 'distillation_eliminated'):
+                loss_fn.distillation_eliminated = loss_fn_state.get('distillation_eliminated', False)
+            
             text_logger.log(f"Restored loss function state: ratio={loss_fn.performance_ratio:.4f}, "
-                           f"α={loss_fn.alpha:.3f}, task_weight={loss_fn.task_weight:.3f}")
+                           f"α={loss_fn.alpha:.3f}, task_weight={loss_fn.task_weight:.3f}, "
+                           f"eliminated={loss_fn.distillation_eliminated}")
             
             # Print special message if distillation was eliminated
-            if loss_fn.alpha == 0.0 and loss_fn.task_weight == 1.0:
-                text_logger.log("  🎯 Distillation was ELIMINATED in previous training - continuing with 100% ground truth")
-                print("  🎯 Distillation was ELIMINATED in previous training - continuing with 100% ground truth")
+            if loss_fn.distillation_eliminated:
+                text_logger.log("  🎯 Distillation was PERMANENTLY ELIMINATED - continuing with 100% ground truth")
+                print("  🎯 Distillation was PERMANENTLY ELIMINATED - continuing with 100% ground truth")
         
         # Restore cached teacher mIoU
         if 'teacher_miou_cache' in checkpoint:
@@ -1421,11 +1425,15 @@ def main():
             )
             if old_alpha != new_alpha or old_task_weight != loss_fn.task_weight:
                 amplified_diff = (loss_fn.performance_ratio - 1.0) * config.distillation.amplification_factor
-                if loss_fn.alpha == 0.0 and loss_fn.task_weight == 1.0:
-                    # Distillation completely eliminated
-                    adaptive_msg = (f"  🎯 Distillation ELIMINATED: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
+                if loss_fn.distillation_eliminated and old_alpha != 0.0:
+                    # Distillation just got permanently eliminated
+                    adaptive_msg = (f"  🎯 Distillation PERMANENTLY ELIMINATED: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
                                    f"Student surpassed teacher by {(loss_fn.performance_ratio - 1.0)*100:.1f}%, "
-                                   f"Now using 100% ground truth labels!")
+                                   f"Now using 100% ground truth labels FOREVER!")
+                elif loss_fn.distillation_eliminated:
+                    # Distillation was already eliminated
+                    adaptive_msg = (f"  🎯 Distillation remains ELIMINATED: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
+                                   f"Continuing with 100% ground truth labels")
                 else:
                     adaptive_msg = (f"  Adaptive distillation: Student/Teacher ratio = {loss_fn.performance_ratio:.4f}, "
                                    f"amplified_diff = {amplified_diff:.3f}, "
@@ -1476,6 +1484,7 @@ def main():
                 'alpha': loss_fn.alpha if hasattr(loss_fn, 'alpha') else config.distillation.alpha,
                 'task_weight': loss_fn.task_weight if hasattr(loss_fn, 'task_weight') else 0.7,
                 'temperature': loss_fn.temperature if hasattr(loss_fn, 'temperature') else 1.0,
+                'distillation_eliminated': loss_fn.distillation_eliminated if hasattr(loss_fn, 'distillation_eliminated') else False,
             },
             'teacher_miou_cache': teacher_miou_cache,  # Save cached teacher mIoU
         }

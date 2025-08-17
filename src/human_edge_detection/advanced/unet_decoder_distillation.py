@@ -320,6 +320,7 @@ class UNetDistillationLoss(nn.Module):
         self.use_dice_loss = use_dice_loss
         self.adaptive_distillation = adaptive_distillation
         self.performance_ratio = 1.0  # Track student vs teacher performance
+        self.distillation_eliminated = False  # Track if distillation has been permanently eliminated
 
         # Calculate class weights based on pixel ratio
         # Use sqrt for less aggressive weighting
@@ -387,6 +388,7 @@ class UNetDistillationLoss(nn.Module):
         """Adaptively adjust distillation weight based on student vs teacher performance.
 
         When student surpasses teacher, reduce distillation influence, eventually to zero.
+        Once eliminated, distillation is never re-enabled.
 
         Args:
             student_iou: Current student model IoU
@@ -400,6 +402,12 @@ class UNetDistillationLoss(nn.Module):
         """
         if not self.adaptive_distillation:
             return self.alpha
+        
+        # If distillation was already eliminated, keep it eliminated
+        if self.distillation_eliminated:
+            self.alpha = 0.0
+            self.task_weight = 1.0
+            return self.alpha
 
         # Calculate performance ratio
         self.performance_ratio = student_iou / (teacher_iou + 1e-6)
@@ -408,6 +416,7 @@ class UNetDistillationLoss(nn.Module):
             # Student significantly better (>5% by default) - eliminate distillation completely
             self.alpha = 0.0  # Complete elimination of distillation
             self.task_weight = 1.0  # 100% ground truth
+            self.distillation_eliminated = True  # Mark as permanently eliminated
             
         elif self.performance_ratio > 1.0:
             # Student is better than teacher - aggressively reduce distillation
