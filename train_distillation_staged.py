@@ -1182,7 +1182,7 @@ def main():
         # Get the resume epoch first
         start_epoch = checkpoint['epoch'] + 1
         best_iou = checkpoint.get('best_iou', 0)
-        
+
         # Restore loss function state (adaptive distillation)
         if 'loss_fn_state' in checkpoint:
             loss_fn_state = checkpoint['loss_fn_state']
@@ -1196,16 +1196,16 @@ def main():
                 loss_fn.temperature = loss_fn_state.get('temperature', 1.0)
             if hasattr(loss_fn, 'distillation_eliminated'):
                 loss_fn.distillation_eliminated = loss_fn_state.get('distillation_eliminated', False)
-            
+
             text_logger.log(f"Restored loss function state: ratio={loss_fn.performance_ratio:.4f}, "
                            f"α={loss_fn.alpha:.3f}, task_weight={loss_fn.task_weight:.3f}, "
                            f"eliminated={loss_fn.distillation_eliminated}")
-            
+
             # Print special message if distillation was eliminated
             if loss_fn.distillation_eliminated:
                 text_logger.log("  🎯 Distillation was PERMANENTLY ELIMINATED - continuing with 100% ground truth")
                 print("  🎯 Distillation was PERMANENTLY ELIMINATED - continuing with 100% ground truth")
-        
+
         # Restore cached teacher mIoU
         if 'teacher_miou_cache' in checkpoint:
             teacher_miou_cache = checkpoint['teacher_miou_cache']

@@ -402,7 +402,7 @@ class UNetDistillationLoss(nn.Module):
         """
         if not self.adaptive_distillation:
             return self.alpha
-        
+
         # If distillation was already eliminated, keep it eliminated
         if self.distillation_eliminated:
             self.alpha = 0.0
@@ -417,7 +417,7 @@ class UNetDistillationLoss(nn.Module):
             self.alpha = 0.0  # Complete elimination of distillation
             self.task_weight = 1.0  # 100% ground truth
             self.distillation_eliminated = True  # Mark as permanently eliminated
-            
+
         elif self.performance_ratio > 1.0:
             # Student is better than teacher - aggressively reduce distillation
             # Amplify the performance difference for more sensitive adjustment
@@ -431,7 +431,7 @@ class UNetDistillationLoss(nn.Module):
             # Aggressively increase task weight, allow it to reach 1.0 (100%)
             # Use sigmoid-like function for smooth transition to 1.0
             task_weight_target = 1.0 - np.exp(-amplified_diff * 2)  # Approaches 1.0 quickly
-            self.task_weight = min(1.0, self.initial_task_weight + 
+            self.task_weight = min(1.0, self.initial_task_weight +
                                   (1.0 - self.initial_task_weight) * task_weight_target)
 
         elif self.performance_ratio > 0.98:
@@ -588,7 +588,7 @@ class UNetDistillationLoss(nn.Module):
                 effective_alpha = self.alpha * max(0.1, 2.0 - self.performance_ratio)
             else:
                 effective_alpha = self.alpha
-                
+
             # Start with MSE-dominated loss for stability, gradually introduce KL
             # Use smaller weight for KL initially
             kl_weight = min(effective_alpha, 0.1)  # Start with small KL weight
