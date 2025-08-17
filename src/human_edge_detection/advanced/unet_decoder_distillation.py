@@ -384,7 +384,7 @@ class UNetDistillationLoss(nn.Module):
     def update_distillation_weight(self, student_iou: float, teacher_iou: float,
                                   min_alpha: float = 0.0,  # Allow complete elimination
                                   amplification_factor: float = 20.0,
-                                  zero_distillation_threshold: float = 0.05) -> float:
+                                  zero_distillation_threshold: float = 0.03) -> float:
         """Adaptively adjust distillation weight based on student vs teacher performance.
 
         When student surpasses teacher, reduce distillation influence, eventually to zero.
@@ -395,7 +395,7 @@ class UNetDistillationLoss(nn.Module):
             teacher_iou: Teacher model IoU (baseline)
             min_alpha: Minimum distillation weight (0 = complete elimination)
             amplification_factor: Factor to amplify small performance differences
-            zero_distillation_threshold: Ratio threshold for zero distillation (default 5%)
+            zero_distillation_threshold: Ratio threshold for zero distillation (default 3%)
 
         Returns:
             Updated alpha value
