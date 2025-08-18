@@ -1096,12 +1096,22 @@ def main():
     loss_fn.temperature = initial_temperature
     loss_fn.initial_temperature = initial_temperature
 
-    # Create optimizer (only optimize student parameters)
-    optimizer = torch.optim.AdamW(
-        model.student.get_decoder_parameters(),
-        lr=config.training.learning_rate,
-        weight_decay=config.training.weight_decay
-    )
+    # Create optimizer
+    if enable_progressive_unfreeze:
+        # Progressive unfreeze: start with decoder only
+        optimizer = torch.optim.AdamW(
+            model.student.get_decoder_parameters(),
+            lr=config.training.learning_rate,
+            weight_decay=config.training.weight_decay
+        )
+    else:
+        # No progressive unfreeze: train entire model from start
+        optimizer = torch.optim.AdamW(
+            model.student.parameters(),  # All parameters (encoder + decoder)
+            lr=config.training.learning_rate,
+            weight_decay=config.training.weight_decay
+        )
+        text_logger.log("Training entire model (encoder + decoder) from the start")
 
     # Create scheduler
     if config.training.scheduler == 'cosine':

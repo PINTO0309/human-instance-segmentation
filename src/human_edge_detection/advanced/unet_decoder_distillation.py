@@ -115,7 +115,7 @@ class DistillationUNetWrapper(nn.Module):
         self.student = UNetDecoderOnly(
             encoder_name=student_encoder,
             encoder_weights="imagenet",  # Use ImageNet pretrained weights
-            freeze_encoder=True,  # Initially freeze encoder, will unfreeze progressively
+            freeze_encoder=progressive_unfreeze,  # Freeze only if progressive unfreeze is enabled
             freeze_decoder=False  # Decoder needs to be trainable
         )
 
