@@ -5,6 +5,7 @@ knowledge distillation from a teacher model, focusing only on the decoder
 part without any segmentation head or encoder components.
 """
 
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -94,7 +95,8 @@ class DistillationUNetWrapper(nn.Module):
         teacher_encoder: str = "timm-efficientnet-b3",
         teacher_checkpoint_path: str = "ext_extractor/2020-09-23a.pth",
         freeze_teacher: bool = True,
-        progressive_unfreeze: bool = False
+        progressive_unfreeze: bool = False,
+        student_pretrained_path: Optional[str] = None
     ):
         """Initialize distillation wrapper.
 
@@ -104,6 +106,7 @@ class DistillationUNetWrapper(nn.Module):
             teacher_checkpoint_path: Path to teacher model checkpoint
             freeze_teacher: Whether to freeze teacher model
             progressive_unfreeze: Whether to enable progressive unfreezing of encoder
+            student_pretrained_path: Optional path to pretrained student weights
         """
         super().__init__()
 
@@ -111,13 +114,31 @@ class DistillationUNetWrapper(nn.Module):
         self.progressive_unfreeze = progressive_unfreeze
         self.student_encoder_name = student_encoder
 
-        # Create student model (B0) with pretrained encoder
+        # Create student model with pretrained encoder
         self.student = UNetDecoderOnly(
             encoder_name=student_encoder,
             encoder_weights="imagenet",  # Use ImageNet pretrained weights
             freeze_encoder=progressive_unfreeze,  # Freeze only if progressive unfreeze is enabled
             freeze_decoder=False  # Decoder needs to be trainable
         )
+        
+        # Load pretrained student weights if provided
+        if student_pretrained_path and os.path.exists(student_pretrained_path):
+            print(f"Loading pretrained student weights from: {student_pretrained_path}")
+            checkpoint = torch.load(student_pretrained_path, map_location='cpu', weights_only=False)
+            
+            # Extract state dict
+            if 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
+            elif 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            else:
+                state_dict = checkpoint
+            
+            # Load state dict
+            result = self.student.load_state_dict(state_dict, strict=False)
+            print(f"  Loaded student weights. Missing: {len(result.missing_keys)}, Unexpected: {len(result.unexpected_keys)}")
+            print(f"  Student is now fine-tuning from pretrained checkpoint")
 
         # Create and load teacher model with specified encoder
         self.teacher = self._load_teacher_model(
@@ -628,7 +649,8 @@ def create_unet_distillation_model(
     progressive_unfreeze: bool = False,
     adaptive_distillation: bool = True,
     amplification_factor: float = 20.0,
-    min_alpha: float = 0.001
+    min_alpha: float = 0.001,
+    student_pretrained_path: Optional[str] = None
 ) -> Tuple[nn.Module, nn.Module]:
     """Create UNet distillation model and loss.
 
@@ -648,7 +670,8 @@ def create_unet_distillation_model(
         teacher_encoder=teacher_encoder,
         teacher_checkpoint_path=teacher_checkpoint,
         freeze_teacher=True,
-        progressive_unfreeze=progressive_unfreeze
+        progressive_unfreeze=progressive_unfreeze,
+        student_pretrained_path=student_pretrained_path
     ).to(device)
 
     # Create loss function with class balancing and stability settings

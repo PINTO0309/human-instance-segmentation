@@ -3337,7 +3337,7 @@ class ConfigManager:
         ),
         'rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog',
-            description='UNet distillation with temperature scheduling and progressive encoder unfreezing',
+            description='UNet distillation with temperature scheduling',
             model=ModelConfig(
                 # Use special flag for UNet-only distillation
                 use_unet_encoder_only=True,
@@ -3348,8 +3348,8 @@ class ConfigManager:
                 mask_size=None,  # Output same as input size
                 onnx_model=None,
                 # Student model configuration (B7)
-                use_pretrained_unet=False,  # Not using pretrained for student
-                pretrained_weights_path="",  # No pre-trained weights for B7 student
+                use_pretrained_unet=True,  # Using pretrained for student
+                pretrained_weights_path="ext_extractor/best_model_b7_0.9005.pth",  # Pre-trained weights for B7 student
                 freeze_pretrained_weights=False,  # Student needs to be trainable
                 use_full_image_unet=False,  # Not using the full hierarchical model
                 # Disable all refinement modules for pure UNet
@@ -3395,7 +3395,7 @@ class ConfigManager:
                     "cosine",          # Schedule type (linear/cosine/exponential)
                     # Progressive unfreezing parameters
                     "progressive_unfreeze",  # Flag for progressive unfreezing
-                    "false",                  # Enable progressive unfreezing
+                    "false",                  # Disable progressive unfreezing
                     "5",                     # Unfreeze start epoch
                     "3",                     # Unfreeze rate (blocks per N epochs)
                     "0.3",                   # Learning rate scale for encoder
@@ -3415,16 +3415,16 @@ class ConfigManager:
                 use_edge_visualize=False,
             ),
             training=TrainingConfig(
-                learning_rate=1e-4,  # Reduced for stability
-                warmup_epochs=5,  # More warmup for stable start
+                learning_rate=5e-5,  # Reduced for stability
+                warmup_epochs=0,  # More warmup for stable start
                 scheduler='cosine',
                 num_epochs=50,  # Fewer epochs for distillation
                 batch_size=4,  # Larger batch size for stable distillation
                 gradient_clip=5.0,  # Higher clip threshold
                 dice_weight=1.0,  # 0.0
                 ce_weight=0.5, # 1.0
-                weight_decay=1e-4,
-                min_lr=1e-6,
+                weight_decay=5e-5,
+                min_lr=5e-7,
             ),
         ),
 

@@ -1080,6 +1080,12 @@ def main():
     else:
         text_logger.log(f"Progressive unfreezing: Disabled")
 
+    # Check if pretrained student weights should be used
+    student_pretrained_path = None
+    if config.model.use_pretrained_unet and config.model.pretrained_weights_path:
+        student_pretrained_path = config.model.pretrained_weights_path
+        text_logger.log(f"Will load pretrained student weights from: {student_pretrained_path}")
+    
     # Create model and loss
     model, loss_fn = create_unet_distillation_model(
         student_encoder=config.distillation.student_encoder,
@@ -1089,7 +1095,8 @@ def main():
         progressive_unfreeze=enable_progressive_unfreeze,  # Pass progressive unfreeze flag
         adaptive_distillation=config.distillation.adaptive_distillation,
         amplification_factor=config.distillation.amplification_factor,
-        min_alpha=config.distillation.min_alpha
+        min_alpha=config.distillation.min_alpha,
+        student_pretrained_path=student_pretrained_path
     )
 
     # Set initial temperature
