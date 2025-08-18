@@ -2917,7 +2917,7 @@ class ConfigManager:
             distillation=DistillationConfig(
                 enabled=True,
                 teacher_encoder="timm-efficientnet-b7",
-                teacher_checkpoint="ext_extractor/best_model_b7_0.8828.pth",  # Teacher B7 weights
+                teacher_checkpoint="ext_extractor/best_model_b7_0.9005.pth",  # Teacher B7 weights
                 temperature=4.0,  # Initial temperature for softer distributions
                 alpha=0.3,  # Lower weight for distillation, more on ground truth
                 encoder_only_epochs=0,
@@ -2945,7 +2945,7 @@ class ConfigManager:
                 val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4,
+                num_workers=16,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
                 use_roi_comparison=False,
