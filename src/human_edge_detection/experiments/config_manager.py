@@ -3421,8 +3421,8 @@ class ConfigManager:
                 num_epochs=50,  # Fewer epochs for distillation
                 batch_size=4,  # Larger batch size for stable distillation
                 gradient_clip=5.0,  # Higher clip threshold
-                dice_weight=1.0,  # 0.0
-                ce_weight=0.5, # 1.0
+                dice_weight=0.7,  # 0.0
+                ce_weight=0.3, # 1.0
                 weight_decay=5e-5,
                 min_lr=5e-7,
             ),
