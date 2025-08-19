@@ -767,7 +767,7 @@ def save_finetuning_visualization(
     model_output: torch.Tensor,
     visualize_dir: Path,
     epoch: int,
-    batch_idx: int,  # Keep for API compatibility, though unused
+    batch_idx: int,  # Keep for API compatibility, though unused  # noqa: F841
     num_samples: int = 4,
     model_miou: Optional[float] = None,
     model_name: str = 'Model'
@@ -839,10 +839,41 @@ def save_finetuning_visualization(
         axes[i, 1].set_title('Ground Truth (Green)')
         axes[i, 1].axis('off')
         
-        # Model prediction overlay (blue) - Column 2
-        model_overlay = create_overlay(images_np[i], model_preds[i, 0], color=(0, 0, 1), alpha=0.4)
-        axes[i, 2].imshow(model_overlay)
-        model_title = f'{model_name} (Blue)'
+        # Model prediction with comparison overlay - Column 2
+        # Similar to distillation comparison logic: Green for correct, Red for errors
+        img = images_np[i].transpose(1, 2, 0) * std + mean
+        img = np.clip(img, 0, 1)
+        
+        # Get binary masks
+        gt_mask = masks_np[i, 0] > 0.5  # Ground truth mask
+        model_mask = model_preds[i, 0] > 0.5  # Model prediction mask
+        
+        # Identify matches and mismatches
+        foreground_both = gt_mask & model_mask  # Both predict foreground (correct)
+        mismatch = (gt_mask != model_mask)  # Predictions differ (error)
+        
+        # Alpha values - same as distillation comparison
+        alpha_green = 0.4  # For correct predictions
+        alpha_red = 0.7    # Strong red for errors
+        
+        # Start with original image
+        comparison = img.copy()
+        
+        # Apply green for correct predictions (where model matches GT)
+        green_mask = foreground_both & (~mismatch)
+        comparison[:, :, 0] = img[:, :, 0] * (1 - alpha_green * green_mask)  # Reduce red
+        comparison[:, :, 1] = img[:, :, 1] * (1 - alpha_green * green_mask) + \
+                              1.0 * alpha_green * green_mask  # Add green
+        comparison[:, :, 2] = img[:, :, 2] * (1 - alpha_green * green_mask)  # Reduce blue
+        
+        # Apply red for errors (overwrites green if any)
+        comparison[:, :, 0] = comparison[:, :, 0] * (1 - alpha_red * mismatch) + \
+                              1.0 * alpha_red * mismatch  # Add red
+        comparison[:, :, 1] = comparison[:, :, 1] * (1 - alpha_red * mismatch)  # Reduce green
+        comparison[:, :, 2] = comparison[:, :, 2] * (1 - alpha_red * mismatch)  # Reduce blue
+        
+        axes[i, 2].imshow(comparison)
+        model_title = f'{model_name} vs GT\n(Green=Correct, Red=Error)'
         if model_miou is not None:
             model_title += f'\nmIoU: {model_miou:.4f}'
         axes[i, 2].set_title(model_title)
@@ -865,7 +896,7 @@ def save_visualization(
     teacher_output: torch.Tensor,
     visualize_dir: Path,
     epoch: int,
-    batch_idx: int,  # Keep for API compatibility, though unused
+    batch_idx: int,  # Keep for API compatibility, though unused  # noqa: F841
     num_samples: int = 4,
     student_miou: Optional[float] = None,
     teacher_miou: Optional[float] = None,
