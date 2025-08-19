@@ -1331,40 +1331,6 @@ def main():
     # Export initial model to ONNX
     export_onnx_model(model.student, exp_dirs['checkpoints'], args.device)
 
-    # Test only mode - skip training and run validation
-    if args.test_only:
-        text_logger.log("\n" + "="*50)
-        text_logger.log("Running validation only...")
-
-        # Run validation
-        val_metrics = evaluate(
-            model,
-            val_loader,
-            loss_fn,
-            args.device,
-            0,  # Use epoch 0 for test_only mode
-            writer,
-            visualize_dir=exp_dirs['visualizations'],
-            teacher_miou_cache=None,
-            student_name=student_name,
-            teacher_name=teacher_name
-        )
-
-        # Log results
-        text_logger.log(f"\nValidation Results:")
-        text_logger.log(f"  Total Loss: {val_metrics['total_loss']:.4f}")
-        text_logger.log(f"  Student {student_name} mIoU: {val_metrics['student_miou']:.4f}")
-        text_logger.log(f"  Teacher {teacher_name} mIoU: {val_metrics['teacher_miou']:.4f}")
-        text_logger.log(f"  Agreement Rate: {val_metrics['agreement']:.4f}")
-        text_logger.log(f"  KL Loss: {val_metrics['kl_loss']:.4f}")
-        text_logger.log(f"  MSE Loss: {val_metrics['mse_loss']:.4f}")
-        text_logger.log(f"  BCE Loss: {val_metrics['bce_loss']:.4f}")
-        text_logger.log(f"  Dice Loss: {val_metrics['dice_loss']:.4f}")
-
-        text_logger.log("\nValidation completed!")
-        writer.close()
-        return
-
     # Training loop
     best_iou = 0
     start_epoch = 0
@@ -1499,6 +1465,46 @@ def main():
                 text_logger.log("Could not restore scheduler state, maintaining recreated scheduler")
 
         text_logger.log(f"Resumed from epoch {start_epoch}, best IoU: {best_iou:.4f}")
+        
+        # Test only mode - skip training and run validation
+        if args.test_only:
+            text_logger.log("\n" + "="*50)
+            text_logger.log("Running validation only with loaded checkpoint...")
+            
+            # Set model to eval mode
+            model.eval()
+            model.student.eval()
+            if model.teacher is not None:
+                model.teacher.eval()
+            
+            # Run validation
+            val_metrics = evaluate(
+                model,
+                val_loader,
+                loss_fn,
+                args.device,
+                checkpoint['epoch'],  # Use checkpoint epoch
+                writer,
+                visualize_dir=exp_dirs['visualizations'],
+                teacher_miou_cache=teacher_miou_cache,
+                student_name=student_name,
+                teacher_name=teacher_name
+            )
+            
+            # Log results
+            text_logger.log(f"\nValidation Results:")
+            text_logger.log(f"  Total Loss: {val_metrics['total_loss']:.4f}")
+            text_logger.log(f"  Student {student_name} mIoU: {val_metrics['student_miou']:.4f}")
+            text_logger.log(f"  Teacher {teacher_name} mIoU: {val_metrics['teacher_miou']:.4f}")
+            text_logger.log(f"  Agreement Rate: {val_metrics['agreement']:.4f}")
+            text_logger.log(f"  KL Loss: {val_metrics['kl_loss']:.4f}")
+            text_logger.log(f"  MSE Loss: {val_metrics['mse_loss']:.4f}")
+            text_logger.log(f"  BCE Loss: {val_metrics['bce_loss']:.4f}")
+            text_logger.log(f"  Dice Loss: {val_metrics['dice_loss']:.4f}")
+            
+            text_logger.log("\nValidation completed!")
+            writer.close()
+            return
 
     for epoch in range(start_epoch, config.training.num_epochs):
         # Progressive unfreezing check
