@@ -514,24 +514,43 @@ def evaluate(
     print(f"\n[Validation Summary]")
     print(f"  Total Loss: {metrics['total_loss']:.4f}")
     print(f"  KL Loss: {metrics['kl_loss']:.4f}")
-    print(f"  MSE Loss: {metrics['mse_loss']:.4f}")
-    print(f"  BCE Loss: {metrics['bce_loss']:.4f}")
-    print(f"  Dice Loss: {metrics['dice_loss']:.4f}")
-    print(f"  Student {student_name} mIoU: {metrics['student_miou']:.4f}")
-    print(f"  Teacher {teacher_name} mIoU: {metrics['teacher_miou']:.4f}")
-    print(f"  {teacher_name}-{student_name} Agreement: {metrics['agreement']:.4f} ({metrics['agreement']*100:.2f}%)")
-    print(f"  mIoU Difference ({student_name}-{teacher_name}): {metrics['miou_diff']:.4f}")
+    # Check if distillation is enabled for appropriate output
+    if model.teacher is not None:
+        # Distillation mode - show full metrics
+        print(f"  MSE Loss: {metrics['mse_loss']:.4f}")
+        print(f"  BCE Loss: {metrics['bce_loss']:.4f}")
+        print(f"  Dice Loss: {metrics['dice_loss']:.4f}")
+        print(f"  Student {student_name} mIoU: {metrics['student_miou']:.4f}")
+        print(f"  Teacher {teacher_name} mIoU: {metrics['teacher_miou']:.4f}")
+        print(f"  {teacher_name}-{student_name} Agreement: {metrics['agreement']:.4f} ({metrics['agreement']*100:.2f}%)")
+        print(f"  mIoU Difference ({student_name}-{teacher_name}): {metrics['miou_diff']:.4f}")
+    else:
+        # Fine-tuning mode - simplified metrics
+        print(f"  BCE Loss: {metrics['bce_loss']:.4f}")
+        print(f"  Dice Loss: {metrics['dice_loss']:.4f}")
+        print(f"  Model mIoU: {metrics['student_miou']:.4f}")
 
     # Save visualization with mIoU values
     if visualize_dir is not None and test_images is not None:
-        save_visualization(
-            test_images, test_masks, student_output_test, teacher_output_test,
-            visualize_dir, epoch, 0, num_samples=4,
-            student_miou=metrics['student_miou'],
-            teacher_miou=metrics['teacher_miou'],
-            student_name=student_name,
-            teacher_name=teacher_name
-        )
+        # Check if distillation is enabled (teacher model exists)
+        if model.teacher is not None:
+            # Normal visualization with teacher
+            save_visualization(
+                test_images, test_masks, student_output_test, teacher_output_test,
+                visualize_dir, epoch, 0, num_samples=4,
+                student_miou=metrics['student_miou'],
+                teacher_miou=metrics['teacher_miou'],
+                student_name=student_name,
+                teacher_name=teacher_name
+            )
+        else:
+            # Pure fine-tuning: save simplified visualization without teacher
+            save_finetuning_visualization(
+                test_images, test_masks, student_output_test,
+                visualize_dir, epoch, 0, num_samples=4,
+                model_miou=metrics['student_miou'],
+                model_name='Model'
+            )
 
     # Log to tensorboard
     if writer:
@@ -728,6 +747,103 @@ def get_test_images_by_person_count(dataloader, device='cuda'):
     return images_tensor, masks_tensor
 
 
+def save_finetuning_visualization(
+    images: torch.Tensor,
+    masks: torch.Tensor,
+    model_output: torch.Tensor,
+    visualize_dir: Path,
+    epoch: int,
+    batch_idx: int,  # Keep for API compatibility, though unused
+    num_samples: int = 4,
+    model_miou: Optional[float] = None,
+    model_name: str = 'Model'
+):
+    """Save visualization for fine-tuning (no teacher model).
+    
+    Args:
+        images: Input images (B, 3, H, W)
+        masks: Ground truth masks (B, 1, H, W)
+        model_output: Model predictions (B, 1, H, W)
+        visualize_dir: Directory to save visualizations
+        epoch: Current epoch
+        batch_idx: Batch index
+        num_samples: Number of samples to visualize
+        model_miou: Model's mIoU score
+        model_name: Name of the model
+    """
+    # Convert to numpy arrays
+    images_np = images.cpu().numpy()
+    masks_np = masks.cpu().numpy()
+    model_preds = torch.sigmoid(model_output).cpu().numpy()
+    
+    # Create figure with 3 columns: Original, Ground Truth, Prediction
+    _, axes = plt.subplots(num_samples, 3, figsize=(12, 4 * num_samples))
+    if num_samples == 1:
+        axes = axes.reshape(1, -1)
+    
+    def create_overlay(image, mask, color=(0, 1, 0), alpha=0.3):
+        """Create overlay of mask on image with specified color."""
+        # Denormalize image from ImageNet normalization
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        image_denorm = image.transpose(1, 2, 0) * std + mean
+        image_denorm = np.clip(image_denorm, 0, 1)
+        
+        # Create colored overlay
+        overlay = image_denorm.copy()
+        mask_bool = mask > 0.5
+        for c in range(3):
+            overlay[:, :, c] = np.where(mask_bool, 
+                                       overlay[:, :, c] * (1 - alpha) + color[c] * alpha,
+                                       overlay[:, :, c])
+        return overlay
+    
+    # Count persons per image for display
+    person_counts = []
+    for i in range(min(num_samples, images.shape[0])):
+        # Simple heuristic: count connected components
+        mask_binary = (masks_np[i, 0] > 0.5).astype(np.uint8)
+        # Use a simple approximation for person count
+        person_count = 1 if mask_binary.sum() > 0 else 0
+        # Could be improved with proper connected component analysis
+        person_counts.append(person_count)
+    
+    # Plot each sample
+    for i in range(min(num_samples, images.shape[0])):
+        # Original image - Column 0
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        image_denorm = images_np[i].transpose(1, 2, 0) * std + mean
+        image_denorm = np.clip(image_denorm, 0, 1)
+        axes[i, 0].imshow(image_denorm)
+        axes[i, 0].set_title(f'Original Image\n{person_counts[i]} Person(s)')
+        axes[i, 0].axis('off')
+        
+        # Ground truth overlay (green) - Column 1
+        gt_overlay = create_overlay(images_np[i], masks_np[i, 0], color=(0, 1, 0), alpha=0.4)
+        axes[i, 1].imshow(gt_overlay)
+        axes[i, 1].set_title('Ground Truth (Green)')
+        axes[i, 1].axis('off')
+        
+        # Model prediction overlay (blue) - Column 2
+        model_overlay = create_overlay(images_np[i], model_preds[i, 0], color=(0, 0, 1), alpha=0.4)
+        axes[i, 2].imshow(model_overlay)
+        model_title = f'{model_name} (Blue)'
+        if model_miou is not None:
+            model_title += f'\nmIoU: {model_miou:.4f}'
+        axes[i, 2].set_title(model_title)
+        axes[i, 2].axis('off')
+    
+    plt.suptitle(f'Fine-tuning Results - Epoch {epoch+1}', fontsize=16)
+    plt.tight_layout()
+    
+    # Save figure with consistent naming
+    save_path = visualize_dir / f'epoch_{epoch+1:03d}.png'
+    plt.savefig(save_path, dpi=100, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  Visualization saved to {save_path}")
+
 def save_visualization(
     images: torch.Tensor,
     masks: torch.Tensor,
@@ -735,7 +851,7 @@ def save_visualization(
     teacher_output: torch.Tensor,
     visualize_dir: Path,
     epoch: int,
-    batch_idx: int,
+    batch_idx: int,  # Keep for API compatibility, though unused
     num_samples: int = 4,
     student_miou: Optional[float] = None,
     teacher_miou: Optional[float] = None,
@@ -766,7 +882,7 @@ def save_visualization(
     num_samples = min(num_samples, images.shape[0])
 
     # Create figure (4 columns: GT, Teacher, Student, Comparison)
-    fig, axes = plt.subplots(num_samples, 4, figsize=(16, 4 * num_samples))
+    _, axes = plt.subplots(num_samples, 4, figsize=(16, 4 * num_samples))
     if num_samples == 1:
         axes = axes.reshape(1, -1)
 
@@ -832,8 +948,6 @@ def save_visualization(
         student_mask = student_preds[i, 0] > 0.5
 
         # Identify different pixel categories
-        # Background: both have no person (False)
-        background_both = (~gt_mask) & (~student_mask)
         # Foreground: both have person (True)
         foreground_both = gt_mask & student_mask
         # Mismatch: predictions differ from ground truth
