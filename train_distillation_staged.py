@@ -1086,6 +1086,15 @@ def main():
         student_pretrained_path = config.model.pretrained_weights_path
         text_logger.log(f"Will load pretrained student weights from: {student_pretrained_path}")
     
+    # Check if distillation should be disabled (for pure fine-tuning)
+    if not config.distillation.enabled:
+        text_logger.log("Distillation DISABLED - Pure fine-tuning mode")
+        # Override distillation parameters for pure fine-tuning
+        config.distillation.alpha = 0.0
+        config.distillation.task_weight = 1.0
+        # Don't need teacher model for pure fine-tuning
+        config.distillation.teacher_checkpoint = None
+    
     # Create model and loss
     model, loss_fn = create_unet_distillation_model(
         student_encoder=config.distillation.student_encoder,

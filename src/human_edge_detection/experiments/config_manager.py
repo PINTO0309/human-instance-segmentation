@@ -3316,7 +3316,7 @@ class ConfigManager:
                 val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4,
+                num_workers=8,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
                 use_roi_comparison=False,
@@ -3327,7 +3327,7 @@ class ConfigManager:
                 warmup_epochs=5,  # More warmup for stable start
                 scheduler='cosine',
                 num_epochs=50,  # Fewer epochs for distillation
-                batch_size=4,  # Larger batch size for stable distillation
+                batch_size=16,  # Larger batch size for stable distillation
                 gradient_clip=5.0,  # Higher clip threshold
                 dice_weight=1.0,  # 0.0
                 ce_weight=0.5, # 1.0
@@ -3378,7 +3378,7 @@ class ConfigManager:
                 visualize=False
             ),
             distillation=DistillationConfig(
-                enabled=True,
+                enabled=False,
                 teacher_encoder="timm-efficientnet-b7",
                 teacher_checkpoint="ext_extractor/best_model_b7_0.9005.pth",  # Teacher B7 weights
                 temperature=4.0,  # Initial temperature for softer distributions
@@ -3408,7 +3408,7 @@ class ConfigManager:
                 val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4,
+                num_workers=16,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
                 use_roi_comparison=False,
@@ -3419,10 +3419,10 @@ class ConfigManager:
                 warmup_epochs=0,  # More warmup for stable start
                 scheduler='cosine',
                 num_epochs=50,  # Fewer epochs for distillation
-                batch_size=4,  # Larger batch size for stable distillation
+                batch_size=16,  # Larger batch size for stable distillation
                 gradient_clip=5.0,  # Higher clip threshold
-                dice_weight=0.7,  # 0.0
-                ce_weight=0.3, # 1.0
+                dice_weight=0.5,  # 0.0
+                ce_weight=0.5, # 1.0
                 weight_decay=5e-5,
                 min_lr=5e-7,
             ),
