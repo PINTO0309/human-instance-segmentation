@@ -1429,9 +1429,15 @@ def main():
             model, train_loader, loss_fn, optimizer,
             args.device, epoch, scaler, writer
         )
-        text_logger.log(f"Epoch {epoch+1:03d} - Train - Loss: {train_metrics['total_loss']:.4f}, "
-                       f"KL: {train_metrics['kl_loss']:.4f}, MSE: {train_metrics['mse_loss']:.4f}, "
-                       f"Dice: {train_metrics['dice_loss']:.4f}")
+        # Log training results
+        if config.distillation.enabled:
+            text_logger.log(f"Epoch {epoch+1:03d} - Train - Loss: {train_metrics['total_loss']:.4f}, "
+                           f"KL: {train_metrics['kl_loss']:.4f}, MSE: {train_metrics['mse_loss']:.4f}, "
+                           f"Dice: {train_metrics['dice_loss']:.4f}")
+        else:
+            # Simplified log for pure fine-tuning
+            text_logger.log(f"Epoch {epoch+1:03d} - Train - Loss: {train_metrics['total_loss']:.4f}, "
+                           f"BCE: {train_metrics['bce_loss']:.4f}, Dice: {train_metrics['dice_loss']:.4f}")
 
         # Validate
         val_metrics = evaluate(
@@ -1443,13 +1449,13 @@ def main():
             teacher_name=teacher_name
         )
 
-        # Cache teacher mIoU after first evaluation
-        if teacher_miou_cache is None:
+        # Cache teacher mIoU after first evaluation (only if distillation is enabled)
+        if config.distillation.enabled and teacher_miou_cache is None:
             teacher_miou_cache = val_metrics['teacher_miou']
             text_logger.log(f"Cached Teacher {teacher_name} mIoU: {teacher_miou_cache:.4f}")
 
-        # Update distillation weight based on student vs teacher performance
-        if hasattr(loss_fn, 'update_distillation_weight'):
+        # Update distillation weight based on student vs teacher performance (only if distillation is enabled)
+        if config.distillation.enabled and hasattr(loss_fn, 'update_distillation_weight'):
             old_alpha = loss_fn.alpha
             old_task_weight = loss_fn.task_weight
             new_alpha = loss_fn.update_distillation_weight(
@@ -1478,9 +1484,15 @@ def main():
                 text_logger.log(adaptive_msg)
                 print(adaptive_msg)  # Also print to console
 
-        text_logger.log(f"Epoch {epoch+1:03d} - Val - Loss: {val_metrics['total_loss']:.4f}, "
-                       f"Dice: {val_metrics['dice_loss']:.4f}, {student_name}_mIoU: {val_metrics['student_miou']:.4f}, "
-                       f"{teacher_name}_mIoU: {val_metrics['teacher_miou']:.4f}, Agreement: {val_metrics['agreement']:.4f}")
+        # Log validation results
+        if config.distillation.enabled:
+            text_logger.log(f"Epoch {epoch+1:03d} - Val - Loss: {val_metrics['total_loss']:.4f}, "
+                           f"Dice: {val_metrics['dice_loss']:.4f}, {student_name}_mIoU: {val_metrics['student_miou']:.4f}, "
+                           f"{teacher_name}_mIoU: {val_metrics['teacher_miou']:.4f}, Agreement: {val_metrics['agreement']:.4f}")
+        else:
+            # Simplified log for pure fine-tuning (no teacher metrics)
+            text_logger.log(f"Epoch {epoch+1:03d} - Val - Loss: {val_metrics['total_loss']:.4f}, "
+                           f"Dice: {val_metrics['dice_loss']:.4f}, mIoU: {val_metrics['student_miou']:.4f}")
 
         # Update scheduler
         if scheduler:
