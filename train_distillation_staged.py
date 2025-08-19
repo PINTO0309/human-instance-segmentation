@@ -1417,7 +1417,10 @@ def main():
         # Restore cached teacher mIoU
         if 'teacher_miou_cache' in checkpoint:
             teacher_miou_cache = checkpoint['teacher_miou_cache']
-            text_logger.log(f"Restored cached teacher mIoU: {teacher_miou_cache:.4f}")
+            if teacher_miou_cache is not None:
+                text_logger.log(f"Restored cached teacher mIoU: {teacher_miou_cache:.4f}")
+            else:
+                text_logger.log("No teacher mIoU cache (fine-tuning mode)")
 
         # Restore progressive unfreeze state from checkpoint
         if enable_progressive_unfreeze and 'progressive_unfreeze_state' in checkpoint and checkpoint['progressive_unfreeze_state']:
