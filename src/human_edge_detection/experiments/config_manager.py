@@ -3335,9 +3335,10 @@ class ConfigManager:
                 min_lr=1e-6,
             ),
         ),
-        'rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog': ExperimentConfig(
-            name='rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog',
-            description='UNet distillation with temperature scheduling',
+
+        'rgb_hierarchical_unet_v2_finetune_b7': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_finetune_b7',
+            description='B7 UNet fine-tuning without distillation',
             model=ModelConfig(
                 # Use special flag for UNet-only distillation
                 use_unet_encoder_only=True,

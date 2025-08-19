@@ -140,12 +140,17 @@ class DistillationUNetWrapper(nn.Module):
             print(f"  Loaded student weights. Missing: {len(result.missing_keys)}, Unexpected: {len(result.unexpected_keys)}")
             print(f"  Student is now fine-tuning from pretrained checkpoint")
 
-        # Create and load teacher model with specified encoder
-        self.teacher = self._load_teacher_model(
-            teacher_checkpoint_path,
-            teacher_encoder=teacher_encoder,
-            freeze=freeze_teacher
-        )
+        # Create and load teacher model with specified encoder (only if checkpoint provided)
+        if teacher_checkpoint_path:
+            self.teacher = self._load_teacher_model(
+                teacher_checkpoint_path,
+                teacher_encoder=teacher_encoder,
+                freeze=freeze_teacher
+            )
+        else:
+            # No teacher for pure fine-tuning
+            self.teacher = None
+            print("No teacher model loaded - pure fine-tuning mode")
 
         # Track encoder blocks for progressive unfreezing
         if self.progressive_unfreeze:
@@ -297,9 +302,13 @@ class DistillationUNetWrapper(nn.Module):
         # Student forward pass
         student_output = self.student(x)
 
-        # Teacher forward pass (no gradients)
-        with torch.no_grad():
-            teacher_output = self.teacher(x)
+        # Teacher forward pass (no gradients) - if teacher exists
+        if self.teacher is not None:
+            with torch.no_grad():
+                teacher_output = self.teacher(x)
+        else:
+            # No teacher - return zeros for compatibility
+            teacher_output = torch.zeros_like(student_output)
 
         return student_output, teacher_output
 
@@ -593,9 +602,9 @@ class UNetDistillationLoss(nn.Module):
             loss_dict['bce_loss'] = 0.0
             loss_dict['dice_loss'] = 0.0
 
-        # Check if distillation is completely eliminated
-        if self.adaptive_distillation and self.alpha == 0.0:
-            # Skip distillation calculation entirely when eliminated
+        # Check if distillation is completely eliminated or disabled
+        if (self.adaptive_distillation and self.alpha == 0.0) or self.task_weight >= 0.99:
+            # Skip distillation calculation entirely when eliminated or task weight is ~100%
             distillation_loss = torch.tensor(0.0, device=student_output.device)
         else:
             # Adaptive distillation weight based on performance
