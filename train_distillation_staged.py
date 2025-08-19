@@ -322,13 +322,22 @@ def train_epoch(
         bce_loss += loss_dict.get('bce_loss', 0)
         dice_loss += loss_dict.get('dice_loss', 0)
 
-        # Update progress bar
-        progress_bar.set_postfix({
-            'loss': f"{loss.item():.4f}",
-            'kl': f"{loss_dict.get('kl_loss', 0):.4f}",
-            'mse': f"{loss_dict.get('mse_loss', 0):.4f}",
-            'dice': f"{loss_dict.get('dice_loss', 0):.4f}"
-        })
+        # Update progress bar - show only relevant losses
+        if model.teacher is not None:
+            # Distillation mode - show all losses
+            progress_bar.set_postfix({
+                'loss': f"{loss.item():.4f}",
+                'kl': f"{loss_dict.get('kl_loss', 0):.4f}",
+                'mse': f"{loss_dict.get('mse_loss', 0):.4f}",
+                'dice': f"{loss_dict.get('dice_loss', 0):.4f}"
+            })
+        else:
+            # Fine-tuning mode - show only task losses
+            progress_bar.set_postfix({
+                'loss': f"{loss.item():.4f}",
+                'bce': f"{loss_dict.get('bce_loss', 0):.4f}",
+                'dice': f"{loss_dict.get('dice_loss', 0):.4f}"
+            })
 
         # Log to tensorboard
         if writer and batch_idx % 10 == 0:

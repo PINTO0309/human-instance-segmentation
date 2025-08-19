@@ -524,51 +524,64 @@ class UNetDistillationLoss(nn.Module):
             Total loss and loss components dict
         """
         loss_dict = {}
+        
+        # Check if distillation is completely disabled/eliminated
+        distillation_disabled = ((self.adaptive_distillation and self.alpha == 0.0) or 
+                                self.task_weight >= 0.99 or 
+                                self.distillation_eliminated)
 
-        # Apply temperature scaling and sigmoid for binary segmentation
-        # Clamp outputs before sigmoid to prevent extreme values
-        student_output_clamped = torch.clamp(student_output, min=-10, max=10)
-        teacher_output_clamped = torch.clamp(teacher_output, min=-10, max=10)
-
-        student_soft = torch.sigmoid(student_output_clamped / self.temperature)
-        teacher_soft = torch.sigmoid(teacher_output_clamped / self.temperature)
-
-        # Enhanced numerical stability for KL divergence
-        # Use larger epsilon and symmetric clamping
-        eps = 1e-5  # Larger epsilon for better stability
-        student_soft = torch.clamp(student_soft, eps, 1.0 - eps)
-        teacher_soft = torch.clamp(teacher_soft, eps, 1.0 - eps)
-
-        # Simple binary KL divergence with better numerical stability
-        # KL(p||q) = p * log(p/q) + (1-p) * log((1-p)/(1-q))
-        # But we'll use a more stable formulation
-        try:
-            # Compute KL divergence term by term with stability checks
-            term1 = teacher_soft * (torch.log(teacher_soft + eps) - torch.log(student_soft + eps))
-            term2 = (1 - teacher_soft) * (torch.log(1 - teacher_soft + eps) - torch.log(1 - student_soft + eps))
-
-            kl_loss = (term1 + term2).mean()
-
-            # Additional safety check
-            if torch.isnan(kl_loss) or torch.isinf(kl_loss):
-                # Fallback to simple L1 distance between probabilities
-                kl_loss = torch.abs(teacher_soft - student_soft).mean()
-                kl_loss = kl_loss * 0.1  # Scale down to match typical KL range
-
-        except Exception as e:
-            # Ultimate fallback
+        # Skip KL/MSE calculation entirely when distillation is disabled
+        if distillation_disabled:
+            # Set distillation losses to 0 without calculation
+            loss_dict['kl_loss'] = 0.0
+            loss_dict['mse_loss'] = 0.0
             kl_loss = torch.tensor(0.0, device=student_output.device)
+            mse_loss = torch.tensor(0.0, device=student_output.device)
+        else:
+            # Apply temperature scaling and sigmoid for binary segmentation
+            # Clamp outputs before sigmoid to prevent extreme values
+            student_output_clamped = torch.clamp(student_output, min=-10, max=10)
+            teacher_output_clamped = torch.clamp(teacher_output, min=-10, max=10)
 
-        # Clamp KL loss to prevent explosion
-        kl_loss = torch.clamp(kl_loss, min=0.0, max=5.0)
+            student_soft = torch.sigmoid(student_output_clamped / self.temperature)
+            teacher_soft = torch.sigmoid(teacher_output_clamped / self.temperature)
 
-        # Safe item() extraction with nan check
-        kl_value = kl_loss.item() if not torch.isnan(kl_loss) else 0.0
-        loss_dict['kl_loss'] = kl_value
+            # Enhanced numerical stability for KL divergence
+            # Use larger epsilon and symmetric clamping
+            eps = 1e-5  # Larger epsilon for better stability
+            student_soft = torch.clamp(student_soft, eps, 1.0 - eps)
+            teacher_soft = torch.clamp(teacher_soft, eps, 1.0 - eps)
 
-        # MSE loss between outputs (more stable than KL for initial training)
-        mse_loss = self.mse_loss(student_output, teacher_output)
-        loss_dict['mse_loss'] = mse_loss.item() if not torch.isnan(mse_loss) else 0.0
+            # Simple binary KL divergence with better numerical stability
+            # KL(p||q) = p * log(p/q) + (1-p) * log((1-p)/(1-q))
+            # But we'll use a more stable formulation
+            try:
+                # Compute KL divergence term by term with stability checks
+                term1 = teacher_soft * (torch.log(teacher_soft + eps) - torch.log(student_soft + eps))
+                term2 = (1 - teacher_soft) * (torch.log(1 - teacher_soft + eps) - torch.log(1 - student_soft + eps))
+
+                kl_loss = (term1 + term2).mean()
+
+                # Additional safety check
+                if torch.isnan(kl_loss) or torch.isinf(kl_loss):
+                    # Fallback to simple L1 distance between probabilities
+                    kl_loss = torch.abs(teacher_soft - student_soft).mean()
+                    kl_loss = kl_loss * 0.1  # Scale down to match typical KL range
+
+            except Exception:
+                # Ultimate fallback
+                kl_loss = torch.tensor(0.0, device=student_output.device)
+
+            # Clamp KL loss to prevent explosion
+            kl_loss = torch.clamp(kl_loss, min=0.0, max=5.0)
+
+            # Safe item() extraction with nan check
+            kl_value = kl_loss.item() if not torch.isnan(kl_loss) else 0.0
+            loss_dict['kl_loss'] = kl_value
+
+            # MSE loss between outputs (more stable than KL for initial training)
+            mse_loss = self.mse_loss(student_output, teacher_output)
+            loss_dict['mse_loss'] = mse_loss.item() if not torch.isnan(mse_loss) else 0.0
 
         # Compute BCE loss with ground truth (primary learning signal)
         if target_masks is not None:
