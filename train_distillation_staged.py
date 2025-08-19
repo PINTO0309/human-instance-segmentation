@@ -322,20 +322,25 @@ def train_epoch(
         bce_loss += loss_dict.get('bce_loss', 0)
         dice_loss += loss_dict.get('dice_loss', 0)
 
-        # Update progress bar - show only relevant losses
-        if model.teacher is not None:
-            # Distillation mode - show all losses
-            progress_bar.set_postfix({
-                'loss': f"{loss.item():.4f}",
-                'kl': f"{loss_dict.get('kl_loss', 0):.4f}",
-                'mse': f"{loss_dict.get('mse_loss', 0):.4f}",
-                'dice': f"{loss_dict.get('dice_loss', 0):.4f}"
-            })
-        else:
+        # Update progress bar - check if distillation is actually being used
+        # Check if KL/MSE losses are non-zero (indicating distillation is active)
+        kl_val = loss_dict.get('kl_loss', 0)
+        mse_val = loss_dict.get('mse_loss', 0)
+        
+        # If both KL and MSE are 0, we're in pure fine-tuning mode
+        if kl_val == 0 and mse_val == 0:
             # Fine-tuning mode - show only task losses
             progress_bar.set_postfix({
                 'loss': f"{loss.item():.4f}",
                 'bce': f"{loss_dict.get('bce_loss', 0):.4f}",
+                'dice': f"{loss_dict.get('dice_loss', 0):.4f}"
+            })
+        else:
+            # Distillation mode - show all losses
+            progress_bar.set_postfix({
+                'loss': f"{loss.item():.4f}",
+                'kl': f"{kl_val:.4f}",
+                'mse': f"{mse_val:.4f}",
                 'dice': f"{loss_dict.get('dice_loss', 0):.4f}"
             })
 
@@ -1222,13 +1227,15 @@ def main():
     # Check if distillation should be disabled (for pure fine-tuning)
     if not config.distillation.enabled:
         text_logger.log("Distillation DISABLED - Pure fine-tuning mode")
+        text_logger.log(f"  Original teacher_checkpoint: {config.distillation.teacher_checkpoint}")
         # Override distillation parameters for pure fine-tuning
         config.distillation.alpha = 0.0
-        config.distillation.task_weight = 1.0
         # Don't need teacher model for pure fine-tuning
         config.distillation.teacher_checkpoint = None
+        text_logger.log(f"  Updated teacher_checkpoint: {config.distillation.teacher_checkpoint}")
     
     # Create model and loss
+    text_logger.log(f"Creating model with teacher_checkpoint: {config.distillation.teacher_checkpoint}")
     model, loss_fn = create_unet_distillation_model(
         student_encoder=config.distillation.student_encoder,
         teacher_encoder=config.distillation.teacher_encoder,
@@ -1240,10 +1247,21 @@ def main():
         min_alpha=config.distillation.min_alpha,
         student_pretrained_path=student_pretrained_path
     )
+    text_logger.log(f"Model created. Teacher is None: {model.teacher is None}")
 
     # Set initial temperature
     loss_fn.temperature = initial_temperature
     loss_fn.initial_temperature = initial_temperature
+    
+    # Override loss function parameters if distillation is disabled
+    if not config.distillation.enabled:
+        loss_fn.alpha = 0.0
+        loss_fn.initial_alpha = 0.0
+        loss_fn.task_weight = 1.0
+        loss_fn.initial_task_weight = 1.0
+        loss_fn.adaptive_distillation = False
+        loss_fn.distillation_eliminated = True  # Mark as permanently eliminated
+        text_logger.log("Loss function configured for pure fine-tuning (alpha=0.0, task_weight=1.0)")
 
     # Create optimizer
     if enable_progressive_unfreeze:

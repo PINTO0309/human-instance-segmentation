@@ -697,14 +697,28 @@ def create_unet_distillation_model(
     ).to(device)
 
     # Create loss function with class balancing and stability settings
-    loss_fn = UNetDistillationLoss(
-        temperature=1.0,  # Very low temperature for stable gradients
-        alpha=0.05,  # Very low KL weight initially (will be dominated by MSE)
-        task_weight=0.7,  # Prioritize ground truth task loss (BCE + Dice)
-        use_feature_matching=False,
-        fg_ratio=0.162,  # Foreground ratio from dataset analysis (16.2% foreground, 83.8% background)
-        use_dice_loss=True,  # Use Dice loss for better handling of class imbalance
-        adaptive_distillation=adaptive_distillation  # Enable adaptive weight adjustment
-    )
+    # Check if pure fine-tuning (no teacher)
+    if teacher_checkpoint is None or teacher_checkpoint == "":
+        # Pure fine-tuning - no distillation
+        loss_fn = UNetDistillationLoss(
+            temperature=1.0,
+            alpha=0.0,  # No distillation
+            task_weight=1.0,  # 100% ground truth
+            use_feature_matching=False,
+            fg_ratio=0.162,  # Foreground ratio from dataset analysis (16.2% foreground, 83.8% background)
+            use_dice_loss=True,  # Use Dice loss for better handling of class imbalance
+            adaptive_distillation=False  # Disable adaptive since no distillation
+        )
+    else:
+        # Distillation mode
+        loss_fn = UNetDistillationLoss(
+            temperature=1.0,  # Very low temperature for stable gradients
+            alpha=0.05,  # Very low KL weight initially (will be dominated by MSE)
+            task_weight=0.7,  # Prioritize ground truth task loss (BCE + Dice)
+            use_feature_matching=False,
+            fg_ratio=0.162,  # Foreground ratio from dataset analysis (16.2% foreground, 83.8% background)
+            use_dice_loss=True,  # Use Dice loss for better handling of class imbalance
+            adaptive_distillation=adaptive_distillation  # Enable adaptive weight adjustment
+        )
 
     return model, loss_fn
