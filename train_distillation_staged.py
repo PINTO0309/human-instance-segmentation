@@ -266,7 +266,8 @@ def train_epoch(
     """Train for one epoch."""
     model.train()
     model.student.train()  # Ensure student is in training mode
-    model.teacher.eval()   # Teacher always in eval mode
+    if model.teacher is not None:
+        model.teacher.eval()   # Teacher always in eval mode (if exists)
 
     total_loss = 0
     kl_loss = 0
@@ -427,7 +428,10 @@ def evaluate(
 
             # Compute mIoU for both student and teacher predictions
             student_preds = (torch.sigmoid(student_output) > 0.5).float()
-            teacher_preds = (torch.sigmoid(teacher_output) > 0.5).float()
+            if model.teacher is not None:
+                teacher_preds = (torch.sigmoid(teacher_output) > 0.5).float()
+            else:
+                teacher_preds = student_preds  # Use student predictions for compatibility
             masks_binary = (masks > 0.5).float()
 
             # Student mIoU (per class: background and foreground)
@@ -447,8 +451,8 @@ def evaluate(
             student_miou = (student_bg_iou + student_fg_iou) / 2.0
             total_student_iou += student_miou.mean().item()
 
-            # Only calculate Teacher mIoU if not cached
-            if not use_cached_teacher_miou:
+            # Only calculate Teacher mIoU if not cached and teacher exists
+            if not use_cached_teacher_miou and model.teacher is not None:
                 # Teacher mIoU (per class: background and foreground)
                 # Class 0: Background
                 teacher_bg_tp = ((1 - teacher_preds) * (1 - masks_binary)).sum(dim=(1, 2, 3))
@@ -465,6 +469,9 @@ def evaluate(
                 # Teacher mIoU
                 teacher_miou = (teacher_bg_iou + teacher_fg_iou) / 2.0
                 total_teacher_iou += teacher_miou.mean().item()
+            elif not use_cached_teacher_miou and model.teacher is None:
+                # No teacher - use student metrics
+                total_teacher_iou += student_miou.mean().item()
 
             # Teacher-Student Agreement (pixel-wise accuracy)
             agreement = (student_preds == teacher_preds).float().mean(dim=(1, 2, 3))
@@ -483,6 +490,9 @@ def evaluate(
     # Use cached teacher mIoU if available, otherwise use calculated value
     if use_cached_teacher_miou:
         final_teacher_miou = teacher_miou_cache
+    elif model.teacher is None:
+        # No teacher model - use student mIoU
+        final_teacher_miou = total_student_iou / num_batches
     else:
         final_teacher_miou = total_teacher_iou / num_batches
 
