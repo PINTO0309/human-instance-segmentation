@@ -3489,7 +3489,7 @@ class ConfigManager:
                     # Progressive unfreezing parameters
                     "progressive_unfreeze",  # Flag for progressive unfreezing
                     "true",                  # Enable progressive unfreezing
-                    "5",                     # Unfreeze start epoch
+                    "3",                     # Unfreeze start epoch
                     "3",                     # Unfreeze rate (blocks per N epochs)
                     "0.3",                   # Learning rate scale for encoder
                 ],
