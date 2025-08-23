@@ -126,8 +126,8 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
 
         multi_scale = config.multiscale.enabled and config.model.variable_roi_sizes
 
-        # Determine encoder name - use student encoder if distillation is enabled
-        encoder_name = config.distillation.student_encoder if config.distillation.enabled else 'timm-efficientnet-b3'
+        # Determine encoder name - use student encoder if distillation is enabled, otherwise use config
+        encoder_name = config.distillation.student_encoder if config.distillation.enabled else getattr(config.model, 'encoder_name', 'timm-efficientnet-b3')
 
         model = create_rgb_hierarchical_model(
             roi_size=config.model.roi_size,

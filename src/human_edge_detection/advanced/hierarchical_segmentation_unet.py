@@ -1729,10 +1729,25 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
         self.in_channels = in_channels
         self.classes = classes
         self.encoder_name = encoder_name
-        # Use simple normalization as it works best for this model
-        # Convert [0, 1] to [-1, 1] range
-        self.mean = mean if mean is not None else [0.5, 0.5, 0.5]
-        self.std = std if std is not None else [0.5, 0.5, 0.5]
+        
+        # Auto-detect normalization based on model type
+        # B0, B1, B7 distilled models use ImageNet normalization
+        # Original 2020-09-23a.pth uses [0.5, 0.5, 0.5] normalization
+        if mean is not None and std is not None:
+            # Use provided normalization
+            self.mean = mean
+            self.std = std
+        elif any(variant in pretrained_weights_path.lower() for variant in ['b0', 'b1', 'b7']):
+            # Distilled models use ImageNet normalization
+            print(f"Using ImageNet normalization for distilled model: {pretrained_weights_path}")
+            self.mean = [0.485, 0.456, 0.406]
+            self.std = [0.229, 0.224, 0.225]
+        else:
+            # Original people segmentation model uses simple normalization
+            # Convert [0, 1] to [-1, 1] range
+            print(f"Using simple normalization for original model: {pretrained_weights_path}")
+            self.mean = [0.5, 0.5, 0.5]
+            self.std = [0.5, 0.5, 0.5]
 
         # Import segmentation_models_pytorch - will need to add to dependencies
         try:
@@ -1750,27 +1765,76 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
             encoder_weights=None  # We'll load our own weights
         )
 
-        # Load pre-trained weights if available (only for EfficientNet-B3)
-        if pretrained_weights_path and os.path.exists(pretrained_weights_path) and encoder_name == "timm-efficientnet-b3":
+        # Load pre-trained weights if available
+        if pretrained_weights_path and os.path.exists(pretrained_weights_path):
             print(f"Loading pre-trained weights from {pretrained_weights_path}")
+            print(f"Target encoder: {encoder_name}")
 
             # Use state_dict_from_disk approach for proper loading
-            state_dict = torch.load(pretrained_weights_path, map_location='cpu')
+            checkpoint = torch.load(pretrained_weights_path, map_location='cpu', weights_only=False)
 
-            # Handle potential state dict wrapping
-            if 'state_dict' in state_dict:
-                state_dict = state_dict['state_dict']
+            # Handle different checkpoint formats
+            if isinstance(checkpoint, dict):
+                # Check for different state dict keys
+                if 'state_dict' in checkpoint:
+                    state_dict = checkpoint['state_dict']
+                elif 'model_state_dict' in checkpoint:
+                    state_dict = checkpoint['model_state_dict']
+                else:
+                    state_dict = checkpoint
+            else:
+                state_dict = checkpoint
 
-            # Apply corrections to remove 'model.' prefix
-            corrections = {"model.": ""}
+            # Detect and handle different prefix patterns
+            # Common prefixes: 'model.', 'unet.', or no prefix
+            sample_key = list(state_dict.keys())[0] if state_dict else ""
+            
+            # Determine the prefix to remove
+            prefix_to_remove = ""
+            if sample_key.startswith("model."):
+                prefix_to_remove = "model."
+            elif sample_key.startswith("unet."):
+                prefix_to_remove = "unet."
+            
+            # Apply corrections to adjust prefixes
             new_state_dict = {}
             for key, value in state_dict.items():
                 new_key = key
-                for old_name, new_name in corrections.items():
-                    if new_key.startswith(old_name):
-                        new_key = new_key.replace(old_name, new_name, 1)
-                        break
+                if prefix_to_remove and new_key.startswith(prefix_to_remove):
+                    new_key = new_key.replace(prefix_to_remove, "", 1)
                 new_state_dict[new_key] = value
+
+            # Detect encoder type from weights based on encoder key count
+            # B0: ~358, B1: ~506, B3: ~572, B7: ~1198
+            encoder_keys = [k for k in new_state_dict.keys() if 'encoder' in k]
+            num_encoder_keys = len(encoder_keys)
+            
+            # Estimate model size from encoder keys
+            if num_encoder_keys < 400:
+                detected_model = "B0"
+            elif num_encoder_keys < 540:
+                detected_model = "B1"
+            elif num_encoder_keys < 700:
+                detected_model = "B3"
+            else:
+                detected_model = "B7 or larger"
+            
+            # Extract expected model from encoder_name
+            if "b0" in encoder_name.lower():
+                expected_model = "B0"
+            elif "b1" in encoder_name.lower():
+                expected_model = "B1"
+            elif "b3" in encoder_name.lower():
+                expected_model = "B3"
+            elif "b7" in encoder_name.lower():
+                expected_model = "B7 or larger"
+            else:
+                expected_model = "Unknown"
+            
+            # Check compatibility
+            if detected_model != expected_model and expected_model != "Unknown":
+                print(f"Warning: Detected {detected_model} weights but encoder is {encoder_name}")
+                print(f"         This may cause issues if architectures don't match")
 
             # Load weights
             missing_keys, unexpected_keys = self.model.load_state_dict(new_state_dict, strict=False)
@@ -1791,8 +1855,6 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
                 print("Pre-trained weights loaded successfully (all keys matched)")
             else:
                 print(f"Pre-trained weights loaded with {len(missing_keys)} missing and {len(unexpected_keys)} unexpected keys")
-        elif encoder_name != "timm-efficientnet-b3":
-            print(f"Skipping pre-trained weights loading for encoder: {encoder_name} (weights are for EfficientNet-B3)")
         else:
             print(f"Warning: Pre-trained weights not found at {pretrained_weights_path}")
 

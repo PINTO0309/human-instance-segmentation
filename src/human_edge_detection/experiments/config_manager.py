@@ -184,6 +184,7 @@ class ModelConfig:
     pretrained_weights_path: str = ""  # Path to pre-trained weights
     freeze_pretrained_weights: bool = False  # Freeze pre-trained weights during training
     use_full_image_unet: bool = False  # Apply UNet to full image before ROI extraction
+    encoder_name: str = 'timm-efficientnet-b3'  # Encoder architecture for UNet models
 
 
 @dataclass
@@ -2430,7 +2431,7 @@ class ConfigManager:
                 onnx_model=None,
                 # Pre-trained model configuration
                 use_pretrained_unet=True,
-                pretrained_weights_path="ext_extractor/2020-09-23a.pth",
+                pretrained_weights_path="ext_extractor/best_model_b1_0.8833.pth", #"ext_extractor/2020-09-23a.pth",
                 freeze_pretrained_weights=True,
                 use_full_image_unet=True,  # Apply UNet to full image first
                 # Refinement modules (disabled for pre-trained model)
@@ -2495,7 +2496,7 @@ class ConfigManager:
                 onnx_model=None,
                 # Pre-trained model configuration
                 use_pretrained_unet=True,
-                pretrained_weights_path="ext_extractor/2020-09-23a.pth",
+                pretrained_weights_path="ext_extractor/best_model_b1_0.8833.pth", #"ext_extractor/2020-09-23a.pth",
                 freeze_pretrained_weights=True,
                 use_full_image_unet=True,  # Apply UNet to full image first
                 # Refinement modules (disabled for pre-trained model)
@@ -2512,6 +2513,8 @@ class ConfigManager:
                 # Activation function configuration
                 activation_function='relu',  # Options: 'relu', 'swish', 'gelu', 'silu'
                 activation_beta=1.0,  # Beta parameter for Swish activation
+                # Encoder configuration for B1 model
+                encoder_name='timm-efficientnet-b1',
             ),
             multiscale=MultiScaleConfig(
                 enabled=False,
@@ -2560,7 +2563,7 @@ class ConfigManager:
                 onnx_model=None,
                 # Pre-trained model configuration
                 use_pretrained_unet=True,
-                pretrained_weights_path="ext_extractor/2020-09-23a.pth",
+                pretrained_weights_path="ext_extractor/best_model_b1_0.8833.pth",  # Using B1 model
                 freeze_pretrained_weights=True,
                 use_full_image_unet=True,  # Apply UNet to full image first
                 # Refinement modules (disabled for pre-trained model)
@@ -2577,6 +2580,8 @@ class ConfigManager:
                 # Activation function configuration
                 activation_function='relu',  # Options: 'relu', 'swish', 'gelu', 'silu'
                 activation_beta=1.0,  # Beta parameter for Swish activation
+                # Encoder configuration for B1 model
+                encoder_name='timm-efficientnet-b1',
             ),
             multiscale=MultiScaleConfig(
                 enabled=False,
