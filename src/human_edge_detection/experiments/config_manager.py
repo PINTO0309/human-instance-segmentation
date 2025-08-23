@@ -2484,7 +2484,143 @@ class ConfigManager:
                 min_lr=1e-6,
             ),
         ),
-        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware': ExperimentConfig(
+
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware',
+            description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:128x96 (H:W)',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),  # (height, width) - matches dataset's natural aspect ratio
+                mask_size=(128, 96),  # (height, width) - matches dataset's natural aspect ratio
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b0_0.8741", #"ext_extractor/2020-09-23a.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,  # Apply UNet to full image first
+                # Refinement modules (disabled for pre-trained model)
+                use_boundary_refinement=False, # x
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False, # x
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization type is ignored for pre-trained model
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                # Activation function configuration
+                activation_function='relu',  # Options: 'relu', 'swish', 'gelu', 'silu'
+                activation_beta=1.0,  # Beta parameter for Swish activation
+                # Encoder configuration for B1 model
+                encoder_name='timm-efficientnet-b0',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=8,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B0': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware',
+            description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:80x60 (H:W), Mask:160x120 (H:W)',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(80, 60),  # (height, width) - matches dataset's natural aspect ratio
+                mask_size=(160, 120),  # (height, width) - matches dataset's natural aspect ratio
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b0_0.8741.pth",  # Using B0 model
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,  # Apply UNet to full image first
+                # Refinement modules (disabled for pre-trained model)
+                use_boundary_refinement=False, # x
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False, # x
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization type is ignored for pre-trained model
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                # Activation function configuration
+                activation_function='relu',  # Options: 'relu', 'swish', 'gelu', 'silu'
+                activation_beta=1.0,  # Beta parameter for Swish activation
+                # Encoder configuration for B1 model
+                encoder_name='timm-efficientnet-b0',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=8,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B1': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware',
             description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:128x96 (H:W)',
             model=ModelConfig(
@@ -2528,11 +2664,11 @@ class ConfigManager:
                 visualize=True
             ),
             data=DataConfig(
-                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
-                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4,
+                num_workers=8,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
                 use_roi_comparison=False,
@@ -2551,7 +2687,7 @@ class ConfigManager:
                 min_lr=1e-6,
             ),
         ),
-        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware': ExperimentConfig(
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware',
             description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:80x60 (H:W), Mask:160x120 (H:W)',
             model=ModelConfig(
@@ -2595,11 +2731,11 @@ class ConfigManager:
                 visualize=True
             ),
             data=DataConfig(
-                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
-                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
-                num_workers=4,
+                num_workers=8,
                 use_augmentation=True,
                 use_heavy_augmentation=True,
                 use_roi_comparison=False,
