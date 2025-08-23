@@ -173,7 +173,7 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
 
 
 def run_experiment(config_name: str, additional_args: List[str] = None, resume_checkpoint: str = None,
-                  teacher_checkpoint: str = None, distillation_params: dict = None) -> Dict:
+                  teacher_checkpoint: str = None, distillation_params: dict = None, mixed_precision: bool = False) -> Dict:
     """Run a single experiment with given configuration.
 
     Args:
@@ -212,6 +212,9 @@ def run_experiment(config_name: str, additional_args: List[str] = None, resume_c
             cmd.extend(['--distillation_temperature', str(distillation_params['temperature'])])
         if 'alpha' in distillation_params:
             cmd.extend(['--distillation_alpha', str(distillation_params['alpha'])])
+    
+    if mixed_precision:
+        cmd.append('--mixed_precision')
 
     if additional_args:
         cmd.extend(additional_args)
@@ -447,6 +450,8 @@ def main():
                         help='Temperature for distillation (default: from config)')
     parser.add_argument('--distillation_alpha', type=float, default=None,
                         help='Alpha weight for distillation loss (default: from config)')
+    parser.add_argument('--mixed_precision', action='store_true',
+                        help='Enable mixed precision training for faster training and lower memory usage')
 
     args = parser.parse_args()
     
@@ -540,7 +545,8 @@ def main():
                 additional_args, 
                 resume_checkpoint=args.resume,
                 teacher_checkpoint=args.teacher_checkpoint,
-                distillation_params=distillation_params if distillation_params else None
+                distillation_params=distillation_params if distillation_params else None,
+                mixed_precision=args.mixed_precision
             )
             results.append(result)
 

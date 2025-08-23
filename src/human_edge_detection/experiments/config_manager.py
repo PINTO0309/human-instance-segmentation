@@ -2486,7 +2486,7 @@ class ConfigManager:
         ),
 
         'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0': ExperimentConfig(
-            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware',
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0',
             description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:128x96 (H:W)',
             model=ModelConfig(
                 use_rgb_hierarchical=True,
@@ -2553,7 +2553,7 @@ class ConfigManager:
             ),
         ),
         'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B0': ExperimentConfig(
-            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware',
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B0',
             description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:80x60 (H:W), Mask:160x120 (H:W)',
             model=ModelConfig(
                 use_rgb_hierarchical=True,
@@ -2621,7 +2621,7 @@ class ConfigManager:
         ),
 
         'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B1': ExperimentConfig(
-            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware',
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B1',
             description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48 (H:W), Mask:128x96 (H:W)',
             model=ModelConfig(
                 use_rgb_hierarchical=True,
@@ -2688,7 +2688,7 @@ class ConfigManager:
             ),
         ),
         'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1': ExperimentConfig(
-            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware',
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1',
             description='RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:80x60 (H:W), Mask:160x120 (H:W)',
             model=ModelConfig(
                 use_rgb_hierarchical=True,

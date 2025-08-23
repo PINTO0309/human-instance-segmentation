@@ -916,6 +916,8 @@ def main():
     parser.add_argument('--teacher_checkpoint', type=str, help='Path to teacher model checkpoint for distillation')
     parser.add_argument('--distillation_temperature', type=float, help='Temperature for distillation')
     parser.add_argument('--distillation_alpha', type=float, help='Alpha weight for distillation (0-1)')
+    parser.add_argument('--mixed_precision', action='store_true', 
+                       help='Enable mixed precision training for faster training and lower memory usage')
 
     args = parser.parse_args()
 
@@ -955,6 +957,11 @@ def main():
     if args.batch_size is not None:
         config.training.batch_size = args.batch_size
         print(f"Overriding batch size: {args.batch_size}")
+    
+    # Override mixed precision if provided
+    if args.mixed_precision:
+        config.training.mixed_precision = True
+        print(f"Enabling mixed precision training")
 
     # Create experiment directories
     exp_dirs = create_experiment_dirs(config)
