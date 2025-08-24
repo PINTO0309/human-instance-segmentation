@@ -12,11 +12,11 @@ from .attention_modules import ChannelAttentionModule, SpatialAttentionModule
 
 def get_activation_function(activation_name: str = 'relu', activation_beta: float = 1.0):
     """Get activation function by name.
-    
+
     Args:
         activation_name: Name of activation function ('relu', 'swish', 'gelu', 'silu')
         activation_beta: Beta parameter for Swish activation
-        
+
     Returns:
         Activation function module
     """
@@ -1729,7 +1729,7 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
         self.in_channels = in_channels
         self.classes = classes
         self.encoder_name = encoder_name
-        
+
         # Auto-detect normalization based on model type
         # B0, B1, B7 distilled models use ImageNet normalization
         # Original 2020-09-23a.pth uses [0.5, 0.5, 0.5] normalization
@@ -1788,14 +1788,14 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
             # Detect and handle different prefix patterns
             # Common prefixes: 'model.', 'unet.', or no prefix
             sample_key = list(state_dict.keys())[0] if state_dict else ""
-            
+
             # Determine the prefix to remove
             prefix_to_remove = ""
             if sample_key.startswith("model."):
                 prefix_to_remove = "model."
             elif sample_key.startswith("unet."):
                 prefix_to_remove = "unet."
-            
+
             # Apply corrections to adjust prefixes
             new_state_dict = {}
             for key, value in state_dict.items():
@@ -1808,7 +1808,7 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
             # B0: ~358, B1: ~506, B3: ~572, B7: ~1198
             encoder_keys = [k for k in new_state_dict.keys() if 'encoder' in k]
             num_encoder_keys = len(encoder_keys)
-            
+
             # Estimate model size from encoder keys
             if num_encoder_keys < 400:
                 detected_model = "B0"
@@ -1818,7 +1818,7 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
                 detected_model = "B3"
             else:
                 detected_model = "B7 or larger"
-            
+
             # Extract expected model from encoder_name
             if "b0" in encoder_name.lower():
                 expected_model = "B0"
@@ -1830,7 +1830,7 @@ class PreTrainedPeopleSegmentationUNet(nn.Module):
                 expected_model = "B7 or larger"
             else:
                 expected_model = "Unknown"
-            
+
             # Check compatibility
             if detected_model != expected_model and expected_model != "Unknown":
                 print(f"Warning: Detected {detected_model} weights but encoder is {encoder_name}")
@@ -1958,8 +1958,8 @@ class PreTrainedPeopleSegmentationUNetWrapper(nn.Module):
         # Channel 0: background (negative weight to invert person mask)
         # Channel 1: foreground (positive weight to keep person mask)
         with torch.no_grad():
-            self.output_conv.weight.data[0, 0, 0, 0] = -1.0  # Channel 0: -input (background)
-            self.output_conv.weight.data[1, 0, 0, 0] = 1.0   # Channel 1: +input (foreground)
+            self.output_conv.weight.data[0, 0, 0, 0] = 1.0  # Channel 0: +input (background)
+            self.output_conv.weight.data[1, 0, 0, 0] = -1.0   # Channel 1: -input (foreground)
             self.output_conv.bias.data.zero_()  # Zero bias
 
     def forward(self, x):
