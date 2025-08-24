@@ -423,7 +423,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
         print(f"Loading teacher model from {config.distillation.teacher_checkpoint}")
         try:
             checkpoint = torch.load(config.distillation.teacher_checkpoint, map_location=device)
-            
+
             # Check if checkpoint needs key remapping (old structure without wrapper)
             state_dict = checkpoint['model_state_dict']
             if 'pretrained_unet.norm_mean' in state_dict:
@@ -454,7 +454,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                     else:
                         # Key doesn't exist in model (might be from older version)
                         pass
-                
+
                 # Try loading with strict=False to handle missing keys
                 incompatible = teacher_model.load_state_dict(filtered_state_dict, strict=False)
                 if incompatible.missing_keys:
@@ -478,7 +478,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                     else:
                         # Key doesn't exist in model
                         pass
-                
+
                 # Try loading with strict=False to handle missing keys
                 incompatible = teacher_model.load_state_dict(filtered_state_dict, strict=False)
                 if incompatible.missing_keys:
@@ -488,7 +488,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                             print(f"  - {key}")
                 if incompatible.unexpected_keys:
                     print(f"Warning: Unexpected keys in teacher checkpoint: {incompatible.unexpected_keys[:5]}...")
-            
+
             # Fix randomly initialized output_conv in teacher if it wasn't loaded
             if hasattr(teacher_model, 'pretrained_unet') and hasattr(teacher_model.pretrained_unet, 'output_conv'):
                 output_conv_key = 'pretrained_unet.output_conv.weight'
@@ -503,7 +503,7 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
                         teacher_model.pretrained_unet.output_conv.weight[1, 0] = 1.0
                         # Zero bias
                         teacher_model.pretrained_unet.output_conv.bias.zero_()
-            
+
             teacher_model = teacher_model.to(device)
             print(f"Successfully loaded teacher model (epoch {checkpoint.get('epoch', 'unknown')})")
         except Exception as e:
@@ -916,7 +916,7 @@ def main():
     parser.add_argument('--teacher_checkpoint', type=str, help='Path to teacher model checkpoint for distillation')
     parser.add_argument('--distillation_temperature', type=float, help='Temperature for distillation')
     parser.add_argument('--distillation_alpha', type=float, help='Alpha weight for distillation (0-1)')
-    parser.add_argument('--mixed_precision', action='store_true', 
+    parser.add_argument('--mixed_precision', action='store_true',
                        help='Enable mixed precision training for faster training and lower memory usage')
 
     args = parser.parse_args()
@@ -957,7 +957,7 @@ def main():
     if args.batch_size is not None:
         config.training.batch_size = args.batch_size
         print(f"Overriding batch size: {args.batch_size}")
-    
+
     # Override mixed precision if provided
     if args.mixed_precision:
         config.training.mixed_precision = True
@@ -1227,17 +1227,17 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_miou = checkpoint.get('best_miou', 0)
-        
+
         # Fix output_conv weights for PreTrainedPeopleSegmentationUNetWrapper
         # This ensures consistent interpretation of channels after resume
         if hasattr(model_to_load, 'pretrained_unet') and hasattr(model_to_load.pretrained_unet, 'output_conv'):
             print("Fixing pretrained_unet.output_conv weights for consistent channel interpretation...")
             with torch.no_grad():
-                model_to_load.pretrained_unet.output_conv.weight.data[0, 0, 0, 0] = -1.0  # Channel 0: background
-                model_to_load.pretrained_unet.output_conv.weight.data[1, 0, 0, 0] = 1.0   # Channel 1: foreground
+                model_to_load.pretrained_unet.output_conv.weight.data[0, 0, 0, 0] = 1.0  # Channel 0: background
+                model_to_load.pretrained_unet.output_conv.weight.data[1, 0, 0, 0] = -1.0   # Channel 1: foreground
                 model_to_load.pretrained_unet.output_conv.bias.data.zero_()
-            print("  Channel 0 (background): -1.0")
-            print("  Channel 1 (foreground): +1.0")
+            print("  Channel 0 (background): +1.0")
+            print("  Channel 1 (foreground): -1.0")
 
         if scheduler and 'scheduler_state_dict' in checkpoint:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -1372,14 +1372,14 @@ def main():
     # Setup staged training if enabled (check both staged_training and distillation config)
     staged_training_enabled = False
     stages = []
-    
+
     # Check for encoder_only_epochs in distillation config (priority)
     if config.distillation.enabled and hasattr(config.distillation, 'encoder_only_epochs') and config.distillation.encoder_only_epochs > 0:
         from src.human_edge_detection.staged_training import (
             StageConfig, get_current_stage, apply_stage_freezing, update_optimizer_for_stage
         )
         staged_training_enabled = True
-        
+
         # Create stages based on distillation config
         stages = [
             StageConfig(
@@ -1402,14 +1402,14 @@ def main():
             )
         ]
         print(f"\nStaged training enabled via distillation config: {config.distillation.encoder_only_epochs} encoder-only epochs")
-        
+
     # Fallback to explicit staged_training config if exists
     elif hasattr(config, 'staged_training') and config.staged_training.get('enabled', False):
         from src.human_edge_detection.staged_training import (
             StageConfig, get_current_stage, apply_stage_freezing, update_optimizer_for_stage
         )
         staged_training_enabled = True
-        
+
         # Parse stage configurations
         for stage_dict in config.staged_training.get('stages', []):
             stages.append(StageConfig(
@@ -1422,10 +1422,10 @@ def main():
                 learning_rate_scale=stage_dict.get('learning_rate_scale', 1.0)
             ))
         print(f"\nStaged training enabled with {len(stages)} stages")
-    
+
     if staged_training_enabled:
         current_stage_name = None
-    
+
     # Training loop
     print(f"\nStarting training for {config.training.num_epochs} epochs...")
 
@@ -1438,15 +1438,15 @@ def main():
                     print(f"\n{'='*60}")
                     print(f"Entering training stage: {stage.name} (epoch {epoch})")
                     print(f"{'='*60}")
-                    
+
                     # Apply freezing configuration
                     apply_stage_freezing(model, stage, verbose=True)
-                    
+
                     # Update optimizer with new parameters
                     optimizer = update_optimizer_for_stage(
                         optimizer, model, stage, config.training.learning_rate
                     )
-                    
+
                     # Update scheduler if needed
                     if scheduler:
                         # Recreate scheduler with new optimizer
@@ -1463,9 +1463,9 @@ def main():
                                 T_mult=config.training.T_mult,
                                 eta_min=config.training.eta_min_restart
                             )
-                    
+
                     current_stage_name = stage.name
-            
+
             # Train
             train_metrics = train_epoch(
                 model, train_loader, loss_fn, optimizer, device,
