@@ -1954,9 +1954,13 @@ class PreTrainedPeopleSegmentationUNetWrapper(nn.Module):
         # (background vs foreground for hierarchical segmentation)
         self.output_conv = nn.Conv2d(1, 2, kernel_size=1)
 
-        # Initialize output conv weights
-        nn.init.xavier_uniform_(self.output_conv.weight)
-        nn.init.zeros_(self.output_conv.bias)
+        # Initialize output conv weights with fixed values for consistent behavior
+        # Channel 0: background (negative weight to invert person mask)
+        # Channel 1: foreground (positive weight to keep person mask)
+        with torch.no_grad():
+            self.output_conv.weight.data[0, 0, 0, 0] = -1.0  # Channel 0: -input (background)
+            self.output_conv.weight.data[1, 0, 0, 0] = 1.0   # Channel 1: +input (foreground)
+            self.output_conv.bias.data.zero_()  # Zero bias
 
     def forward(self, x):
         """Forward pass compatible with EnhancedUNet interface.
