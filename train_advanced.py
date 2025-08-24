@@ -1227,6 +1227,17 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         best_miou = checkpoint.get('best_miou', 0)
+        
+        # Fix output_conv weights for PreTrainedPeopleSegmentationUNetWrapper
+        # This ensures consistent interpretation of channels after resume
+        if hasattr(model_to_load, 'pretrained_unet') and hasattr(model_to_load.pretrained_unet, 'output_conv'):
+            print("Fixing pretrained_unet.output_conv weights for consistent channel interpretation...")
+            with torch.no_grad():
+                model_to_load.pretrained_unet.output_conv.weight.data[0, 0, 0, 0] = -1.0  # Channel 0: background
+                model_to_load.pretrained_unet.output_conv.weight.data[1, 0, 0, 0] = 1.0   # Channel 1: foreground
+                model_to_load.pretrained_unet.output_conv.bias.data.zero_()
+            print("  Channel 0 (background): -1.0")
+            print("  Channel 1 (foreground): +1.0")
 
         if scheduler and 'scheduler_state_dict' in checkpoint:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
