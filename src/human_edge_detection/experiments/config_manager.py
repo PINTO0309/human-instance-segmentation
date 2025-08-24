@@ -2497,7 +2497,7 @@ class ConfigManager:
                 onnx_model=None,
                 # Pre-trained model configuration
                 use_pretrained_unet=True,
-                pretrained_weights_path="ext_extractor/best_model_b0_0.8741", #"ext_extractor/2020-09-23a.pth",
+                pretrained_weights_path="ext_extractor/best_model_b0_0.8741.pth", #"ext_extractor/2020-09-23a.pth",
                 freeze_pretrained_weights=True,
                 use_full_image_unet=True,  # Apply UNet to full image first
                 # Refinement modules (disabled for pre-trained model)
