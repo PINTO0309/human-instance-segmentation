@@ -3190,8 +3190,8 @@ class ConfigManager:
                 freeze_pretrained_weights=True,
                 use_full_image_unet=True,
                 # Enhanced hierarchical head configuration
-                hierarchical_base_channels=72,
-                hierarchical_depth=3,
+                hierarchical_base_channels=96,
+                hierarchical_depth=4,
                 # Refinement modules
                 use_boundary_refinement=False,
                 use_boundary_aware_loss=True,
@@ -3259,8 +3259,8 @@ class ConfigManager:
                 freeze_pretrained_weights=True,
                 use_full_image_unet=True,
                 # Enhanced hierarchical head configuration
-                hierarchical_base_channels=72,
-                hierarchical_depth=3,
+                hierarchical_base_channels=96,
+                hierarchical_depth=4,
                 # Refinement modules
                 use_boundary_refinement=False,
                 use_boundary_aware_loss=True,
