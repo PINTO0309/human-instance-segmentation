@@ -2942,8 +2942,8 @@ class ConfigManager:
                 visualize=True
             ),
             data=DataConfig(
-                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
-                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
                 data_stats="data_analyze_full.json",
                 roi_padding=0.0,
                 num_workers=32,
