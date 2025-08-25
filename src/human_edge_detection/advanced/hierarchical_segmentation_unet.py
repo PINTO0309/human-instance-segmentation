@@ -679,7 +679,9 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         dropout_rate: float = 0.1,
         use_attention_module: bool = False,
         activation_function: str = 'relu',
-        activation_beta: float = 1.0
+        activation_beta: float = 1.0,
+        hierarchical_base_channels: int = 96,
+        hierarchical_depth: int = 3
     ):
         """Initialize hierarchical segmentation head V2.
 
@@ -690,6 +692,10 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
             mask_size: Output mask size - int for square or (height, width) tuple for non-square
             dropout_rate: Dropout rate for regularization
             use_attention_module: Whether to use attention modules
+            activation_function: Activation function to use
+            activation_beta: Beta parameter for activation function
+            hierarchical_base_channels: Base channels for EnhancedUNet (default 96, can increase to 128)
+            hierarchical_depth: Depth of EnhancedUNet (default 3, can increase to 4)
         """
         super().__init__()
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
@@ -717,7 +723,7 @@ class HierarchicalSegmentationHeadUNetV2(nn.Module):
         )
 
         # Branch 1: Background vs Foreground using Enhanced UNet
-        self.bg_vs_fg_unet = EnhancedUNet(mid_channels, base_channels=96, depth=3)
+        self.bg_vs_fg_unet = EnhancedUNet(mid_channels, base_channels=hierarchical_base_channels, depth=hierarchical_depth)
 
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(
@@ -1209,7 +1215,9 @@ class HierarchicalSegmentationHeadUNetV3(nn.Module):
         in_channels: int,
         mid_channels: int = 256,
         num_classes: int = 3,
-        mask_size: int = 56
+        mask_size: int = 56,
+        hierarchical_base_channels: int = 96,
+        hierarchical_depth: int = 3
     ):
         """Initialize hierarchical segmentation head V3."""
         super().__init__()
@@ -1228,7 +1236,7 @@ class HierarchicalSegmentationHeadUNetV3(nn.Module):
         )
 
         # Branch 1: Background vs Foreground using Enhanced UNet
-        self.bg_vs_fg_unet = EnhancedUNet(mid_channels, base_channels=96, depth=3)
+        self.bg_vs_fg_unet = EnhancedUNet(mid_channels, base_channels=hierarchical_base_channels, depth=hierarchical_depth)
 
         # Upsampling to match mask_size
         self.upsample_bg_fg = nn.Sequential(

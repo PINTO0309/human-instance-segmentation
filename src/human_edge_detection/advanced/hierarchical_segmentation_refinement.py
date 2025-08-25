@@ -445,7 +445,9 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         normalization_type: str = 'layernorm2d',
         normalization_groups: int = 8,
         activation_function: str = 'relu',
-        activation_beta: float = 1.0
+        activation_beta: float = 1.0,
+        hierarchical_base_channels: int = 96,
+        hierarchical_depth: int = 3
     ):
         """Initialize extended hierarchical segmentation head V2."""
         super().__init__()
@@ -457,7 +459,6 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
 
         # Import EnhancedUNet which now supports normalization
         from .hierarchical_segmentation_unet import EnhancedUNet
-        base_channels = 64  # Keep consistent base channels
 
         assert num_classes == 3, "Hierarchical model designed for 3 classes"
         self.num_classes = num_classes
@@ -488,8 +489,8 @@ class ExtendedHierarchicalSegmentationHeadUNetV2(nn.Module):
         # Branch 1: Background vs Foreground using Enhanced UNet
         self.bg_vs_fg_unet = EnhancedUNet(
             mid_channels,
-            base_channels=base_channels,
-            depth=3,
+            base_channels=hierarchical_base_channels,
+            depth=hierarchical_depth,
             normalization_type=normalization_type,
             normalization_groups=normalization_groups,
             activation_function=activation_function,
@@ -627,6 +628,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         # Activation function configuration
         activation_function: str = 'relu',
         activation_beta: float = 1.0,
+        # Hierarchical head configuration
+        hierarchical_base_channels: int = 96,
+        hierarchical_depth: int = 3,
     ):
         """Initialize refined hierarchical segmentation head.
 
@@ -644,6 +648,8 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
         """
         super().__init__()
 
+        # Use provided hierarchical parameters
+        
         # Use extended version that exposes shared features
         self.base_head = ExtendedHierarchicalSegmentationHeadUNetV2(
             in_channels=in_channels,
@@ -654,7 +660,9 @@ class RefinedHierarchicalSegmentationHead(nn.Module):
             normalization_type=normalization_type,
             normalization_groups=normalization_groups,
             activation_function=activation_function,
-            activation_beta=activation_beta
+            activation_beta=activation_beta,
+            hierarchical_base_channels=hierarchical_base_channels,
+            hierarchical_depth=hierarchical_depth
         )
 
         # Support non-square mask sizes

@@ -185,6 +185,9 @@ class ModelConfig:
     freeze_pretrained_weights: bool = False  # Freeze pre-trained weights during training
     use_full_image_unet: bool = False  # Apply UNet to full image before ROI extraction
     encoder_name: str = 'timm-efficientnet-b3'  # Encoder architecture for UNet models
+    # Hierarchical segmentation head configuration
+    hierarchical_base_channels: int = 64  # Base channels for EnhancedUNet in hierarchical head (default 64, can increase to 96, 128)
+    hierarchical_depth: int = 3  # Depth of EnhancedUNet in hierarchical head (default 3, can increase to 4)
 
 
 @dataclass
@@ -2890,6 +2893,426 @@ class ConfigManager:
             ),
         ),
 
+        ##################################################################################################
+        # Enhanced hierarchical configurations with increased base_channels and depth
+        ##################################################################################################
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0_enhanced': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0_enhanced',
+            description='Enhanced RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48, Mask:128x96',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),
+                mask_size=(128, 96),
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b0_0.8741.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,
+                # Enhanced hierarchical head configuration
+                hierarchical_base_channels=72,
+                hierarchical_depth=3,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization and activation
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                activation_function='relu',
+                activation_beta=1.0,
+                # Encoder configuration
+                encoder_name='timm-efficientnet-b0',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd_500.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd_100.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=2,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B0_enhanced': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B0_enhanced',
+            description='Enhanced RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:80x60, Mask:160x120',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(80, 60),
+                mask_size=(160, 120),
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b0_0.8741.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,
+                # Enhanced hierarchical head configuration
+                hierarchical_base_channels=72,
+                hierarchical_depth=3,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization and activation
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                activation_function='relu',
+                activation_beta=1.0,
+                # Encoder configuration
+                encoder_name='timm-efficientnet-b0',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=32,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B1_enhanced': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B1_enhanced',
+            description='Enhanced RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48, Mask:128x96',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),
+                mask_size=(128, 96),
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b1_0.8833.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,
+                # Enhanced hierarchical head configuration
+                hierarchical_base_channels=72,
+                hierarchical_depth=3,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization and activation
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                activation_function='relu',
+                activation_beta=1.0,
+                # Encoder configuration
+                encoder_name='timm-efficientnet-b1',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=32,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1_enhanced': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1_enhanced',
+            description='Enhanced RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:80x60, Mask:160x120',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(80, 60),
+                mask_size=(160, 120),
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b1_0.8833.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,
+                # Enhanced hierarchical head configuration
+                hierarchical_base_channels=72,
+                hierarchical_depth=3,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization and activation
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                activation_function='relu',
+                activation_beta=1.0,
+                # Encoder configuration
+                encoder_name='timm-efficientnet-b1',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=32,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B7_enhanced': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B7_enhanced',
+            description='Enhanced RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:64x48, Mask:128x96',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(64, 48),
+                mask_size=(128, 96),
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b7_0.9009.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,
+                # Enhanced hierarchical head configuration
+                hierarchical_base_channels=72,
+                hierarchical_depth=3,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization and activation
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                activation_function='relu',
+                activation_beta=1.0,
+                # Encoder configuration
+                encoder_name='timm-efficientnet-b7',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=32,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+        'rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B7_enhanced': ExperimentConfig(
+            name='rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B7_enhanced',
+            description='Enhanced RGB Hierarchical UNet V2 with Full-Image Pre-trained People Segmentation Model - ROI:80x60, Mask:160x120',
+            model=ModelConfig(
+                use_rgb_hierarchical=True,
+                use_external_features=False,
+                use_attention_module=True,
+                roi_size=(80, 60),
+                mask_size=(160, 120),
+                onnx_model=None,
+                # Pre-trained model configuration
+                use_pretrained_unet=True,
+                pretrained_weights_path="ext_extractor/best_model_b7_0.9009.pth",
+                freeze_pretrained_weights=True,
+                use_full_image_unet=True,
+                # Enhanced hierarchical head configuration
+                hierarchical_base_channels=72,
+                hierarchical_depth=3,
+                # Refinement modules
+                use_boundary_refinement=False,
+                use_boundary_aware_loss=True,
+                use_contour_detection=True,
+                use_active_contour_loss=False,
+                use_distance_transform=True,
+                use_progressive_upsampling=False,
+                use_subpixel_conv=False,
+                # Normalization and activation
+                normalization_type='batchnorm',
+                normalization_groups=8,
+                activation_function='relu',
+                activation_beta=1.0,
+                # Encoder configuration
+                encoder_name='timm-efficientnet-b7',
+            ),
+            multiscale=MultiScaleConfig(
+                enabled=False,
+                target_layers=None,
+                fusion_method='concat'
+            ),
+            auxiliary_task=AuxiliaryTaskConfig(
+                enabled=True,
+                weight=0.3,
+                mid_channels=128,
+                visualize=True
+            ),
+            data=DataConfig(
+                train_annotation="data/annotations/instances_train2017_person_only_no_crowd.json",
+                val_annotation="data/annotations/instances_val2017_person_only_no_crowd.json",
+                data_stats="data_analyze_full.json",
+                roi_padding=0.0,
+                num_workers=32,
+                use_augmentation=True,
+                use_heavy_augmentation=True,
+                use_roi_comparison=False,
+                use_edge_visualize=False,
+            ),
+            training=TrainingConfig(
+                learning_rate=1e-4,
+                warmup_epochs=5,
+                scheduler='cosine',
+                num_epochs=100,
+                batch_size=2,
+                gradient_clip=1.0,
+                dice_weight=1.0,
+                ce_weight=1.0,
+                weight_decay=0.01,
+                min_lr=1e-6,
+            ),
+        ),
+
         # Knowledge distillation configuration - UNet encoder only
         'rgb_hierarchical_unet_v2_distillation_b0_from_b3': ExperimentConfig(
             name='rgb_hierarchical_unet_v2_distillation_b0_from_b3',
@@ -3984,7 +4407,6 @@ class ConfigManager:
                 min_lr=1e-6,
             ),
         ),
-
 
     }
 

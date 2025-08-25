@@ -125,12 +125,17 @@ class PretrainedUNetGuidedSegmentationHead(nn.Module):
 
         Args:
             features: Processed features from ROI (N, C, H, W)
-            bg_fg_mask: Pre-trained UNet output for each ROI (N, 1, H, W)
+            bg_fg_mask: Pre-trained UNet output for each ROI (N, 1 or 2, H, W)
 
         Returns:
             final_logits: Direct 3-class predictions
             aux_outputs: Auxiliary outputs
         """
+        # Handle both 1-channel and 2-channel bg_fg_mask
+        if bg_fg_mask.shape[1] == 2:
+            # If 2 channels (background, foreground), use the foreground channel
+            bg_fg_mask = bg_fg_mask[:, 1:2, :, :]  # Extract foreground channel
+        
         # Apply sigmoid to bg_fg_mask to get foreground probability
         # Note: The pre-trained UNet outputs logits where x > 0 indicates foreground.
         # While x > 0 gives the same binary result as sigmoid(x) > 0.5, we need
@@ -597,6 +602,10 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
             normalization_groups: Number of groups for group normalization
         """
         super().__init__()
+        
+        # Extract hierarchical head configuration from kwargs
+        hierarchical_base_channels = kwargs.get('hierarchical_base_channels', 96)
+        hierarchical_depth = kwargs.get('hierarchical_depth', 3)
 
         # Handle both square and non-square sizes
         if isinstance(roi_size, int):
@@ -700,6 +709,8 @@ class HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet(nn.Module):
                 normalization_groups=normalization_groups,
                 activation_function=activation_function,
                 activation_beta=activation_beta,
+                hierarchical_base_channels=hierarchical_base_channels,
+                hierarchical_depth=hierarchical_depth,
             )
         else:
             # Use standard segmentation head that directly uses pre-trained UNet output

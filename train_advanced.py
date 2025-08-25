@@ -153,7 +153,10 @@ def build_model(config: ExperimentConfig, device: str) -> Tuple[nn.Module, Optio
             pretrained_weights_path=getattr(config.model, 'pretrained_weights_path', ''),
             freeze_pretrained_weights=getattr(config.model, 'freeze_pretrained_weights', False),
             use_full_image_unet=getattr(config.model, 'use_full_image_unet', False),
-            encoder_name=encoder_name  # Pass encoder name
+            encoder_name=encoder_name,  # Pass encoder name
+            # Hierarchical segmentation head configuration
+            hierarchical_base_channels=getattr(config.model, 'hierarchical_base_channels', 96),
+            hierarchical_depth=getattr(config.model, 'hierarchical_depth', 3)
         )
 
         feature_extractor = None  # RGB model doesn't need external feature extractor
