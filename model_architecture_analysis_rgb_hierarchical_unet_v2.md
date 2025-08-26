@@ -48,7 +48,7 @@ The architecture is designed for high-precision person instance segmentation wit
 | **Output Masks** | 128×96×3 | Per-ROI segmentation with 3 classes |
 | **Classes** | 3 | Background, Target Instance, Non-target Instances |
 | **Activation** | ReLU | Standard activation across all variants |
-| **Normalization** | BatchNorm | Despite config showing 'batchnorm', implementation uses LayerNorm2d |
+| **Normalization** | BatchNorm | Despite config showing 'batchnorm' |
 
 ---
 
