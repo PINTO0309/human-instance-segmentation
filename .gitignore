@@ -17,3 +17,4 @@ experiment_comparison.png
 experiment_runs.json
 experiment_log.txt
 *.pth
+test_outputs/

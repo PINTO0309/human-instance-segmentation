@@ -134,7 +134,7 @@ class AdvancedONNXExporter:
                 dynamic_axes={
                     'features': {0: 'batch_size'},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
+                    'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)}
                 },
                 opset_version=opset_version,
                 do_constant_folding=True,
@@ -247,7 +247,7 @@ class AdvancedONNXExporter:
                 dynamic_axes={
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
+                    'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)}
                 },
                 opset_version=opset_version,
                 do_constant_folding=True,
@@ -293,7 +293,7 @@ class AdvancedONNXExporter:
 
         is_rgb_hierarchical = (
             hasattr(model_to_check, 'rgb_extractor') or
-            model_to_check.__class__.__name__ in ['HierarchicalRGBSegmentationModel', 'MultiScaleRGBSegmentationModel'] or
+            model_to_check.__class__.__name__ in ['HierarchicalRGBSegmentationModel', 'MultiScaleRGBSegmentationModel', 'HierarchicalRGBSegmentationModelWithFullImagePretrainedUNet'] or
             (hasattr(model_to_check, 'segmentation_head') and
              hasattr(model_to_check.segmentation_head, '__class__') and
              'HierarchicalSegmentationHeadUNetV2' in model_to_check.segmentation_head.__class__.__name__)
@@ -302,7 +302,8 @@ class AdvancedONNXExporter:
         if is_rgb_hierarchical:
             # RGB hierarchical models take images as input
             print("Detected RGB hierarchical model - using image input")
-            dummy_image = torch.randn(batch_size, 3, 640, 640).to(self.device)
+            # Create dummy image in [0, 1] range to match validation pipeline
+            dummy_image = torch.rand(batch_size, 3, 640, 640).to(self.device)
             num_rois = 2
             dummy_rois = torch.zeros(num_rois, 5).to(self.device)
             dummy_rois[:, 0] = torch.arange(num_rois) % batch_size
@@ -345,7 +346,7 @@ class AdvancedONNXExporter:
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)},
+                        'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)},
                         'bg_fg_logits': {0: 'num_rois'},
                         'target_nontarget_logits': {0: 'num_rois'}
                     }
@@ -354,7 +355,7 @@ class AdvancedONNXExporter:
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
+                        'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)}
                     }
 
                 torch.onnx.export(
@@ -567,7 +568,7 @@ class AdvancedONNXExporter:
                 dynamic_axes = {
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
+                    'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)}
                 }
 
             torch.onnx.export(
@@ -787,14 +788,14 @@ class AdvancedONNXExporter:
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rgb_images': {0: 'batch_size'},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
+                    'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)}
                 }
             else:
                 # For standard model
                 dynamic_axes = {
                     **{f'features_{name}': {0: 'batch_size'} for name in sorted(dummy_features.keys())},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois', 2: str(self.mask_height), 3: str(self.mask_width)}
+                    'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)}
                 }
 
             # Export with fixed opset version
