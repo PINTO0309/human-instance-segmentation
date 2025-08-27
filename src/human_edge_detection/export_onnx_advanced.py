@@ -285,11 +285,16 @@ class AdvancedONNXExporter:
         self.model.eval()
 
         # Check if this is an RGB hierarchical model
-        # Check the actual model class or if it's wrapped in MultiTaskSegmentationModel
+        # Check the actual model class or if it's wrapped in MultiTaskSegmentationModel or dilation wrapper
         model_to_check = self.model
         if hasattr(self.model, 'main_head'):
             # If wrapped in MultiTaskSegmentationModel, check the main head
             model_to_check = self.model.main_head
+        elif hasattr(self.model, 'base_model'):
+            # If wrapped with dilation module or other wrapper
+            model_to_check = self.model.base_model
+            if hasattr(model_to_check, 'main_head'):
+                model_to_check = model_to_check.main_head
 
         is_rgb_hierarchical = (
             hasattr(model_to_check, 'rgb_extractor') or

@@ -6,6 +6,8 @@ The output ONNX file follows the same structure as untrained_opt_model.onnx.
 """
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import onnx
 import argparse
 from pathlib import Path
@@ -76,6 +78,105 @@ def get_experiment_config_from_architecture(arch: str, roi_size: tuple, mask_siz
     return defaults.get(arch, defaults['B0'])
 
 
+class MaskDilationModule(nn.Module):
+    """Post-processing module for mask dilation using MaxPool."""
+    
+    def __init__(self, dilation_pixels: int = 1):
+        """Initialize dilation module.
+        
+        Args:
+            dilation_pixels: Number of pixels to dilate (0 means no dilation)
+        """
+        super().__init__()
+        self.dilation_pixels = dilation_pixels
+        
+        if dilation_pixels > 0:
+            # kernel_size = 2 * dilation_pixels + 1 for symmetric dilation
+            kernel_size = 2 * dilation_pixels + 1
+            self.maxpool = nn.MaxPool2d(
+                kernel_size=kernel_size,
+                stride=1,
+                padding=dilation_pixels
+            )
+        else:
+            self.maxpool = None
+    
+    def forward(self, masks: torch.Tensor) -> torch.Tensor:
+        """Apply dilation to masks.
+        
+        Args:
+            masks: Segmentation logits of shape [N, 3, H, W]
+            
+        Returns:
+            Dilated masks of same shape [N, 3, H, W]
+        """
+        if self.maxpool is None or self.dilation_pixels == 0:
+            return masks
+        
+        # Apply softmax to get probabilities
+        probs = F.softmax(masks, dim=1)
+        
+        # Extract target class (class 1) probabilities
+        target_probs = probs[:, 1:2, :, :]  # [N, 1, H, W]
+        
+        # Apply dilation via MaxPool
+        dilated_target = self.maxpool(target_probs)
+        
+        # Update logits for target class where dilation occurred
+        # Increase confidence at dilated pixels
+        mask_diff = (dilated_target - target_probs) > 0.1  # Threshold for new pixels
+        
+        # Boost target class logits at dilated pixels
+        masks = masks.clone()
+        masks[:, 1:2, :, :] = torch.where(
+            mask_diff,
+            masks[:, 1:2, :, :] + 2.0,  # Boost confidence
+            masks[:, 1:2, :, :]
+        )
+        
+        return masks
+
+
+class ModelWithDilation(nn.Module):
+    """Wrapper to combine model with dilation post-processing."""
+    
+    def __init__(self, base_model: nn.Module, dilation_pixels: int = 1):
+        """Initialize model with dilation.
+        
+        Args:
+            base_model: The base segmentation model
+            dilation_pixels: Number of pixels to dilate
+        """
+        super().__init__()
+        self.base_model = base_model
+        self.dilation = MaskDilationModule(dilation_pixels) if dilation_pixels > 0 else None
+    
+    def forward(self, images: torch.Tensor, rois: torch.Tensor):
+        """Forward pass with optional dilation.
+        
+        Args:
+            images: Input images [B, 3, H, W]
+            rois: ROI coordinates [N, 5]
+            
+        Returns:
+            Segmentation masks with optional dilation
+        """
+        # Get base model output
+        output = self.base_model(images, rois)
+        
+        # Handle tuple outputs (with auxiliary)
+        if isinstance(output, tuple):
+            masks = output[0]
+            if self.dilation is not None:
+                masks = self.dilation(masks)
+            return (masks,) + output[1:] if len(output) > 1 else masks
+        else:
+            # Single output
+            if self.dilation is not None:
+                output = self.dilation(output)
+            return output
+
+
 def extract_sizes_from_checkpoint_path(checkpoint_path: str) -> tuple:
     """Extract ROI and mask sizes from checkpoint path if available."""
     path_str = str(checkpoint_path)
@@ -105,7 +206,8 @@ def export_checkpoint_to_onnx(
     architecture: str = None,
     simplify: bool = True,
     opset_version: int = 16,
-    batch_size: int = 1
+    batch_size: int = 1,
+    dilation_pixels: int = 0
 ) -> bool:
     """Export RGB Hierarchical UNet V2 checkpoint to ONNX.
 
@@ -116,6 +218,7 @@ def export_checkpoint_to_onnx(
         simplify: Whether to simplify the ONNX model with onnxsim
         opset_version: ONNX opset version
         batch_size: Batch size for export
+        dilation_pixels: Number of pixels to dilate masks (0 = no dilation)
 
     Returns:
         Success status
@@ -199,6 +302,12 @@ def export_checkpoint_to_onnx(
 
     # Set model to eval mode
     model.eval()
+    
+    # Wrap model with dilation if requested
+    if dilation_pixels > 0:
+        print(f"Adding {dilation_pixels}-pixel dilation post-processing")
+        model = ModelWithDilation(model, dilation_pixels)
+        model.eval()
 
     # Create ONNX exporter
     exporter = AdvancedONNXExporter(
@@ -253,6 +362,7 @@ def export_checkpoint_to_onnx(
             'roi_size': list(roi_size),
             'mask_size': list(mask_size),
             'experiment_config': config_name,
+            'dilation_pixels': dilation_pixels,
             'input_format': {
                 'images': f'[{batch_size}, 3, 640, 640] - RGB input images',
                 'rois': '[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]'
@@ -325,6 +435,12 @@ def main():
         default=1,
         help='Batch size for export (default: 1)'
     )
+    parser.add_argument(
+        '--dilation_pixels',
+        type=int,
+        default=0,
+        help='Number of pixels to dilate masks in post-processing (0 = no dilation, default: 0)'
+    )
 
     args = parser.parse_args()
 
@@ -335,7 +451,8 @@ def main():
         architecture=args.architecture,
         simplify=not args.no_simplify,
         opset_version=args.opset,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        dilation_pixels=args.dilation_pixels
     )
 
     sys.exit(0 if success else 1)
