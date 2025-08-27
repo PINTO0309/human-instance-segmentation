@@ -66,8 +66,8 @@ def parse_args():
     parser.add_argument(
         '--score_threshold',
         type=float,
-        default=0.5,
-        help='Score threshold for mask visualization (default: 0.5)'
+        default=0.01,
+        help='Score threshold for mask visualization (default: 0.01)'
     )
     parser.add_argument(
         '--save_masks',
