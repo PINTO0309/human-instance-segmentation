@@ -61,7 +61,7 @@ def export_untrained_model_to_onnx(config_name: str, output_dir: str = 'experime
 
     # Export to ONNX
     untrained_onnx_path = exp_dirs['checkpoints'] / 'untrained_model.onnx'
-    
+
     # Determine model type
     if config.model.use_hierarchical or any(getattr(config.model, attr, False) for attr in ['use_hierarchical_unet', 'use_hierarchical_unet_v2', 'use_hierarchical_unet_v3', 'use_hierarchical_unet_v4']):
         model_type = 'hierarchical'
@@ -123,7 +123,7 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
     is_multiscale = exp_config.get('multiscale', {}).get('enabled', False)
     is_hierarchical = exp_config.get('model', {}).get('use_hierarchical', False)
     is_class_specific = exp_config.get('model', {}).get('use_class_specific_decoder', False)
-    
+
     # Check for all hierarchical model variants
     model_config = exp_config.get('model', {})
     is_any_hierarchical = (
@@ -134,7 +134,7 @@ def export_model_to_onnx(experiment_name: str, output_dir: str = 'experiments', 
         model_config.get('use_hierarchical_unet_v4', False) or
         model_config.get('use_rgb_hierarchical', False)
     )
-    
+
     if is_any_hierarchical:
         model_type = 'hierarchical'
     elif is_class_specific:
@@ -202,17 +202,17 @@ def run_experiment(config_name: str, additional_args: List[str] = None, resume_c
 
     if resume_checkpoint:
         cmd.extend(['--resume', resume_checkpoint])
-    
+
     # Add distillation parameters
     if teacher_checkpoint:
         cmd.extend(['--teacher_checkpoint', teacher_checkpoint])
-    
+
     if distillation_params:
         if 'temperature' in distillation_params:
             cmd.extend(['--distillation_temperature', str(distillation_params['temperature'])])
         if 'alpha' in distillation_params:
             cmd.extend(['--distillation_alpha', str(distillation_params['alpha'])])
-    
+
     if mixed_precision:
         cmd.append('--mixed_precision')
 
@@ -229,7 +229,7 @@ def run_experiment(config_name: str, additional_args: List[str] = None, resume_c
         import tempfile
         with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.log') as temp_log:
             temp_log_path = temp_log.name
-        
+
         # Run with tee to both display and capture output
         # Properly escape the command for shell
         import shlex
@@ -246,7 +246,7 @@ def run_experiment(config_name: str, additional_args: List[str] = None, resume_c
         # Read captured output
         with open(temp_log_path, 'r') as f:
             full_output = f.read()
-        
+
         # Clean up temp file
         import os
         os.unlink(temp_log_path)
@@ -442,7 +442,7 @@ def main():
                         help='Number of additional epochs to train (adds to checkpoint epoch)')
     parser.add_argument('--total_epochs', type=int, default=None,
                         help='Total epochs to train to (overrides --epochs)')
-    
+
     # Distillation arguments
     parser.add_argument('--teacher_checkpoint', type=str, default=None,
                         help='Path to teacher model checkpoint for distillation')
@@ -454,18 +454,18 @@ def main():
                         help='Enable mixed precision training for faster training and lower memory usage')
 
     args = parser.parse_args()
-    
+
     # Validate arguments
     if args.resume:
         if not Path(args.resume).exists():
             print(f"Error: Checkpoint file not found: {args.resume}")
             return
-        
+
         # When resuming, only run one config
         if len(args.configs) > 1:
             print("Warning: When resuming, only the first config will be used")
             args.configs = [args.configs[0]]
-            
+
     if args.additional_epochs and args.total_epochs:
         print("Error: Cannot specify both --additional_epochs and --total_epochs")
         return
@@ -493,7 +493,7 @@ def main():
             # Load checkpoint to get current epoch and config
             checkpoint = torch.load(args.resume, map_location='cpu')
             current_epoch = checkpoint.get('epoch', -1) + 1  # +1 because epoch is 0-indexed
-            
+
             # Try to get config from checkpoint
             if 'config' in checkpoint:
                 checkpoint_config = checkpoint['config']
@@ -501,7 +501,7 @@ def main():
                 print(f"\nDetected config from checkpoint: {config_name}")
                 # Override the config if it was found
                 args.configs = [config_name]
-            
+
             if args.additional_epochs or args.total_epochs:
                 if args.total_epochs:
                     # Train to total_epochs
@@ -523,7 +523,7 @@ def main():
             if args.export_onnx and not args.resume:
                 print(f"\nExporting untrained model for {config}...")
                 export_untrained_model_to_onnx(config, args.output_dir)
-            
+
             # Prepare additional arguments
             additional_args = [
                 '--config_modifications',
@@ -539,10 +539,10 @@ def main():
                 distillation_params['temperature'] = args.distillation_temperature
             if args.distillation_alpha is not None:
                 distillation_params['alpha'] = args.distillation_alpha
-            
+
             result = run_experiment(
-                config, 
-                additional_args, 
+                config,
+                additional_args,
                 resume_checkpoint=args.resume,
                 teacher_checkpoint=args.teacher_checkpoint,
                 distillation_params=distillation_params if distillation_params else None,
