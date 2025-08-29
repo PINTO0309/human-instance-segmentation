@@ -435,6 +435,11 @@ experiments/*/checkpoints/best_model_*.pth \
 - `export_bilateral_filter.py`: バイラテラルフィルタ後処理のエクスポート
 - `export_edge_smoothing_onnx.py`: エッジスムージングモジュールのエクスポート
 
+### 事前学習済み重み
+https://github.com/PINTO0309/human-instance-segmentation/releases
+
+<img width="747" height="442" alt="image" src="https://github.com/user-attachments/assets/2278a435-355d-4cd3-b307-11b6fcd6b3e4" />
+
 ### 基本的なエクスポートコマンド
 
 ```bash
