@@ -435,6 +435,11 @@ experiments/*/checkpoints/best_model_*.pth \
 - `export_bilateral_filter.py`: Export bilateral filter post-processing
 - `export_edge_smoothing_onnx.py`: Export edge smoothing modules
 
+### Pre-trained weights
+https://github.com/PINTO0309/human-instance-segmentation/releases
+
+<img width="747" height="442" alt="image" src="https://github.com/user-attachments/assets/2278a435-355d-4cd3-b307-11b6fcd6b3e4" />
+
 ### Basic Export Commands
 
 ```bash
