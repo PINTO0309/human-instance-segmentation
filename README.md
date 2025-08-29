@@ -175,6 +175,8 @@ The Human Instance Segmentation model employs a sophisticated hierarchical segme
 
 <details><summary>Click to expand</summary>
 
+<img width="481" height="450" alt="image" src="https://github.com/user-attachments/assets/300efc73-8652-4e80-b75e-3771b102e39d" />
+
 <img alt="best_model_b1_80x60_0 8551" src="https://github.com/user-attachments/assets/4f9a8a19-a81a-4b10-a72a-cdb9e099151d" />
 
 </details>
