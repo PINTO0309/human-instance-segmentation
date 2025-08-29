@@ -199,6 +199,8 @@ EfficientNetベースの教師モデルからの知識蒸留を用いた、人�
    - スムーズな知識転送のための温度進行
    - 複数のデコーダレベルでの特徴マッチング
 
+      <img width="868" height="552" alt="image" src="https://github.com/user-attachments/assets/b8b525e3-acc8-4ed9-a246-b9eb68fd015d" />
+
 3. **ステージ3: インスタンスセグメンテーション学習**
    - 3クラス出力でのROIベース学習
    - インスタンス分離のための距離認識損失
