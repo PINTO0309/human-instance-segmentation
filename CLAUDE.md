@@ -4,134 +4,143 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a human edge detection project that appears to be in its initial stages. The repository contains:
-- COCO dataset images and annotations filtered for person instances (no crowd annotations)
-- YOLOv9 ONNX models for whole body detection with feature extraction capabilities
+Human edge detection using ROI-based lightweight instance segmentation models with hierarchical RGB architecture. The system employs knowledge distillation from larger teacher models (B7) to smaller student models (B0/B1) with temperature progression techniques.
 
-## Repository Structure
+## Key Architecture Components
 
-### Data Organization
-- `data/annotations/`: Contains COCO format JSON files with person-only annotations
-  - Full datasets: `instances_train2017_person_only_no_crowd.json`, `instances_val2017_person_only_no_crowd.json`
-  - Smaller subsets: 100 and 500 image versions for development/testing
-- `data/images/`: Contains train2017 and val2017 image directories from COCO dataset
-- `ext_extractor/`: Contains YOLOv9 ONNX models
-  - `yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx`: Efficient model variant
-  - `yolov9_n_wholebody25_Nx3x640x640_featext_optimized.onnx`: Nano model variant
+### Model Hierarchy
+- **B0, B1, B7 Architectures**: EfficientNet-based encoders with increasing complexity
+  - B0: Most lightweight, ~71MB ONNX
+  - B1: Medium complexity, ~81MB ONNX  
+  - B7: Largest teacher model, ~90MB ONNX
+- **Hierarchical Segmentation**: Two-stage approach
+  1. Pretrained UNet for coarse binary segmentation (frozen during training)
+  2. ROI-based refinement for instance segmentation
+- **Knowledge Distillation**: Temperature progression (10→1) for smooth knowledge transfer
 
-## Implementation Status
+### Core Pipeline
+1. **RGB Input**: Direct processing without separate feature extraction
+2. **Pretrained UNet**: Generates binary foreground/background masks
+3. **ROI Extraction**: Uses COCO bounding boxes
+4. **Instance Segmentation**: 3-class output (background, target, non-target)
+5. **Post-processing**: Optional dilation and edge smoothing
 
-The repository now contains a complete ROI-based instance segmentation training pipeline:
+## Common Development Commands
 
-### Core Components
-- `src/human_edge_detection/dataset.py`: COCO dataset loader with 3-class mask generation
-- `src/human_edge_detection/feature_extractor.py`: YOLO ONNX feature extraction
-- `src/human_edge_detection/model.py`: ROIAlign-based segmentation decoder
-- `src/human_edge_detection/losses.py`: Weighted CrossEntropy + Dice loss
-- `src/human_edge_detection/train.py`: Training pipeline with checkpoint saving
-- `src/human_edge_detection/visualize.py`: Validation visualization generator
-- `src/human_edge_detection/export_onnx.py`: ONNX export functionality
-
-### Main Scripts
-- `main.py`: Main training script
-- `test_pipeline.py`: Component verification script
-- `src/human_edge_detection/analyze_data.py`: Data statistics analyzer
-
-## Common Development Tasks
-
-### Training with minimal dataset (100 images)
+### Training
 ```bash
-uv run python main.py --epochs 10
-```
+# Minimal dataset (100 images) 
+uv run python train_advanced.py --config <config_name> --epochs 10
 
-### Training with different datasets
-```bash
-# 500 images
-uv run python main.py \
-  --train_ann data/annotations/instances_train2017_person_only_no_crowd_500.json \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd_500.json \
-  --data_stats data_analyze.json \
-  --epochs 50
-
-# Full dataset
-uv run python main.py \
+# Full dataset training
+uv run python train_advanced.py \
+  --config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
   --train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
   --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --data_stats data_analyze.json \
   --epochs 100
+
+# Resume from checkpoint
+uv run python train_advanced.py --config <config_name> --resume <checkpoint.pth> --epochs 20
+
+# Knowledge distillation
+uv run python train_distillation_staged.py \
+  --teacher_config <teacher_config> \
+  --student_config <student_config> \
+  --teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth
 ```
 
-### Resume training from checkpoint
+### Validation
 ```bash
-uv run python main.py --resume checkpoints/checkpoint_epoch_0010_640x640_0850.pth --epochs 20
-```
+# Single checkpoint
+uv run python validate_advanced.py <checkpoint.pth>
 
-### Run validation only
-```bash
-# Using main.py
-uv run python main.py --test_only --resume checkpoints/best_model.pth
+# Multiple checkpoints
+uv run python validate_advanced.py "experiments/*/checkpoints/best_model*.pth" --multiple
 
-# Using standalone validation script
-uv run python validate.py checkpoints/best_model.pth
-
-# Validate multiple checkpoints
-uv run python validate.py "checkpoints/*.pth" --multiple --no_visualization
-
-# Validate with custom settings
-uv run python validate.py checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
+# With custom settings
+uv run python validate_advanced.py <checkpoint.pth> \
   --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --data_stats data_analyze_full.json \
   --batch_size 16
 ```
 
-### Export model to ONNX
+### ONNX Export
 ```bash
-uv run python -m src.human_edge_detection.export_onnx \
-  --checkpoint checkpoints/best_model.pth \
-  --output checkpoints/model.onnx
+# Export hierarchical model (auto-detects architecture)
+uv run python export_hierarchical_instance_peopleseg_onnx.py \
+  <checkpoint.pth> \
+  --output <output.onnx> \
+  --image_size 640,640 \
+  --dilation_pixels 0
+
+# Export with 2-pixel dilation
+uv run python export_hierarchical_instance_peopleseg_onnx.py \
+  <checkpoint.pth> \
+  --output <output_dil2.onnx> \
+  --dilation_pixels 2
+
+# Test ONNX inference
+uv run python test_hierarchical_instance_peopleseg_onnx.py \
+  --onnx <model.onnx> \
+  --annotations <annotations.json> \
+  --num_images 5 \
+  --binary_mode  # Optional: visualize binary masks as green overlay
 ```
 
-### Run data analysis
+### Linting and Testing
 ```bash
-# Analyze full dataset
-uv run python src/human_edge_detection/analyze_data_full.py
+# Run linting
+uv run ruff check .
+
+# Run type checking  
+uv run python -m mypy src/
+
+# Test pipeline components
+uv run python test_pipeline.py
 ```
 
-## Model Architecture
+## Configuration System
 
-The model uses an enhanced ROIAlign-based architecture:
-1. YOLOv9 extracts features (1024x80x80) from 640x640 images
-2. DynamicRoIAlign extracts 28x28 features for each ROI
-3. Enhanced decoder with residual blocks and multi-scale fusion produces 56x56 masks:
-   - Progressive upsampling: 28x28 → 56x56 → 112x112 → 56x56
-   - Residual connections for better gradient flow
-   - Multi-scale feature fusion for detail preservation
-4. Output: 3-class segmentation masks
-   - Class 0: Background
-   - Class 1: Target mask (primary instance)
-   - Class 2: Non-target mask (other instances in ROI)
+Configurations in `src/human_edge_detection/experiments/`:
+- Use `ConfigManager.list_configs()` to list available configs
+- Use `ConfigManager.get_config(config_name)` to load config
+- Config naming pattern: `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r{roi}m{mask}_disttrans_contdet_baware_from_{arch}`
 
-**Key improvements**:
-- 2x larger initial ROI size (28x28) for better detail capture
-- Residual blocks for deeper feature extraction
-- Progressive upsampling reduces blocky artifacts
-- LayerNorm2d for ONNX compatibility and stable inference
+Key configuration parameters:
+- ROI sizes: r64x48 (B0), r80x60 (B1), r128x96 (B7)
+- Mask sizes: m128x96 (B0), m160x120 (B1), m256x192 (B7)
+- Loss weights, learning rates, augmentation settings
 
-## Training Details
+## Dataset Structure
 
-- Loss: Weighted CrossEntropy + Dice loss (only for target class)
-- Class weights use separation-aware weights from `data_analyze_full.json` which boost non-target class weight for better instance separation
-- Default weights (from full dataset analysis):
+- **Annotations**: `data/annotations/` - COCO format, person-only, no crowds
+  - Full: `instances_{train|val}2017_person_only_no_crowd.json`
+  - Subsets: 100, 500 image versions for development
+- **Images**: `data/images/{train|val}2017/` - COCO dataset images
+- **Pretrained Models**: `ext_extractor/best_model_{b0|b1|b7}_*.pth`
+
+## Model I/O Specifications
+
+### Training Input
+- **Images**: `[B, 3, H, W]` - RGB in [0, 1] range
+- **ROIs**: `[N, 5]` - `[batch_idx, x1, y1, x2, y2]` normalized coordinates
+
+### ONNX Model
+- **Inputs**:
+  - `images`: `[B, 3, H, W]` - RGB images
+  - `rois`: `[N, 5]` - ROI coordinates
+- **Outputs**:
+  - `masks`: `[N, 3, mask_h, mask_w]` - Segmentation logits
+  - `binary_masks`: `[B, 1, H, W]` - Binary foreground masks
+
+## Key Technical Details
+
+- **3-Class Segmentation**: Background, target instance, non-target instances
+- **ImageNet Normalization**: Applied for pretrained encoders during distillation
+- **Temperature Progression**: Gradual reduction (10→1) during distillation training
+- **Loss Functions**: Weighted CrossEntropy + Dice with separation-aware weights
+- **Class Weights** (from full dataset):
   - Background: 0.538
-  - Target: 0.750
-  - Non-target: 1.712 (boosted by 1.2x for instance separation)
-- Checkpoints saved every epoch with format: `checkpoint_epoch_{epoch:04d}_640x640_{miou:04d}.pth`
-- Validation visualization generated for specific test images every epoch
-- TensorBoard logs saved in `logs/` directory
-
-## Key Design Decisions
-
-1. **3-class formulation**: Explicitly modeling non-target instances helps with attention and instance separation
-2. **ROIAlign approach**: More efficient than full-image segmentation, focuses computation on relevant regions
-3. **Separate feature extraction**: YOLO features are extracted once and reused, making training more efficient
-4. **Log-scaled class weights**: More stable training compared to inverse frequency weights
+  - Target: 0.750  
+  - Non-target: 1.712 (1.2x boosted for better separation)
+- **Checkpoint Format**: `checkpoint_epoch_{epoch:04d}_640x640_{miou:04d}.pth`
+- **Primary Metric**: mIoU (mean Intersection over Union)
