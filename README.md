@@ -2,6 +2,8 @@
 
 A lightweight ROI-based hierarchical instance segmentation system for human detection with knowledge distillation from EfficientNet-based teacher models. The system achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
 
+<img width="640" height="424" alt="image" src="https://github.com/user-attachments/assets/fecb5767-1b48-48a4-bf3d-c3035f57f029" />
+
 ## Table of Contents
 - [Architecture Overview](#architecture-overview)
 - [Architecture Details](#architecture-details)
