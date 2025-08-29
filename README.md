@@ -29,7 +29,7 @@ A lightweight ROI-based hierarchical instance segmentation model for human detec
 
 ## Architecture Overview
 
-The Human Edge Detection system employs a sophisticated hierarchical segmentation approach that combines:
+The Human Instance Segmentation model employs a sophisticated hierarchical segmentation approach that combines:
 - **Two-Stage Architecture**: Coarse binary segmentation followed by ROI-based instance refinement
 - **Multi-Architecture Support**: B0 (lightweight), B1 (balanced), and B7 (high-accuracy) variants
 - **Knowledge Distillation**: Temperature progression (10→1) for efficient knowledge transfer
