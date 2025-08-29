@@ -78,7 +78,7 @@ The Human Edge Detection system employs a sophisticated hierarchical segmentatio
 #### 3. Instance Segmentation Head
 - **Architecture**: Hierarchical UNet V2 with attention modules
 - **Classes**: 3-class segmentation (background, target, non-target)
-- **Features**: 
+- **Features**:
   - Residual blocks for feature refinement
   - Attention gating for focus on person boundaries
   - Distance-aware loss for better instance separation
@@ -98,71 +98,66 @@ The Human Edge Detection system employs a sophisticated hierarchical segmentatio
 ## Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            Input RGB Image                               │
-│                             [B, 3, H, W]                                 │
-└────────────────────────────────┬────────────────────────────────────────┘
-                                  │
-                    ┌─────────────┴─────────────┐
-                    │   Pretrained UNet Module  │
-                    │    (Frozen during training)│
-                    │   Output: Binary FG/BG     │
-                    └─────────────┬─────────────┘
-                                  │
-                    ┌─────────────┴─────────────┐
-                    │                           │
-        ┌───────────▼───────────┐   ┌──────────▼──────────┐
-        │  Binary Mask Output   │   │   Feature Maps      │
-        │   [B, 1, H, W]        │   │   for ROI Pooling   │
-        └───────────┬───────────┘   └──────────┬──────────┘
-                    │                           │
-                    └─────────────┬─────────────┘
-                                  │
-                    ┌─────────────▼─────────────┐
-                    │    ROI Extraction         │
-                    │  (COCO Bounding Boxes)    │
-                    │  Input: [N, 5] ROIs       │
-                    └─────────────┬─────────────┘
-                                  │
-                    ┌─────────────▼─────────────┐
-                    │   Dynamic RoI Align       │
-                    │  Output: [N, C, H_roi,    │
-                    │           W_roi]          │
-                    └─────────────┬─────────────┘
-                                  │
-        ┌─────────────────────────┴─────────────────────────┐
-        │                                                   │
-┌───────▼──────────┐                         ┌─────────────▼────────────┐
-│  EfficientNet    │                         │  Pretrained UNet Mask    │
-│  Encoder         │                         │  (for each ROI)          │
-│  (B0/B1/B7)      │                         │  [N, 1, H_roi, W_roi]    │
-└───────┬──────────┘                         └─────────────┬────────────┘
-        │                                                   │
-        └─────────────────────┬─────────────────────────────┘
-                              │
-                ┌─────────────▼─────────────┐
-                │  Instance Segmentation    │
-                │  Head (UNet V2)           │
-                │  - Attention Modules      │
-                │  - Residual Blocks        │
-                │  - Distance-Aware Loss    │
-                └─────────────┬─────────────┘
-                              │
-                ┌─────────────▼─────────────┐
-                │   3-Class Output Logits   │
-                │   [N, 3, mask_h, mask_w]  │
-                │   Classes:                │
-                │   0: Background           │
-                │   1: Target Instance      │
-                │   2: Non-target Instances │
-                └─────────────┬─────────────┘
-                              │
-                ┌─────────────▼─────────────┐
-                │   Post-Processing         │
-                │   (Optional)              │
-                │   - Mask Dilation         │
-                │   - Edge Smoothing        │
-                └───────────────────────────┘
+             ┌─────────────────────────────┐           ┌──────────────────────────────┐
+             │       Input RGB Image       │           │             ROIs             │
+             │        [B, 3, H, W]         │           │            [N, 5]            │
+             └──────────────┬──────────────┘           │ [batch_idx, x1, y1, x2, y2]  │
+                            │                          │ (0-1 normalized coordinates) │
+                            │                          └──────────────┬───────────────┘
+                            │                                         │
+             ┌──────────────▼──────────────┐                          │
+             │   Pretrained UNet Module    │                          │
+             │    (Frozen during training) │                          │
+             │   Output: Binary FG/BG      │                          │
+             └──────────────┬──────────────┘                          │
+                            │                                         │
+              ┌─────────────┴─────────────┐                           │
+              │                           │                           │
+  ┌───────────▼───────────┐   ┌───────────▼──────────┐                │
+  │  Binary Mask Output   │   │   Feature Maps       │                │
+  │   [B, 1, H, W]        │   │   for ROI Pooling    │                │
+  └───────────┬───────────┘   └───────────┬──────────┘                │
+              │                           │                           │
+              └─────────────┬─────────────┘                           │
+                            │◀────────────────────────────────────────┘
+            ┌───────────────▼───────────────┐
+            │   Dynamic RoI Align           │
+            │  Output: [N, C, H_roi, W_roi] │
+            └───────────────┬───────────────┘
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+ ┌────────────▼───────────┐   ┌───────────▼────────────┐
+ │      EfficientNet      │   │  Pretrained UNet Mask  │
+ │      Encoder           │   │  (for each ROI)        │
+ │      (B0/B1/B7)        │   │  [N, 1, H_roi, W_roi]  │
+ └────────────┬───────────┘   └───────────┬────────────┘
+              │                           │
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │  Instance Segmentation    │
+              │  Head (UNet V2)           │
+              │  - Attention Modules      │
+              │  - Residual Blocks        │
+              │  - Distance-Aware Loss    │
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │   3-Class Output Logits   │
+              │   [N, 3, mask_h, mask_w]  │
+              │   Classes:                │
+              │   0: Background           │
+              │   1: Target Instance      │
+              │   2: Non-target Instances │
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │   Post-Processing         │
+              │   (Optional)              │
+              │   - Mask Dilation         │
+              │   - Edge Smoothing        │
+              └───────────────────────────┘
 ```
 
 ## Training Pipeline
@@ -194,7 +189,7 @@ The Human Edge Detection system employs a sophisticated hierarchical segmentatio
 1. **Coarse Segmentation**: Pretrained UNet provides initial binary mask
 2. **ROI Extraction**: Extract regions around detected persons
 3. **Feature Enhancement**: Process ROIs through EfficientNet encoder
-4. **Instance Refinement**: 
+4. **Instance Refinement**:
    - Apply attention-gated refinement
    - Use binary mask as prior for background suppression
    - Separate overlapping instances via distance transform
@@ -286,40 +281,40 @@ uv run python -c "import onnxruntime as ort; print(f'ONNX Runtime: {ort.__versio
 ```bash
 # B7 to B0 distillation with temperature progression
 uv run python train_distillation_staged.py \
-  --teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
-  --student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
-  --teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
-  --epochs 100 \
-  --batch_size 16
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
+--epochs 100 \
+--batch_size 16
 
 # B7 to B1 distillation
 uv run python train_distillation_staged.py \
-  --teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
-  --student_config rgb_hierarchical_unet_v2_distillation_b1_from_b7_temp_prog \
-  --teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
-  --epochs 100 \
-  --batch_size 12
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b1_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
+--epochs 100 \
+--batch_size 12
 ```
 
 ### Advanced Distillation Options
 ```bash
 # With custom temperature schedule
 uv run python train_distillation_staged.py \
-  --teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
-  --student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
-  --teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
-  --initial_temperature 10.0 \
-  --final_temperature 1.0 \
-  --temperature_decay_epochs 50 \
-  --epochs 100
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
+--initial_temperature 10.0 \
+--final_temperature 1.0 \
+--temperature_decay_epochs 50 \
+--epochs 100
 
 # Resume from checkpoint
 uv run python train_distillation_staged.py \
-  --teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
-  --student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
-  --teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
-  --resume checkpoints/distillation_epoch_050.pth \
-  --epochs 100
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
+--resume checkpoints/distillation_epoch_050.pth \
+--epochs 100
 ```
 
 ## ROI-Based Hierarchical Training
@@ -346,52 +341,42 @@ uv run python train_distillation_staged.py \
 ```bash
 # Train B0 model with standard ROI size (development dataset)
 uv run python train_advanced.py \
-  --config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
-  --epochs 10 \
-  --batch_size 8
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
+--epochs 10 \
+--batch_size 8
 
 # Train B1 model with enhanced ROI size (full dataset)
 uv run python train_advanced.py \
-  --config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1_enhanced \
-  --train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --epochs 100 \
-  --batch_size 6
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1_enhanced \
+--train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+--epochs 100 \
+--batch_size 6
 
 # Train B7 model with ultra ROI size
 uv run python train_advanced.py \
-  --config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r128x96m256x192_disttrans_contdet_baware_from_B7_enhanced \
-  --train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --epochs 100 \
-  --batch_size 4
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r128x96m256x192_disttrans_contdet_baware_from_B7_enhanced \
+--train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+--epochs 100 \
+--batch_size 4
 ```
 
 ### Advanced Training Options
 
 ```bash
-# Multi-GPU training
-uv run python train_advanced.py \
-  --config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
-  --train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --epochs 100 \
-  --batch_size 32 \
-  --num_workers 8 \
-  --distributed
-
 # Resume training from checkpoint
 uv run python train_advanced.py \
-  --config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
-  --resume experiments/*/checkpoints/checkpoint_epoch_0050_640x640_0750.pth \
-  --epochs 100
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
+--resume experiments/*/checkpoints/checkpoint_epoch_0050_640x640_0750.pth \
+--epochs 100
 
 # Fine-tuning with smaller learning rate
 uv run python train_advanced.py \
-  --config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
-  --pretrained_checkpoint experiments/*/checkpoints/best_model_*.pth \
-  --learning_rate 1e-5 \
-  --epochs 20
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
+--pretrained_checkpoint experiments/*/checkpoints/best_model_*.pth \
+--learning_rate 1e-5 \
+--epochs 20
 ```
 
 ### Validation Commands
@@ -399,22 +384,22 @@ uv run python train_advanced.py \
 ```bash
 # Validate single checkpoint
 uv run python validate_advanced.py \
-  experiments/*/checkpoints/best_model_epoch_*_640x640_*.pth \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
-  --batch_size 16
+experiments/*/checkpoints/best_model_epoch_*_640x640_*.pth \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+--batch_size 16
 
 # Validate multiple checkpoints
 uv run python validate_advanced.py \
-  "experiments/*/checkpoints/best_model*.pth" \
-  --multiple \
-  --val_ann data/annotations/instances_val2017_person_only_no_crowd.json
+"experiments/*/checkpoints/best_model*.pth" \
+--multiple \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json
 
 # Validation with visualization
 uv run python validate_advanced.py \
-  experiments/*/checkpoints/best_model_*.pth \
-  --visualize \
-  --num_visualize 20 \
-  --output_dir validation_results
+experiments/*/checkpoints/best_model_*.pth \
+--visualize \
+--num_visualize 20 \
+--output_dir validation_results
 ```
 
 ## ONNX Export
@@ -430,24 +415,24 @@ uv run python validate_advanced.py \
 ```bash
 # Export B0 model to ONNX
 uv run python export_hierarchical_instance_peopleseg_onnx.py \
-  experiments/*/checkpoints/best_model_b0_*.pth \
-  --output models/b0_model.onnx \
-  --image_size 640,640
+experiments/*/checkpoints/best_model_b0_*.pth \
+--output models/b0_model.onnx \
+--image_size 640,640
 
-# Export B1 model with 2-pixel dilation
+# Export B1 model with 1-pixel dilation
 uv run python export_hierarchical_instance_peopleseg_onnx.py \
-  experiments/*/checkpoints/best_model_b1_*.pth \
-  --output models/b1_model_dil2.onnx \
-  --image_size 640,640 \
-  --dilation_pixels 2
+experiments/*/checkpoints/best_model_b1_*.pth \
+--output models/b1_model_dil2.onnx \
+--image_size 640,640 \
+--dilation_pixels 1
 
 # Export B7 model with custom ROI size
 uv run python export_hierarchical_instance_peopleseg_onnx.py \
-  experiments/*/checkpoints/best_model_b7_*.pth \
-  --output models/b7_model_ultra.onnx \
-  --image_size 1024,1024 \
-  --roi_size 128,96 \
-  --mask_size 256,192
+experiments/*/checkpoints/best_model_b7_*.pth \
+--output models/b7_model_ultra.onnx \
+--image_size 1024,1024 \
+--roi_size 128,96 \
+--mask_size 256,192
 ```
 
 ### Export Post-Processing Modules
@@ -455,16 +440,16 @@ uv run python export_hierarchical_instance_peopleseg_onnx.py \
 ```bash
 # Export edge smoothing module
 uv run python export_edge_smoothing_onnx.py \
-  --output models/edge_smoothing.onnx \
-  --threshold 0.5 \
-  --blur_strength 3.0
+--output models/edge_smoothing.onnx \
+--threshold 0.5 \
+--blur_strength 3.0
 
 # Export bilateral filter
 uv run python export_bilateral_filter.py \
-  --output models/bilateral_filter.onnx \
-  --d 9 \
-  --sigma_color 75 \
-  --sigma_space 75
+--output models/bilateral_filter.onnx \
+--d 9 \
+--sigma_color 75 \
+--sigma_space 75
 ```
 
 ### ONNX Optimization
@@ -486,19 +471,19 @@ uv run python -c "import onnx; model = onnx.load('models/b0_model_opt.onnx'); on
 ```bash
 # Test ONNX model on validation images
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
-  --onnx models/b0_model_opt.onnx \
-  --annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
-  --images_dir data/images/val2017 \
-  --num_images 5 \
-  --output_dir test_outputs
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
+--images_dir data/images/val2017 \
+--num_images 5 \
+--output_dir test_outputs
 
 # Test with CUDA provider
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
-  --onnx models/b1_model_opt.onnx \
-  --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
-  --provider cuda \
-  --num_images 10 \
-  --output_dir test_outputs_cuda
+--onnx models/b1_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--provider cuda \
+--num_images 10 \
+--output_dir test_outputs_cuda
 ```
 
 ### Advanced Testing Options
@@ -506,29 +491,29 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 ```bash
 # Test with binary mask visualization (green overlay)
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
-  --onnx models/b0_model_opt.onnx \
-  --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
-  --num_images 20 \
-  --binary_mode \
-  --alpha 0.7 \
-  --output_dir test_binary_masks
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 20 \
+--binary_mode \
+--alpha 0.7 \
+--output_dir test_binary_masks
 
 # Test with custom score threshold
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
-  --onnx models/b7_model_opt.onnx \
-  --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
-  --num_images 15 \
-  --score_threshold 0.5 \
-  --save_masks \
-  --output_dir test_high_confidence
+--onnx models/b7_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 15 \
+--score_threshold 0.5 \
+--save_masks \
+--output_dir test_high_confidence
 
 # Batch processing test
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
-  --onnx models/b0_model_opt.onnx \
-  --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
-  --num_images 100 \
-  --batch_size 8 \
-  --output_dir batch_test_outputs
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 100 \
+--batch_size 8 \
+--output_dir batch_test_outputs
 ```
 
 ### Performance Benchmarking
@@ -536,11 +521,11 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 ```bash
 # Benchmark inference speed
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
-  --onnx models/b0_model_opt.onnx \
-  --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
-  --num_images 50 \
-  --benchmark \
-  --provider cuda
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 50 \
+--benchmark \
+--provider cuda
 
 # Compare different model variants
 for model in b0 b1 b7; do
@@ -561,7 +546,7 @@ This project is licensed under the MIT License - see below for details:
 ```
 MIT License
 
-Copyright (c) 2024 Human Edge Detection Contributors
+Copyright (c) 2025 Katsuya Hyodo
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -640,11 +625,3 @@ We gratefully acknowledge the work by Vladimir Iglovikov (Ternaus) on people seg
 - The ONNX community for cross-platform model deployment tools
 - The Albumentations team for powerful augmentation pipelines
 - The Segmentation Models PyTorch contributors for pre-trained encoders
-
-## Contributing
-
-We welcome contributions! Please see our contributing guidelines for more information.
-
-## Contact
-
-For questions, issues, or suggestions, please open an issue on our GitHub repository.
