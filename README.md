@@ -199,6 +199,8 @@ The Human Instance Segmentation model employs a sophisticated hierarchical segme
    - Temperature progression for smooth knowledge transfer
    - Feature matching at multiple decoder levels
 
+      <img width="868" height="552" alt="image" src="https://github.com/user-attachments/assets/1204d50b-d034-427a-9238-b0e604eb33d8" />
+
 3. **Stage 3: Instance Segmentation Training**
    - ROI-based training with 3-class outputs
    - Distance-aware loss for instance separation
