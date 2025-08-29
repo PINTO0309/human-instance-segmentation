@@ -2,7 +2,7 @@
 
 English / [日本語](./README_jp.md)
 
-A lightweight ROI-based hierarchical instance segmentation system for human detection with knowledge distillation from EfficientNet-based teacher models. The system achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
+A lightweight ROI-based hierarchical instance segmentation model for human detection with knowledge distillation from EfficientNet-based teacher models. The model achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
 
 - Instance Segmentation Mode
 
