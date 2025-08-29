@@ -16,6 +16,7 @@ A lightweight ROI-based hierarchical instance segmentation model for human detec
 - [Architecture Overview](#architecture-overview)
 - [Architecture Details](#architecture-details)
 - [Architecture Diagram](#architecture-diagram)
+- [Model Architecture](#model-architecture)
 - [Training Pipeline](#training-pipeline)
 - [Refinement Mechanism](#refinement-mechanism)
 - [Dataset Structure](#dataset-structure)
