@@ -170,6 +170,14 @@ EfficientNetベースの教師モデルからの知識蒸留を用いた、人�
               └───────────────────────────┘
 ```
 
+## モデルアーキテクチャ
+
+<details><summary>Click to expand</summary>
+
+<img alt="best_model_b1_80x60_0 8551" src="https://github.com/user-attachments/assets/4f9a8a19-a81a-4b10-a72a-cdb9e099151d" />
+
+</details>
+
 ## 学習パイプライン
 
 ### 知識蒸留パイプライン
