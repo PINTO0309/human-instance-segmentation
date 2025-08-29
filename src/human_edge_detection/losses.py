@@ -208,7 +208,9 @@ def create_loss_function(
     dice_weight: float = 1.0,
     dice_classes: Optional[List[int]] = None,
     device: str = 'cpu',
-    separation_aware_weights: Optional[dict] = None
+    separation_aware_weights: Optional[dict] = None,
+    use_focal: bool = False,
+    focal_gamma: float = 2.0
 ) -> SegmentationLoss:
     """Create loss function with appropriate class weights.
     
@@ -220,6 +222,8 @@ def create_loss_function(
         dice_classes: Classes to compute Dice for
         device: Device to put weights on
         separation_aware_weights: Optional pre-computed separation-aware weights
+        use_focal: Whether to use focal loss instead of cross-entropy
+        focal_gamma: Gamma parameter for focal loss
         
     Returns:
         SegmentationLoss instance
@@ -265,7 +269,9 @@ def create_loss_function(
         class_weights=class_weights,
         ce_weight=ce_weight,
         dice_weight=dice_weight,
-        dice_classes=dice_classes
+        dice_classes=dice_classes,
+        use_focal=use_focal,
+        focal_gamma=focal_gamma
     )
     
     return loss_fn

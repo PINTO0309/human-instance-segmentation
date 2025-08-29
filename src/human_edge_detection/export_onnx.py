@@ -11,10 +11,14 @@ import numpy as np
 from .model import create_model, ROISegmentationHead
 
 try:
-    import onnxsim
+    from onnxsim import simplify as onnxsim_simplify
     ONNXSIM_AVAILABLE = True
 except ImportError:
-    ONNXSIM_AVAILABLE = False
+    try:
+        import onnx_simplifier as onnxsim
+        ONNXSIM_AVAILABLE = True
+    except ImportError:
+        ONNXSIM_AVAILABLE = False
 
 
 class ONNXExporter:
@@ -84,7 +88,7 @@ class ONNXExporter:
                 dynamic_axes={
                     'features': {0: 'batch_size'},
                     'rois': {0: 'num_rois'},
-                    'masks': {0: 'num_rois'}
+                    'masks': {0: 'num_rois', 2: str(self.model.segmentation_head.mask_size if hasattr(self.model.segmentation_head, 'mask_size') else 56), 3: str(self.model.segmentation_head.mask_size if hasattr(self.model.segmentation_head, 'mask_size') else 56)}
                 },
                 opset_version=opset_version,
                 do_constant_folding=True,
@@ -97,8 +101,20 @@ class ONNXExporter:
             if ONNXSIM_AVAILABLE:
                 print("Simplifying ONNX model with onnxsim...")
                 try:
+                    import sys
+                    import io
+                    import contextlib
+
                     model_onnx = onnx.load(output_path)
-                    model_simp, check = onnxsim.simplify(model_onnx)
+                    # Suppress onnxsim output by redirecting stdout and stderr
+                    f_stdout = io.StringIO()
+                    f_stderr = io.StringIO()
+                    with contextlib.redirect_stdout(f_stdout), contextlib.redirect_stderr(f_stderr):
+                        # Try to use the imported simplify function
+                        if 'onnxsim_simplify' in globals():
+                            model_simp, check = onnxsim_simplify(model_onnx, check_n=3)
+                        else:
+                            model_simp, check = onnxsim.simplify(model_onnx, check_n=3)
                     if check:
                         onnx.save(model_simp, output_path)
                         print("Model simplified successfully!")
@@ -243,6 +259,13 @@ def export_checkpoint_to_onnx(
     # Load checkpoint
     print(f"Loading checkpoint from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Handle DistillationModelWrapper - although this simple exporter shouldn't be used with distillation models
+    from src.human_edge_detection.advanced.knowledge_distillation import DistillationModelWrapper
+    if isinstance(model, DistillationModelWrapper):
+        print("Warning: This basic ONNX exporter is not designed for distillation models. Use export_onnx_advanced instead.")
+        model = model.get_student()
+    
     model.load_state_dict(checkpoint['model_state_dict'])
 
     # Create exporter

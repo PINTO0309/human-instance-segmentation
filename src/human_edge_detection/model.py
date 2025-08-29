@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from .dynamic_roi_align import DynamicRoIAlign
 from typing import Dict, Optional, Tuple
+from .advanced.normalization_comparison import get_normalization_layer
 
 
 class LayerNorm2d(nn.Module):
@@ -38,14 +39,14 @@ class LayerNorm2d(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    """Residual block with LayerNorm."""
+    """Residual block with configurable normalization."""
 
-    def __init__(self, channels):
+    def __init__(self, channels, normalization_type: str = 'layernorm2d', normalization_groups: int = 8):
         super().__init__()
         self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm1 = LayerNorm2d(channels)
+        self.norm1 = get_normalization_layer(normalization_type, channels, num_groups=min(normalization_groups, channels))
         self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.norm2 = LayerNorm2d(channels)
+        self.norm2 = get_normalization_layer(normalization_type, channels, num_groups=min(normalization_groups, channels))
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
@@ -67,7 +68,9 @@ class ROISegmentationHead(nn.Module):
         num_classes: int = 3,
         roi_size: int = 28,  # Enhanced spatial resolution
         mask_size: int = 56,
-        feature_stride: int = 8
+        feature_stride: int = 8,
+        normalization_type: str = 'layernorm2d',
+        normalization_groups: int = 8
     ):
         """Initialize improved segmentation head.
 
@@ -87,6 +90,8 @@ class ROISegmentationHead(nn.Module):
         self.roi_size = roi_size
         self.mask_size = mask_size
         self.feature_stride = feature_stride
+        self.normalization_type = normalization_type
+        self.normalization_groups = normalization_groups
 
         # For future extension to non-square ROIs
         if isinstance(roi_size, int):
@@ -105,46 +110,46 @@ class ROISegmentationHead(nn.Module):
         # Initial feature processing with residual blocks
         self.conv_in = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, 1),
-            LayerNorm2d(mid_channels),
+            get_normalization_layer(normalization_type, mid_channels, num_groups=min(normalization_groups, mid_channels)),
             nn.ReLU(inplace=True)
         )
 
         # Feature processing with residual connections
-        self.res_block1 = ResidualBlock(mid_channels)
-        self.res_block2 = ResidualBlock(mid_channels)
+        self.res_block1 = ResidualBlock(mid_channels, normalization_type, normalization_groups)
+        self.res_block2 = ResidualBlock(mid_channels, normalization_type, normalization_groups)
 
         # Progressive upsampling with intermediate supervision
         # 28x28 -> 56x56
         self.upsample1 = nn.Sequential(
             nn.ConvTranspose2d(mid_channels, mid_channels, 4, stride=2, padding=1),
-            LayerNorm2d(mid_channels),
+            get_normalization_layer(normalization_type, mid_channels, num_groups=min(normalization_groups, mid_channels)),
             nn.ReLU(inplace=True)
         )
 
         # Refinement at 56x56
-        self.refine1 = ResidualBlock(mid_channels)
+        self.refine1 = ResidualBlock(mid_channels, normalization_type, normalization_groups)
 
         # 56x56 -> 112x112 (oversample)
         self.upsample2 = nn.Sequential(
             nn.ConvTranspose2d(mid_channels, mid_channels // 2, 4, stride=2, padding=1),
-            LayerNorm2d(mid_channels // 2),
+            get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
             nn.ReLU(inplace=True)
         )
 
         # Refinement at 112x112
         self.refine2 = nn.Sequential(
             nn.Conv2d(mid_channels // 2, mid_channels // 2, 3, padding=1),
-            LayerNorm2d(mid_channels // 2),
+            get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_channels // 2, mid_channels // 2, 3, padding=1),
-            LayerNorm2d(mid_channels // 2),
+            get_normalization_layer(normalization_type, mid_channels // 2, num_groups=min(normalization_groups, mid_channels // 2)),
             nn.ReLU(inplace=True)
         )
 
         # Final projection and downsampling to 56x56
         self.final_conv = nn.Sequential(
             nn.Conv2d(mid_channels // 2, mid_channels // 4, 3, padding=1),
-            LayerNorm2d(mid_channels // 4),
+            get_normalization_layer(normalization_type, mid_channels // 4, num_groups=min(normalization_groups, mid_channels // 4)),
             nn.ReLU(inplace=True)
         )
 
@@ -312,7 +317,9 @@ def create_model(
     in_channels: int = 1024,
     mid_channels: int = 256,
     mask_size: int = 56,
-    roi_size: int = 28  # Increased default
+    roi_size: int = 28,  # Increased default
+    normalization_type: str = 'layernorm2d',
+    normalization_groups: int = 8
 ) -> ROISegmentationModel:
     """Create ROI segmentation model.
 
@@ -331,7 +338,9 @@ def create_model(
         mid_channels=mid_channels,
         num_classes=num_classes,
         mask_size=mask_size,
-        roi_size=roi_size
+        roi_size=roi_size,
+        normalization_type=normalization_type,
+        normalization_groups=normalization_groups
     )
 
     model = ROISegmentationModel(

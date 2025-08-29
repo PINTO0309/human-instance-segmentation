@@ -34,7 +34,8 @@ class ValidationVisualizer:
         coco: COCO,
         image_dir: str,
         output_dir: str = 'validation_results',
-        device: str = 'cuda'
+        device: str = 'cuda',
+        roi_padding: float = 0.0
     ):
         """Initialize visualizer.
 
@@ -45,6 +46,7 @@ class ValidationVisualizer:
             image_dir: Directory containing images
             output_dir: Directory to save visualization results
             device: Device to run inference on
+            roi_padding: ROI padding ratio (0.0 = no padding, 0.1 = 10% padding)
         """
         self.model = model.to(device)
         self.feature_extractor = feature_extractor
@@ -53,6 +55,7 @@ class ValidationVisualizer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.device = device
+        self.roi_padding = roi_padding
 
         # Color palette for instances
         self.colors = self._generate_colors(20)
@@ -317,13 +320,17 @@ class ValidationVisualizer:
                     x2 = x1 + bbox[2] * 640 / orig_width
                     y2 = y1 + bbox[3] * 640 / orig_height
 
-                    # Add padding
-                    padding = 0.1
-                    w, h = x2 - x1, y2 - y1
-                    x1 = max(0, x1 - w * padding)
-                    y1 = max(0, y1 - h * padding)
-                    x2 = min(640, x2 + w * padding)
-                    y2 = min(640, y2 + h * padding)
+                    # Note: ROI padding is already applied in the dataset during training,
+                    # so we should NOT apply it again here for consistency.
+                    # Only apply padding if explicitly needed for visualization purposes.
+                    if self.roi_padding > 0:
+                        # Add padding for visualization if specified
+                        padding = self.roi_padding
+                        w, h = x2 - x1, y2 - y1
+                        x1 = max(0, x1 - w * padding)
+                        y1 = max(0, y1 - h * padding)
+                        x2 = min(640, x2 + w * padding)
+                        y2 = min(640, y2 + h * padding)
 
                     # Normalize ROI
                     roi_norm = torch.tensor([[x1/640, y1/640, x2/640, y2/640]], dtype=torch.float32)
@@ -464,11 +471,16 @@ class ValidationVisualizer:
         # Dark green: RGB(0, 153, 0)
         draw_text_in_rectangle(draw, (10, img_height + padding + 5), pred_text, bg_color=(0, 153, 0), text_color='white', font=font, rect_width=rect_width)
 
+        # Resize to 60% before saving
+        resized_width = int(combined.width * 0.6)
+        resized_height = int(combined.height * 0.6)
+        combined_resized = combined.resize((resized_width, resized_height), Image.Resampling.LANCZOS)
+        
         # Save image
         filename = f"validation_all_images_epoch_{epoch:04d}.png"
         output_path = self.output_dir / filename
-        combined.save(output_path)
-        print(f"Saved validation visualization: {output_path}")
+        combined_resized.save(output_path)
+        print(f"Saved validation visualization (60% size): {output_path}")
     
     def _save_individual_image(self, gt_image: Image.Image, pred_image: Image.Image, epoch: int, filename: str):
         """Save individual validation result for a single image."""

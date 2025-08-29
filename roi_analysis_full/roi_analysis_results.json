@@ -1,0 +1,214 @@
+{
+  "width_stats": {
+    "name": "\u5e45\uff08Width\uff09",
+    "count": 231242,
+    "mean": 87.96267113660086,
+    "std": 101.1801754723828,
+    "variance": 10237.427908622174,
+    "median": 47.0,
+    "min": 0.0,
+    "max": 640.0,
+    "q1": 23.0,
+    "q3": 113.0,
+    "p5": 10.0,
+    "p95": 308.0
+  },
+  "height_stats": {
+    "name": "\u9ad8\u3055\uff08Height\uff09",
+    "count": 231242,
+    "mean": 143.34261940550556,
+    "std": 134.520316753064,
+    "variance": 18095.71561934467,
+    "median": 90.0,
+    "min": 1.0,
+    "max": 640.0,
+    "q1": 41.0,
+    "q3": 212.0,
+    "p5": 17.0,
+    "p95": 425.0
+  },
+  "area_stats": {
+    "name": "\u9762\u7a4d\uff08Area\uff09",
+    "count": 231242,
+    "mean": 23408.71658740637,
+    "std": 44668.31976368034,
+    "variance": 1995258790.5103953,
+    "median": 4144.0,
+    "min": 0.0,
+    "max": 408960.0,
+    "q1": 968.0,
+    "q3": 23140.0,
+    "p5": 208.0,
+    "p95": 118400.0
+  },
+  "aspect_ratio_stats": {
+    "name": "\u30a2\u30b9\u30da\u30af\u30c8\u6bd4\uff08Width/Height\uff09",
+    "count": 231242,
+    "mean": 0.6652339728112765,
+    "std": 0.4861346122866828,
+    "variance": 0.23632686126312344,
+    "median": 0.56,
+    "min": 0.0,
+    "max": 40.166666666666664,
+    "q1": 0.3875598086124402,
+    "q3": 0.8032786885245902,
+    "p5": 0.25,
+    "p95": 1.375
+  },
+  "scale_analysis": {
+    "roi_14_mask_28": {
+      "roi_align_size": 14,
+      "mask_size": 28,
+      "excellent_coverage": 13.157644372562077,
+      "good_coverage": 34.122261526885254,
+      "acceptable_coverage": 55.52711012705305,
+      "mean_downsample_ratio": 10.633137268862406,
+      "median_downsample_ratio": 6.642857142857143,
+      "p95_downsample_ratio": 31.357142857142858
+    },
+    "roi_14_mask_56": {
+      "roi_align_size": 14,
+      "mask_size": 56,
+      "excellent_coverage": 13.157644372562077,
+      "good_coverage": 34.122261526885254,
+      "acceptable_coverage": 55.52711012705305,
+      "mean_downsample_ratio": 10.633137268862406,
+      "median_downsample_ratio": 6.642857142857143,
+      "p95_downsample_ratio": 31.357142857142858
+    },
+    "roi_14_mask_112": {
+      "roi_align_size": 14,
+      "mask_size": 112,
+      "excellent_coverage": 13.157644372562077,
+      "good_coverage": 34.122261526885254,
+      "acceptable_coverage": 55.52711012705305,
+      "mean_downsample_ratio": 10.633137268862406,
+      "median_downsample_ratio": 6.642857142857143,
+      "p95_downsample_ratio": 31.357142857142858
+    },
+    "roi_14_mask_224": {
+      "roi_align_size": 14,
+      "mask_size": 224,
+      "excellent_coverage": 13.157644372562077,
+      "good_coverage": 34.122261526885254,
+      "acceptable_coverage": 55.52711012705305,
+      "mean_downsample_ratio": 10.633137268862406,
+      "median_downsample_ratio": 6.642857142857143,
+      "p95_downsample_ratio": 31.357142857142858
+    },
+    "roi_28_mask_28": {
+      "roi_align_size": 28,
+      "mask_size": 28,
+      "excellent_coverage": 34.122261526885254,
+      "good_coverage": 55.52711012705305,
+      "acceptable_coverage": 75.53126162202368,
+      "mean_downsample_ratio": 5.316568634431203,
+      "median_downsample_ratio": 3.3214285714285716,
+      "p95_downsample_ratio": 15.678571428571429
+    },
+    "roi_28_mask_56": {
+      "roi_align_size": 28,
+      "mask_size": 56,
+      "excellent_coverage": 34.122261526885254,
+      "good_coverage": 55.52711012705305,
+      "acceptable_coverage": 75.53126162202368,
+      "mean_downsample_ratio": 5.316568634431203,
+      "median_downsample_ratio": 3.3214285714285716,
+      "p95_downsample_ratio": 15.678571428571429
+    },
+    "roi_28_mask_112": {
+      "roi_align_size": 28,
+      "mask_size": 112,
+      "excellent_coverage": 34.122261526885254,
+      "good_coverage": 55.52711012705305,
+      "acceptable_coverage": 75.53126162202368,
+      "mean_downsample_ratio": 5.316568634431203,
+      "median_downsample_ratio": 3.3214285714285716,
+      "p95_downsample_ratio": 15.678571428571429
+    },
+    "roi_28_mask_224": {
+      "roi_align_size": 28,
+      "mask_size": 224,
+      "excellent_coverage": 34.122261526885254,
+      "good_coverage": 55.52711012705305,
+      "acceptable_coverage": 75.53126162202368,
+      "mean_downsample_ratio": 5.316568634431203,
+      "median_downsample_ratio": 3.3214285714285716,
+      "p95_downsample_ratio": 15.678571428571429
+    },
+    "roi_56_mask_56": {
+      "roi_align_size": 56,
+      "mask_size": 56,
+      "excellent_coverage": 55.52711012705305,
+      "good_coverage": 75.53126162202368,
+      "acceptable_coverage": 95.35594744899282,
+      "mean_downsample_ratio": 2.6582843172156014,
+      "median_downsample_ratio": 1.6607142857142858,
+      "p95_downsample_ratio": 7.839285714285714
+    },
+    "roi_56_mask_112": {
+      "roi_align_size": 56,
+      "mask_size": 112,
+      "excellent_coverage": 55.52711012705305,
+      "good_coverage": 75.53126162202368,
+      "acceptable_coverage": 95.35594744899282,
+      "mean_downsample_ratio": 2.6582843172156014,
+      "median_downsample_ratio": 1.6607142857142858,
+      "p95_downsample_ratio": 7.839285714285714
+    },
+    "roi_56_mask_224": {
+      "roi_align_size": 56,
+      "mask_size": 224,
+      "excellent_coverage": 55.52711012705305,
+      "good_coverage": 75.53126162202368,
+      "acceptable_coverage": 95.35594744899282,
+      "mean_downsample_ratio": 2.6582843172156014,
+      "median_downsample_ratio": 1.6607142857142858,
+      "p95_downsample_ratio": 7.839285714285714
+    },
+    "roi_112_mask_112": {
+      "roi_align_size": 112,
+      "mask_size": 112,
+      "excellent_coverage": 75.53126162202368,
+      "good_coverage": 95.35594744899282,
+      "acceptable_coverage": 100.0,
+      "mean_downsample_ratio": 1.3291421586078007,
+      "median_downsample_ratio": 0.8303571428571429,
+      "p95_downsample_ratio": 3.919642857142857
+    },
+    "roi_112_mask_224": {
+      "roi_align_size": 112,
+      "mask_size": 224,
+      "excellent_coverage": 75.53126162202368,
+      "good_coverage": 95.35594744899282,
+      "acceptable_coverage": 100.0,
+      "mean_downsample_ratio": 1.3291421586078007,
+      "median_downsample_ratio": 0.8303571428571429,
+      "p95_downsample_ratio": 3.919642857142857
+    }
+  },
+  "recommendation": {
+    "roi_align_size": 112,
+    "mask_size": 112,
+    "reasoning": {
+      "roi_align_size": 112,
+      "mask_size": 112,
+      "excellent_coverage": 75.53126162202368,
+      "good_coverage": 95.35594744899282,
+      "acceptable_coverage": 100.0,
+      "mean_downsample_ratio": 1.3291421586078007,
+      "median_downsample_ratio": 0.8303571428571429,
+      "p95_downsample_ratio": 3.919642857142857
+    }
+  },
+  "current_performance": {
+    "roi_align_size": 28,
+    "mask_size": 56,
+    "excellent_coverage": 34.122261526885254,
+    "good_coverage": 55.52711012705305,
+    "acceptable_coverage": 75.53126162202368,
+    "mean_downsample_ratio": 5.316568634431203,
+    "median_downsample_ratio": 3.3214285714285716,
+    "p95_downsample_ratio": 15.678571428571429
+  }
+}

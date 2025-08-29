@@ -1,772 +1,635 @@
-# ROI-based Instance Segmentation for Human Detection
+# Human Instance Segmentation
 
-[English](README.md) | [日本語](README_ja.md)
+A lightweight ROI-based hierarchical instance segmentation system for human detection with knowledge distillation from EfficientNet-based teacher models. The system achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
 
-This repository implements a lightweight ROI-based instance segmentation model for human detection using YOLOv9 features and a custom segmentation decoder.
+- Instance Segmentation Mode
 
-## Overview
+  <img width="640" height="424" alt="image" src="https://github.com/user-attachments/assets/10431a3c-0bba-422f-9d98-67af8e77b777" />
 
-<img width="1500" height="1000" alt="architecture_diagram" src="https://github.com/user-attachments/assets/4e235e0f-205b-44e2-9126-e5e954fee82e" />
+- Binary Mask Mode
 
-The model uses a 3-class segmentation approach:
-- **Class 0**: Background
-- **Class 1**: Target mask (primary instance in ROI)
-- **Class 2**: Non-target mask (other instances in ROI)
+  <img width="427" height="640" alt="000000229849_binary" src="https://github.com/user-attachments/assets/f73ef1b2-36d8-4eb0-b167-06764e05ebe3" />
 
-This formulation helps the model better distinguish between multiple person instances in crowded scenes.
+## Table of Contents
+- [Architecture Overview](#architecture-overview)
+- [Architecture Details](#architecture-details)
+- [Architecture Diagram](#architecture-diagram)
+- [Training Pipeline](#training-pipeline)
+- [Refinement Mechanism](#refinement-mechanism)
+- [Dataset Structure](#dataset-structure)
+- [Environment Setup](#environment-setup)
+- [UNet Distillation Commands](#unet-distillation-commands)
+- [ROI-Based Hierarchical Training](#roi-based-hierarchical-training)
+- [ONNX Export](#onnx-export)
+- [Test Inference](#test-inference)
+- [License](#license)
+- [Citations and Acknowledgments](#citations-and-acknowledgments)
 
-## Quick Start
+## Architecture Overview
 
-1. **Environment Setup**
-   ```bash
-   uv sync
+The Human Edge Detection system employs a sophisticated hierarchical segmentation approach that combines:
+- **Two-Stage Architecture**: Coarse binary segmentation followed by ROI-based instance refinement
+- **Multi-Architecture Support**: B0 (lightweight), B1 (balanced), and B7 (high-accuracy) variants
+- **Knowledge Distillation**: Temperature progression (10→1) for efficient knowledge transfer
+- **Real-time Processing**: Optimized for edge devices with ONNX/TensorRT deployment
 
-   # For TensorRT support, set LD_LIBRARY_PATH:
-   # Option 1: Use the activation script
-   source activate.sh
+### Key Features
+- Direct RGB input processing without separate feature extraction
+- Pre-trained UNet for robust binary foreground/background segmentation
+- ROI-based refinement for precise instance separation
+- 3-class output system (background, target instance, non-target instances)
+- Optional post-processing with dilation and edge smoothing
 
-   # Option 2: If you have direnv installed
-   direnv allow
+## Architecture Details
 
-   # Option 3: Manually export
-   export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${PWD}/.venv/lib/python3.10/site-packages/tensorrt_libs
-   ```
+### Model Hierarchy
 
-2. **Test Pipeline**
-   ```bash
-   uv run python test_pipeline.py
-   ```
+#### B0 Architecture (Lightweight)
+- **Encoder**: EfficientNet-B0 based (timm-efficientnet-b0)
+- **Parameters**: ~5.3M
+- **ONNX Size**: ~71MB
+- **ROI Size**: 64×48 (standard), 80×60 (enhanced)
+- **Mask Size**: 128×96 (standard), 160×120 (enhanced)
+- **Use Case**: Real-time edge deployment, mobile devices
 
-3. **Train Model (minimal dataset)**
-   ```bash
-   uv run python main.py --epochs 10
-   ```
+#### B1 Architecture (Balanced)
+- **Encoder**: EfficientNet-B1 based (timm-efficientnet-b1)
+- **Parameters**: ~7.8M
+- **ONNX Size**: ~81MB
+- **ROI Size**: 64×48 (standard), 80×60 (enhanced)
+- **Mask Size**: 128×96 (standard), 160×120 (enhanced)
+- **Use Case**: Balanced performance/accuracy trade-off
 
-## Model Architecture
+#### B7 Architecture (High-Accuracy)
+- **Encoder**: EfficientNet-B7 based (timm-efficientnet-b7)
+- **Parameters**: ~66M
+- **ONNX Size**: ~90MB
+- **ROI Size**: 64×48 (standard), 80×60 (enhanced), 128×96 (ultra)
+- **Mask Size**: 128×96 (standard), 160×120 (enhanced), 256×192 (ultra)
+- **Use Case**: Maximum accuracy, server deployment
 
-### Overview
+### Core Components
 
-The model consists of three main components:
+#### 1. Pretrained UNet Module
+- **Architecture**: Enhanced UNet with residual blocks
+- **Normalization**: LayerNorm2D for stable training
+- **Activation**: ReLU/SiLU configurable
+- **Output**: Binary foreground/background mask
+- **Training**: Frozen during instance segmentation training
 
-1. **Feature Extractor**: Pre-trained YOLOv9 model (ONNX format)
-   - Input: 640×640×3 RGB images
-   - Output: 1024×80×80 intermediate features
-   - Feature stride: 8 (640÷80)
+#### 2. ROI Extraction Module
+- **Input**: COCO bounding boxes
+- **Normalization**: Coordinates normalized to [0, 1]
+- **Pooling**: Dynamic RoI Align with configurable output sizes
+- **Batch Processing**: Efficient multi-instance handling
 
-2. **ROI Segmentation Head**: Custom lightweight decoder
-   - Input: YOLOv9 features + ROI coordinates
-   - Processing: DynamicRoIAlign → Conv blocks → Upsampling
-   - Output: 56×56×3 segmentation masks per ROI
+#### 3. Instance Segmentation Head
+- **Architecture**: Hierarchical UNet V2 with attention modules
+- **Classes**: 3-class segmentation (background, target, non-target)
+- **Features**:
+  - Residual blocks for feature refinement
+  - Attention gating for focus on person boundaries
+  - Distance-aware loss for better instance separation
+  - Contour detection auxiliary task
 
-3. **Loss Function**: Combined weighted loss
-   - Weighted CrossEntropy for all classes
-   - Dice loss specifically for target class (class 1)
-   - Separation-aware weights to handle class imbalance
+#### 4. Loss Functions
+- **Primary Loss**: Weighted CrossEntropy + Dice Loss
+- **Class Weights**:
+  - Background: 0.538
+  - Target: 0.750
+  - Non-target: 1.712 (1.2× boosted)
+- **Auxiliary Losses**:
+  - Distance transform loss for boundary awareness
+  - Contour detection loss for edge refinement
+  - Separation-aware weighting for instance distinction
 
-### Architecture Details
+## Architecture Diagram
 
 ```
-YOLOv9 Features (1024×80×80)
-       ↓
-DynamicRoIAlign (→ 1024×28×28)  ← Improved: 2x larger ROI
-       ↓
-Conv 1×1 + LayerNorm + ReLU (→ 256×28×28)
-       ↓
-Residual Block 1 (→ 256×28×28)
-       ↓
-Residual Block 2 (→ 256×28×28)
-       ↓
-ConvTranspose + Refine (→ 256×56×56)
-       ↓
-ConvTranspose + Refine (→ 128×112×112)
-       ↓
-Multi-scale Fusion (→ 128×56×56)
-       ↓
-Conv 1×1 (→ 3×56×56)
+             ┌─────────────────────────────┐           ┌──────────────────────────────┐
+             │       Input RGB Image       │           │             ROIs             │
+             │        [B, 3, H, W]         │           │            [N, 5]            │
+             └──────────────┬──────────────┘           │ [batch_idx, x1, y1, x2, y2]  │
+                            │                          │ (0-1 normalized coordinates) │
+                            │                          └──────────────┬───────────────┘
+                            │                                         │
+             ┌──────────────▼──────────────┐                          │
+             │   Pretrained UNet Module    │                          │
+             │    (Frozen during training) │                          │
+             │   Output: Binary FG/BG      │                          │
+             └──────────────┬──────────────┘                          │
+                            │                                         │
+              ┌─────────────┴─────────────┐                           │
+              │                           │                           │
+  ┌───────────▼───────────┐   ┌───────────▼──────────┐                │
+  │  Binary Mask Output   │   │   Feature Maps       │                │
+  │   [B, 1, H, W]        │   │   for ROI Pooling    │                │
+  └───────────┬───────────┘   └───────────┬──────────┘                │
+              │                           │                           │
+              └─────────────┬─────────────┘                           │
+                            │◀────────────────────────────────────────┘
+            ┌───────────────▼───────────────┐
+            │   Dynamic RoI Align           │
+            │  Output: [N, C, H_roi, W_roi] │
+            └───────────────┬───────────────┘
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+ ┌────────────▼───────────┐   ┌───────────▼────────────┐
+ │      EfficientNet      │   │  Pretrained UNet Mask  │
+ │      Encoder           │   │  (for each ROI)        │
+ │      (B0/B1/B7)        │   │  [N, 1, H_roi, W_roi]  │
+ └────────────┬───────────┘   └───────────┬────────────┘
+              │                           │
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │  Instance Segmentation    │
+              │  Head (UNet V2)           │
+              │  - Attention Modules      │
+              │  - Residual Blocks        │
+              │  - Distance-Aware Loss    │
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │   3-Class Output Logits   │
+              │   [N, 3, mask_h, mask_w]  │
+              │   Classes:                │
+              │   0: Background           │
+              │   1: Target Instance      │
+              │   2: Non-target Instances │
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │   Post-Processing         │
+              │   (Optional)              │
+              │   - Mask Dilation         │
+              │   - Edge Smoothing        │
+              └───────────────────────────┘
 ```
 
-### ROI Processing Details
+## Training Pipeline
 
-#### DynamicRoIAlign Operation
+### Knowledge Distillation Pipeline
+1. **Teacher Model Training**: Train B7 architecture to high accuracy
+2. **Temperature Progression**: Gradual temperature reduction (10→1)
+3. **Student Training**: Distill to B0/B1 with feature and logit matching
+4. **Fine-tuning**: Optional direct training on target dataset
 
-The DynamicRoIAlign module extracts fixed-size features from variable-sized ROIs:
+### Training Stages
+1. **Stage 1: UNet Pre-training**
+   - Binary person segmentation on COCO dataset
+   - Frozen after pre-training for all subsequent stages
 
-1. **Input Coordinates**: ROIs are specified as `[batch_idx, x1, y1, x2, y2]` in original image space (640×640)
+2. **Stage 2: Knowledge Distillation**
+   - Teacher model (B7) provides soft targets
+   - Temperature progression for smooth knowledge transfer
+   - Feature matching at multiple decoder levels
 
-2. **Coordinate Transformation**:
-   - Image space coordinates are scaled to feature space using `spatial_scale = 1/8`
-   - Example: ROI [0, 160, 160, 320, 320] → feature space [0, 20, 20, 40, 40]
+3. **Stage 3: Instance Segmentation Training**
+   - ROI-based training with 3-class outputs
+   - Distance-aware loss for instance separation
+   - Auxiliary tasks for boundary refinement
 
-3. **28×28 Grid Sampling**:
-   - The ROI region is divided into a 28×28 grid
-   - Each grid point represents a sampling location within the ROI
-   - Bilinear interpolation is used to extract features at each point
+## Refinement Mechanism
 
-#### Grid Interpretation
+### Hierarchical Refinement Process
+1. **Coarse Segmentation**: Pretrained UNet provides initial binary mask
+2. **ROI Extraction**: Extract regions around detected persons
+3. **Feature Enhancement**: Process ROIs through EfficientNet encoder
+4. **Instance Refinement**:
+   - Apply attention-gated refinement
+   - Use binary mask as prior for background suppression
+   - Separate overlapping instances via distance transform
 
-The 28×28 output grid provides a spatially normalized representation of each ROI with improved resolution:
+### Key Refinement Techniques
+- **Attention Gating**: Focus processing on person boundaries
+- **Distance Transform**: Encode spatial relationships for better separation
+- **Contour Detection**: Auxiliary task for edge preservation
+- **Separation-Aware Weighting**: Boost non-target class for clearer boundaries
 
+## Dataset Structure
+
+### Directory Layout
 ```
-28×28 Grid Mapping for Human Detection:
-┌─────────────────────────────┐
-│ Row 0-9:    Head/Shoulders  │  Each cell (i,j) represents:
-│ Row 10-18:  Torso/Arms      │  - (0,0): Top-left of ROI
-│ Row 19-27:  Legs/Lower body │  - (0,27): Top-right of ROI
-├─────────────────────────────┤  - (27,0): Bottom-left of ROI
-│ Col 0-9:    Left side       │  - (27,27): Bottom-right of ROI
-│ Col 10-18:  Center          │  - (13,13): Center of ROI
-│ Col 19-27:  Right side      │
-└─────────────────────────────┘
-```
-
-#### Non-Square ROI Handling
-
-For non-square ROIs (e.g., tall person bounding box):
-- Horizontal sampling: width ÷ 28 pixels per sample
-- Vertical sampling: height ÷ 28 pixels per sample
-- The 28×28 grid adapts to the ROI aspect ratio while maintaining consistent output size
-
-Example with 200×100 ROI:
-```
-Original ROI (200×100 pixels)     →    Normalized Grid (28×28)
-┌────────────────────┐                 ┌─────────────┐
-│ Sparse vertical    │                 │ ● ● ● ● ● ● │
-│ sampling (~3.5px)  │        →        │ ● ● ● ● ● ● │
-│ Dense horizontal   │                 │ ● ● ● ● ● ● │
-│ sampling (~7px)    │                 └─────────────┘
-└────────────────────┘
-```
-
-### Key Design Decisions
-
-1. **LayerNorm instead of BatchNorm/InstanceNorm**: Better ONNX compatibility and stable inference
-
-2. **Enhanced 28×28 ROI size**: Improved spatial resolution for better detail capture
-
-3. **3-class formulation**: Explicitly modeling non-target instances improves separation in crowded scenes
-
-4. **DynamicRoIAlign**: Custom implementation for better ONNX export with opset 16
-
-## Mask Output Interpretation and Overlay
-
-### Understanding the Output
-
-The model outputs masks with shape `[num_rois, 3, 56, 56]`:
-- `num_rois`: Number of ROIs processed
-- `3`: Three classes (background, target, non-target)
-- `56×56`: Fixed mask resolution
-
-### Steps to Overlay Masks on Original Image
-
-#### 1. Extract Class Predictions
-
-```python
-import torch
-import torch.nn.functional as F
-import numpy as np
-from PIL import Image
-
-# Model output: masks [N, 3, 56, 56]
-# Apply softmax to get probabilities
-mask_probs = F.softmax(masks, dim=1)  # [N, 3, 56, 56]
-
-# Get target mask (class 1) probabilities
-target_masks = mask_probs[:, 1, :, :]  # [N, 56, 56]
-
-# Optionally, get predicted class per pixel
-predicted_classes = torch.argmax(mask_probs, dim=1)  # [N, 56, 56]
+data/
+├── annotations/
+│   ├── instances_train2017_person_only_no_crowd.json  # Full training set
+│   ├── instances_val2017_person_only_no_crowd.json    # Full validation set
+│   ├── instances_train2017_person_only_no_crowd_100imgs.json  # Dev subset
+│   └── instances_val2017_person_only_no_crowd_100imgs.json    # Dev subset
+├── images/
+│   ├── train2017/  # COCO training images
+│   └── val2017/    # COCO validation images
+└── pretrained/
+    ├── best_model_b0_*.pth  # Pretrained B0 models
+    ├── best_model_b1_*.pth  # Pretrained B1 models
+    └── best_model_b7_*.pth  # Pretrained B7 models
 ```
 
-#### 2. Resize Masks to ROI Dimensions
+### Annotation Format
+- **Format**: COCO JSON format
+- **Categories**: Person only (no crowd annotations)
+- **Content**: Bounding boxes and segmentation polygons
+- **Filtering**: Crowd instances removed for cleaner training
 
-Each 56×56 mask must be resized to match its corresponding ROI size:
+### Dataset Statistics
+- **Full Dataset**: ~64K training, ~2.7K validation images
+- **Development Subsets**: 100, 500 image versions
+- **Class Distribution**:
+  - Background: ~53.8% pixels
+  - Target instances: ~33.3% pixels
+  - Non-target instances: ~12.9% pixels
 
-```python
-# ROIs format: [batch_idx, x1, y1, x2, y2]
-resized_masks = []
+## Environment Setup
 
-for i, roi in enumerate(rois):
-    x1, y1, x2, y2 = roi[1:].int()
-    roi_width = x2 - x1
-    roi_height = y2 - y1
+### Prerequisites
+- Python 3.10
+- CUDA 11.8+ (for GPU support)
+- uv package manager
 
-    # Resize 56×56 mask to ROI size
-    mask = target_masks[i].unsqueeze(0).unsqueeze(0)  # [1, 1, 56, 56]
-    resized_mask = F.interpolate(
-        mask,
-        size=(roi_height, roi_width),
-        mode='bilinear',
-        align_corners=False
-    )
-    resized_masks.append(resized_mask.squeeze())
-```
+### Installation with uv
 
-#### 3. Place Masks on Full Image
-
-Create a full-resolution mask and place each ROI mask at its correct position:
-
-```python
-# Create empty mask for full image
-full_mask = torch.zeros((image_height, image_width))
-
-for i, roi in enumerate(rois):
-    x1, y1, x2, y2 = roi[1:].int()
-
-    # Place resized mask in correct position
-    full_mask[y1:y2, x1:x2] = resized_masks[i]
-```
-
-#### 4. Apply Threshold and Overlay
-
-```python
-# Apply threshold to get binary mask
-threshold = 0.5
-binary_mask = (full_mask > threshold).float()
-
-# Convert to numpy for visualization
-mask_np = binary_mask.cpu().numpy()
-image_np = np.array(image)  # Assuming image is PIL Image
-
-# Create colored overlay
-overlay = image_np.copy()
-mask_color = [255, 0, 0]  # Red for target instances
-
-# Apply mask with transparency
-alpha = 0.5
-overlay[mask_np > 0] = (
-    alpha * np.array(mask_color) +
-    (1 - alpha) * image_np[mask_np > 0]
-).astype(np.uint8)
-```
-
-### Complete Example Function
-
-```python
-def overlay_masks_on_image(image, masks, rois, threshold=0.5, alpha=0.5):
-    """
-    Overlay segmentation masks on original image.
-
-    Args:
-        image: PIL Image or numpy array (H, W, 3)
-        masks: Model output tensor [N, 3, 56, 56]
-        rois: ROI coordinates tensor [N, 5]
-        threshold: Confidence threshold for binary mask
-        alpha: Transparency for overlay
-
-    Returns:
-        PIL Image with masks overlaid
-    """
-    # Convert image to numpy
-    if isinstance(image, Image.Image):
-        image_np = np.array(image)
-    else:
-        image_np = image
-
-    h, w = image_np.shape[:2]
-
-    # Get mask probabilities
-    mask_probs = F.softmax(masks, dim=1)
-
-    # Create full resolution masks for each class
-    full_masks = {
-        'background': torch.zeros((h, w)),
-        'target': torch.zeros((h, w)),
-        'non_target': torch.zeros((h, w))
-    }
-
-    # Process each ROI
-    for i, roi in enumerate(rois):
-        _, x1, y1, x2, y2 = roi.int()
-        roi_w = x2 - x1
-        roi_h = y2 - y1
-
-        # Resize masks for this ROI
-        roi_masks = F.interpolate(
-            mask_probs[i].unsqueeze(0),  # [1, 3, 56, 56]
-            size=(roi_h, roi_w),
-            mode='bilinear',
-            align_corners=False
-        ).squeeze(0)  # [3, roi_h, roi_w]
-
-        # Place in full image (using maximum for overlapping ROIs)
-        full_masks['background'][y1:y2, x1:x2] = torch.maximum(
-            full_masks['background'][y1:y2, x1:x2],
-            roi_masks[0]
-        )
-        full_masks['target'][y1:y2, x1:x2] = torch.maximum(
-            full_masks['target'][y1:y2, x1:x2],
-            roi_masks[1]
-        )
-        full_masks['non_target'][y1:y2, x1:x2] = torch.maximum(
-            full_masks['non_target'][y1:y2, x1:x2],
-            roi_masks[2]
-        )
-
-    # Create colored overlay
-    overlay = image_np.copy()
-
-    # Apply target masks (red)
-    target_mask = (full_masks['target'] > threshold).cpu().numpy()
-    overlay[target_mask] = (
-        alpha * np.array([255, 0, 0]) +
-        (1 - alpha) * image_np[target_mask]
-    ).astype(np.uint8)
-
-    # Apply non-target masks (blue)
-    non_target_mask = (full_masks['non_target'] > threshold).cpu().numpy()
-    overlay[non_target_mask] = (
-        alpha * np.array([0, 0, 255]) +
-        (1 - alpha) * image_np[non_target_mask]
-    ).astype(np.uint8)
-
-    return Image.fromarray(overlay)
-```
-
-### Handling Multiple Overlapping ROIs
-
-When multiple ROIs overlap, you need to decide how to combine their masks:
-
-1. **Maximum**: Use the highest confidence value (recommended)
-   ```python
-   full_mask[y1:y2, x1:x2] = torch.maximum(
-       full_mask[y1:y2, x1:x2],
-       resized_mask
-   )
-   ```
-
-2. **Average**: Average the overlapping predictions
-   ```python
-   full_mask[y1:y2, x1:x2] = (
-       full_mask[y1:y2, x1:x2] + resized_mask
-   ) / 2
-   ```
-
-3. **Priority-based**: Process ROIs in order of confidence
-   ```python
-   # Sort ROIs by confidence first
-   roi_confidences = get_roi_confidences()  # From detection model
-   sorted_indices = torch.argsort(roi_confidences, descending=True)
-
-   # Process in order
-   for idx in sorted_indices:
-       # Higher confidence ROIs overwrite lower ones
-       full_mask[y1:y2, x1:x2] = resized_masks[idx]
-   ```
-
-### Important Considerations
-
-1. **Coordinate Systems**: Ensure ROI coordinates match the image coordinate system (0-indexed, exclusive end coordinates)
-
-2. **Interpolation Mode**: Use `bilinear` with `align_corners=False` for smooth mask edges
-
-3. **Memory Efficiency**: For large batch processing, process ROIs in chunks to avoid memory issues
-
-4. **Edge Artifacts**: Consider applying Gaussian blur to mask edges for smoother transitions:
-   ```python
-   from scipy.ndimage import gaussian_filter
-   smoothed_mask = gaussian_filter(mask_np, sigma=1.0)
-   ```
-
-## Project Structure
-
-```
-├── src/human_edge_detection/
-│   ├── dataset.py          # COCO dataset loader
-│   ├── feature_extractor.py # YOLO feature extraction
-│   ├── model.py            # Segmentation model
-│   ├── losses.py           # Loss functions
-│   ├── train.py            # Training pipeline
-│   ├── visualize.py        # Validation visualization
-│   └── export_onnx.py      # ONNX export
-├── data/
-│   ├── annotations/        # COCO format annotations
-│   └── images/            # Training/validation images
-├── ext_extractor/         # YOLOv9 ONNX models
-├── main.py               # Main training script
-└── test_pipeline.py      # Component verification
-
-```
-
-## Training
-
-### Training Features
-
-- **Resume Training**: Continue training from any checkpoint
-- **Flexible Epoch Control**: Specify additional epochs when resuming with `--resume_epochs`
-- **Dynamic Progress Bars**: Automatically adjust to terminal width
-- **Checkpoint Management**: Save models at specified intervals
-- **Best Model Tracking**: Automatically save the best model based on validation mIoU
-
-### Recommended Training Parameters
-
-Based on extensive experimentation, here are the recommended parameters for different training scenarios:
-
-#### Quick Test Run (100 images)
 ```bash
-uv run python main.py \
---train_ann data/annotations/instances_train2017_person_only_no_crowd_100.json \
---val_ann data/annotations/instances_val2017_person_only_no_crowd_100.json \
---epochs 10 \
---batch_size 8 \
---lr 1e-4 \
---validate_every 1 \
---save_every 1
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment
+uv venv
+
+# Activate environment
+source .venv/bin/activate  # On Linux/Mac
+# or
+.venv\Scripts\activate  # On Windows
+
+# Install dependencies
+uv pip install -r pyproject.toml
+
+# Install development dependencies (optional)
+uv pip install -e ".[dev]"
 ```
 
-#### Small Dataset Training (500 images)
+### Verify Installation
 ```bash
-uv run python main.py \
---train_ann data/annotations/instances_train2017_person_only_no_crowd_500.json \
---val_ann data/annotations/instances_val2017_person_only_no_crowd_500.json \
---epochs 50 \
---batch_size 8 \
---lr 5e-4 \
---scheduler cosine \
---min_lr 1e-6 \
---validate_every 2 \
---save_every 5
+# Check PyTorch and CUDA
+uv run python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
+
+# Check ONNX Runtime
+uv run python -c "import onnxruntime as ort; print(f'ONNX Runtime: {ort.__version__}')"
 ```
 
-#### Full Dataset Training (Recommended)
+## UNet Distillation Commands
+
+### Distillation Configuration Files
+- `rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog`: B7→B0 distillation
+- `rgb_hierarchical_unet_v2_distillation_b1_from_b7_temp_prog`: B7→B1 distillation
+- `rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog`: B7 self-distillation
+
+### Basic Distillation Training
 ```bash
-uv run python main.py \
---train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
---val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
---data_stats data_analyze_full.json \
+# B7 to B0 distillation with temperature progression
+uv run python train_distillation_staged.py \
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
 --epochs 100 \
---batch_size 16 \
---lr 1e-3 \
---optimizer adamw \
---weight_decay 1e-4 \
---scheduler cosine \
---min_lr 1e-6 \
---gradient_clip 5.0 \
---num_workers 8 \
---validate_every 1 \
---save_every 1
+--batch_size 16
+
+# B7 to B1 distillation
+uv run python train_distillation_staged.py \
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b1_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
+--epochs 100 \
+--batch_size 12
 ```
 
-#### High-Performance Training (Multi-GPU)
+### Advanced Distillation Options
 ```bash
-uv run python main.py \
+# With custom temperature schedule
+uv run python train_distillation_staged.py \
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
+--initial_temperature 10.0 \
+--final_temperature 1.0 \
+--temperature_decay_epochs 50 \
+--epochs 100
+
+# Resume from checkpoint
+uv run python train_distillation_staged.py \
+--teacher_config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--student_config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
+--teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
+--resume checkpoints/distillation_epoch_050.pth \
+--epochs 100
+```
+
+## ROI-Based Hierarchical Training
+
+### Standard Configuration Files
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B0`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B1`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B7`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B7`
+
+### Enhanced Configuration Files
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0_enhanced`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B0_enhanced`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B1_enhanced`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1_enhanced`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B7_enhanced`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B7_enhanced`
+- `rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r128x96m256x192_disttrans_contdet_baware_from_B7_enhanced`
+
+### Basic Training Commands
+
+```bash
+# Train B0 model with standard ROI size (development dataset)
+uv run python train_advanced.py \
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
+--epochs 10 \
+--batch_size 8
+
+# Train B1 model with enhanced ROI size (full dataset)
+uv run python train_advanced.py \
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r80x60m160x120_disttrans_contdet_baware_from_B1_enhanced \
 --train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
 --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
---data_stats data_analyze_full.json \
---epochs 150 \
---batch_size 32 \
---lr 2e-3 \
---optimizer adamw \
---weight_decay 5e-5 \
---scheduler cosine \
---min_lr 1e-7 \
---gradient_clip 10.0 \
---num_workers 16 \
---ce_weight 1.0 \
---dice_weight 2.0 \
---validate_every 1 \
---save_every 1
+--epochs 100 \
+--batch_size 6
+
+# Train B7 model with ultra ROI size
+uv run python train_advanced.py \
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r128x96m256x192_disttrans_contdet_baware_from_B7_enhanced \
+--train_ann data/annotations/instances_train2017_person_only_no_crowd.json \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+--epochs 100 \
+--batch_size 4
 ```
 
-#### Fine-tuning from Checkpoint
+### Advanced Training Options
+
 ```bash
-# Resume training from checkpoint until original epoch count
-uv run python main.py \
---resume checkpoints/best_model.pth \
---epochs 50 \
+# Resume training from checkpoint
+uv run python train_advanced.py \
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
+--resume experiments/*/checkpoints/checkpoint_epoch_0050_640x640_0750.pth \
+--epochs 100
+
+# Fine-tuning with smaller learning rate
+uv run python train_advanced.py \
+--config rgb_hierarchical_unet_v2_fullimage_pretrained_peopleseg_r64x48m128x96_disttrans_contdet_baware_from_B0 \
+--pretrained_checkpoint experiments/*/checkpoints/best_model_*.pth \
+--learning_rate 1e-5 \
+--epochs 20
+```
+
+### Validation Commands
+
+```bash
+# Validate single checkpoint
+uv run python validate_advanced.py \
+experiments/*/checkpoints/best_model_epoch_*_640x640_*.pth \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
+--batch_size 16
+
+# Validate multiple checkpoints
+uv run python validate_advanced.py \
+"experiments/*/checkpoints/best_model*.pth" \
+--multiple \
+--val_ann data/annotations/instances_val2017_person_only_no_crowd.json
+
+# Validation with visualization
+uv run python validate_advanced.py \
+experiments/*/checkpoints/best_model_*.pth \
+--visualize \
+--num_visualize 20 \
+--output_dir validation_results
+```
+
+## ONNX Export
+
+### Export Scripts
+- `export_peopleseg_onnx.py`: Export pretrained UNet models
+- `export_hierarchical_instance_peopleseg_onnx.py`: Export full hierarchical models
+- `export_bilateral_filter.py`: Export bilateral filter post-processing
+- `export_edge_smoothing_onnx.py`: Export edge smoothing modules
+
+### Basic Export Commands
+
+```bash
+# Export B0 model to ONNX
+uv run python export_hierarchical_instance_peopleseg_onnx.py \
+experiments/*/checkpoints/best_model_b0_*.pth \
+--output models/b0_model.onnx \
+--image_size 640,640
+
+# Export B1 model with 1-pixel dilation
+uv run python export_hierarchical_instance_peopleseg_onnx.py \
+experiments/*/checkpoints/best_model_b1_*.pth \
+--output models/b1_model_dil2.onnx \
+--image_size 640,640 \
+--dilation_pixels 1
+
+# Export B7 model with custom ROI size
+uv run python export_hierarchical_instance_peopleseg_onnx.py \
+experiments/*/checkpoints/best_model_b7_*.pth \
+--output models/b7_model_ultra.onnx \
+--image_size 1024,1024 \
+--roi_size 128,96 \
+--mask_size 256,192
+```
+
+### Export Post-Processing Modules
+
+```bash
+# Export edge smoothing module
+uv run python export_edge_smoothing_onnx.py \
+--output models/edge_smoothing.onnx \
+--threshold 0.5 \
+--blur_strength 3.0
+
+# Export bilateral filter
+uv run python export_bilateral_filter.py \
+--output models/bilateral_filter.onnx \
+--d 9 \
+--sigma_color 75 \
+--sigma_space 75
+```
+
+### ONNX Optimization
+
+```bash
+# Optimize ONNX model with onnxsim
+uv run python -m onnxsim models/b0_model.onnx models/b0_model_opt.onnx
+
+# Verify optimized model
+uv run python -c "import onnx; model = onnx.load('models/b0_model_opt.onnx'); onnx.checker.check_model(model); print('Model is valid')"
+```
+
+## Test Inference
+
+### Test Script: `test_hierarchical_instance_peopleseg_onnx.py`
+
+### Basic Testing
+
+```bash
+# Test ONNX model on validation images
+uv run python test_hierarchical_instance_peopleseg_onnx.py \
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
+--images_dir data/images/val2017 \
+--num_images 5 \
+--output_dir test_outputs
+
+# Test with CUDA provider
+uv run python test_hierarchical_instance_peopleseg_onnx.py \
+--onnx models/b1_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--provider cuda \
+--num_images 10 \
+--output_dir test_outputs_cuda
+```
+
+### Advanced Testing Options
+
+```bash
+# Test with binary mask visualization (green overlay)
+uv run python test_hierarchical_instance_peopleseg_onnx.py \
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 20 \
+--binary_mode \
+--alpha 0.7 \
+--output_dir test_binary_masks
+
+# Test with custom score threshold
+uv run python test_hierarchical_instance_peopleseg_onnx.py \
+--onnx models/b7_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 15 \
+--score_threshold 0.5 \
+--save_masks \
+--output_dir test_high_confidence
+
+# Batch processing test
+uv run python test_hierarchical_instance_peopleseg_onnx.py \
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 100 \
 --batch_size 8 \
---lr 1e-4 \
---scheduler cosine \
---min_lr 1e-7 \
---dice_weight 3.0 \
---validate_every 1 \
---save_every 1
-
-# Train for additional epochs from checkpoint
-uv run python main.py \
---resume checkpoints/checkpoint_epoch_0010_640x640_0850.pth \
---resume_epochs 20 \
---batch_size 8 \
---lr 5e-5 \
---scheduler cosine \
---min_lr 1e-7 \
---dice_weight 3.0
+--output_dir batch_test_outputs
 ```
 
-### Parameter Selection Guidelines
+### Performance Benchmarking
 
-#### Learning Rate
-- **Small dataset (100-500 images)**: 1e-4 to 5e-4
-- **Medium dataset (500-5000 images)**: 5e-4 to 1e-3
-- **Large dataset (5000+ images)**: 1e-3 to 2e-3
-- **Fine-tuning**: 1e-5 to 1e-4
-
-#### Batch Size
-- **GPU Memory < 8GB**: 4-8
-- **GPU Memory 8-16GB**: 8-16
-- **GPU Memory > 16GB**: 16-32
-- Larger batch sizes generally lead to more stable training
-
-#### Optimizer Choice
-- **AdamW** (default): Best for most cases, good convergence
-- **Adam**: Slightly faster, but less regularization
-- **SGD**: More stable but slower convergence, good for fine-tuning
-
-#### Scheduler Strategy
-- **Cosine** (recommended): Smooth decay, works well for most cases
-- **Step**: Good when you know specific epochs where learning should drop
-- **Exponential**: Continuous decay, good for long training
-- **None**: Fixed learning rate, only for short experiments
-
-#### Loss Weights
-- **CE weight**: 1.0 (default) - Controls classification accuracy
-- **Dice weight**: 1.0-3.0 - Higher values improve mask quality
-  - Start with 1.0 for balanced training
-  - Increase to 2.0-3.0 if masks are not sharp enough
-  - Use 3.0+ for fine-tuning to refine mask boundaries
-
-#### Gradient Clipping
-- **0** (disabled): For stable datasets
-- **5.0**: Recommended for most training
-- **10.0**: For larger batch sizes or unstable gradients
-- **1.0**: For very unstable training (rare)
-
-#### Data Augmentation (built-in)
-The dataset automatically applies:
-- Random horizontal flipping
-- Random slight scaling
-- Color jittering (brightness, contrast, saturation)
-
-### Memory Optimization
-
-If you encounter CUDA out of memory errors:
-
-1. **Reduce batch size**: Halve the batch size
-2. **Enable gradient accumulation** (modify code):
-   ```bash
-   --batch_size 4 --gradient_accumulation 4  # Effective batch size 16
-   ```
-3. **Reduce number of workers**: `--num_workers 2`
-4. **Use mixed precision training** (requires code modification)
-
-### Training Monitoring
-
-Monitor these metrics during training:
-- **Training Loss**: Should decrease steadily
-- **Validation mIoU**: Main metric, should increase
-- **Learning Rate**: Check it's decaying as expected
-- **CE vs Dice Loss**: Both should decrease, but at different rates
-
-Use TensorBoard to monitor:
 ```bash
-tensorboard --logdir logs
-```
+# Benchmark inference speed
+uv run python test_hierarchical_instance_peopleseg_onnx.py \
+--onnx models/b0_model_opt.onnx \
+--annotations data/annotations/instances_val2017_person_only_no_crowd.json \
+--num_images 50 \
+--benchmark \
+--provider cuda
 
-### Common Issues and Solutions
-
-1. **Loss becomes NaN**
-   - Reduce learning rate
-   - Enable gradient clipping
-   - Check for corrupted images in dataset
-
-2. **Validation mIoU not improving**
-   - Reduce learning rate
-   - Increase dice weight
-   - Check if model is overfitting (train loss << val loss)
-
-3. **Training too slow**
-   - Increase batch size if GPU memory allows
-   - Use more workers: `--num_workers 8`
-   - Ensure data is on SSD, not HDD
-
-4. **Masks too blurry**
-   - Increase dice weight: `--dice_weight 3.0`
-   - Train for more epochs
-   - Reduce learning rate for fine details
-
-### Advanced Training Strategies
-
-#### Progressive Training
-Start with small dataset, then expand:
-```bash
-# Stage 1: 100 images, 10 epochs
-uv run python main.py --epochs 10 [... other params]
-
-# Stage 2: 500 images, resume from stage 1
-uv run python main.py --resume checkpoints/best_model.pth \
-  --train_ann [..._500.json] --epochs 30
-
-# Stage 3: Full dataset
-uv run python main.py --resume checkpoints/best_model.pth \
-  --train_ann [..._full.json] --epochs 100
-```
-
-#### Ensemble Training
-Train multiple models with different seeds:
-```bash
-for seed in 42 123 456; do
-  uv run python main.py --seed $seed \
-    --checkpoint_dir checkpoints/seed_$seed \
-    [... other params]
+# Compare different model variants
+for model in b0 b1 b7; do
+  echo "Testing $model model..."
+  uv run python test_hierarchical_instance_peopleseg_onnx.py \
+    --onnx models/${model}_model_opt.onnx \
+    --annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
+    --num_images 20 \
+    --benchmark \
+    --output_dir benchmark_${model}
 done
 ```
 
-See `CLAUDE.md` for additional training instructions and command examples.
-
-## Validation
-
-### Standalone Validation
-
-You can run validation on trained checkpoints without running the full training pipeline using the `validate.py` script.
-
-#### Validate a Single Checkpoint
-
-```bash
-# Validate best model
-uv run python validate.py \
---checkpoint checkpoints/best_model.pth
-
-# Validate specific checkpoint with custom settings
-uv run python validate.py \
---checkpoint checkpoints/checkpoint_epoch_0050_640x640_0850.pth \
---val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
---data_stats data_analyze_full.json \
---batch_size 16 \
---num_workers 8
-
-# Validate all images in the validation set
-uv run python validate.py \
---checkpoint checkpoints/best_model.pth \
---validate_all
-
-# Use TensorRT for maximum performance
-uv run python validate.py \
---checkpoint checkpoints/best_model.pth \
---execution_provider tensorrt
-
-# Use CPU execution
-uv run python validate.py \
---checkpoint checkpoints/best_model.pth \
---execution_provider cpu \
---device cpu
-```
-
-#### Validate Multiple Checkpoints
-
-```bash
-# Validate all checkpoints in directory
-uv run python validate.py \
---checkpoint "checkpoints/*.pth" \
---multiple
-
-# Validate checkpoints matching pattern
-uv run python validate.py \
---checkpoint "checkpoints/checkpoint_epoch_00*.pth" \
---multiple \
---no_visualization  # Skip visualization generation for faster validation
-```
-
-#### Command Line Arguments
-
-- `--checkpoint`: Path to checkpoint file or glob pattern (with --multiple) [required]
-- `--val_ann`: Validation annotation file (default: 100 image subset)
-- `--val_img_dir`: Validation images directory (default: data/images/val2017)
-- `--onnx_model`: YOLO ONNX model path
-- `--data_stats`: Data statistics file for class weights
-- `--batch_size`: Batch size for validation (default: 8)
-- `--num_workers`: Number of data loader workers (default: 4)
-- `--device`: Device to use - cuda/cpu (default: cuda)
-- `--no_visualization`: Skip generating visualization images
-- `--val_output_dir`: Output directory for visualizations
-- `--multiple`: Enable validation of multiple checkpoints using glob pattern
-- `--validate_all`: Validate all images from the annotation file instead of just the 4 default test images
-- `--execution_provider`: Execution provider for ONNX Runtime - cpu/cuda/tensorrt (default: cuda)
-
-#### Output
-
-The validation script provides:
-- Detailed metrics for each checkpoint (Loss, CE Loss, Dice Loss, mIoU)
-- Comparison table when validating multiple checkpoints
-- Optional visualization images (same as during training)
-- Best checkpoint identification based on mIoU
-
-### Validation During Training
-
-Validation is automatically performed during training based on the `--validate_every` parameter. To run validation only without training:
-
-```bash
-# Using main.py with test_only flag
-uv run python main.py \
---test_only \
---resume checkpoints/best_model.pth
-```
-
-## GPU Acceleration and TensorRT Support
-
-### Installation
-
-The project supports GPU acceleration through ONNX Runtime GPU and TensorRT:
-
-```bash
-# Already included in the environment
-uv add onnxruntime-gpu tensorrt
-```
-
-### Performance Comparison
-
-Based on inference tests with the segmentation model:
-
-| Provider | Average Inference Time | Speedup |
-|----------|----------------------|---------|
-| CPU      | 74.57 ms            | 1.0x    |
-| CUDA     | 10.07 ms            | 7.4x    |
-| TensorRT (first run) | 19.6 s* | - |
-| **TensorRT (cached)** | **4.04 ms** | **18.4x** |
-
-*First run includes engine building time. Subsequent runs use cached engine.
-
-### Usage
-
-The system automatically detects and uses the best available provider:
-
-1. **TensorRT** (fastest) - If available, with engine caching and FP16 optimization
-2. **CUDA** (fast) - If CUDA is available
-3. **CPU** (fallback) - Always available
-
-**TensorRT Features:**
-- **Engine Caching**: Engines are cached in the same directory as the ONNX model
-- **FP16 Optimization**: Automatic mixed precision for better performance
-- **First Run**: Takes time to build and optimize the engine
-- **Subsequent Runs**: Ultra-fast inference using cached engine
-
-### Provider Selection
-
-You can manually specify providers when needed:
-
-```python
-# Feature extraction with specific providers
-extractor = YOLOv9FeatureExtractor(
-    'ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx',
-    device='cuda',
-    providers=['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
-)
-
-# ONNX Runtime session with TensorRT
-import onnxruntime as ort
-session = ort.InferenceSession(
-    'test_model.onnx',
-    providers=['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
-)
-```
-
-### Troubleshooting
-
-If TensorRT is not working:
-
-1. **Check GPU compatibility**: Ensure your GPU supports TensorRT
-2. **CUDA version**: Make sure CUDA is properly installed
-3. **Memory**: TensorRT requires additional GPU memory for optimization
-4. **Fallback**: The system will automatically fall back to CUDA or CPU
-
 ## License
 
-MIT License - See LICENSE file for details.
+This project is licensed under the MIT License - see below for details:
+
+```
+MIT License
+
+Copyright (c) 2025 Katsuya Hyodo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Citations and Acknowledgments
+
+This project builds upon several excellent works in the computer vision community:
+
+### People Segmentation
+We gratefully acknowledge the work by Vladimir Iglovikov (Ternaus) on people segmentation:
+- Repository: [https://github.com/ternaus/people_segmentation](https://github.com/ternaus/people_segmentation)
+- Paper: "TernausNet: U-Net with VGG11 Encoder Pre-Trained on ImageNet for Image Segmentation"
+
+### EfficientNet
+```bibtex
+@article{tan2019efficientnet,
+  title={EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks},
+  author={Tan, Mingxing and Le, Quoc V},
+  journal={arXiv preprint arXiv:1905.11946},
+  year={2019}
+}
+```
+
+### COCO Dataset
+```bibtex
+@inproceedings{lin2014microsoft,
+  title={Microsoft COCO: Common Objects in Context},
+  author={Lin, Tsung-Yi and Maire, Michael and Belongie, Serge and Hays, James and Perona, Pietro and Ramanan, Deva and Dollár, Piotr and Zitnick, C Lawrence},
+  booktitle={European Conference on Computer Vision},
+  pages={740--755},
+  year={2014},
+  organization={Springer}
+}
+```
+
+### U-Net Architecture
+```bibtex
+@inproceedings{ronneberger2015u,
+  title={U-Net: Convolutional Networks for Biomedical Image Segmentation},
+  author={Ronneberger, Olaf and Fischer, Philipp and Brox, Thomas},
+  booktitle={International Conference on Medical Image Computing and Computer-Assisted Intervention},
+  pages={234--241},
+  year={2015},
+  organization={Springer}
+}
+```
+
+### Knowledge Distillation
+```bibtex
+@article{hinton2015distilling,
+  title={Distilling the Knowledge in a Neural Network},
+  author={Hinton, Geoffrey and Vinyals, Oriol and Dean, Jeff},
+  journal={arXiv preprint arXiv:1503.02531},
+  year={2015}
+}
+```
+
+### Special Thanks
+- The PyTorch team for the excellent deep learning framework
+- The ONNX community for cross-platform model deployment tools
+- The Albumentations team for powerful augmentation pipelines
+- The Segmentation Models PyTorch contributors for pre-trained encoders

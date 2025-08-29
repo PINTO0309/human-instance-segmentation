@@ -1,0 +1,574 @@
+"""UNet decoder with YOLO feature distillation for knowledge distillation training.
+
+This module implements a UNet model that learns from both:
+1. Teacher UNet's segmentation output
+2. YOLOv9's intermediate feature representations
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from typing import Dict, Tuple, Optional, Union, List
+import segmentation_models_pytorch as smp
+from ..feature_extractor import YOLOFeatureExtractor
+
+
+class UNetWithYOLOFeatureDistillation(nn.Module):
+    """UNet model with YOLO feature distillation capability.
+    
+    This model can learn from:
+    - Teacher UNet's output (standard distillation)
+    - YOLOv9's intermediate features (feature distillation)
+    
+    During inference, the projection layer is not used.
+    """
+    
+    def __init__(
+        self,
+        encoder_name: str = "timm-efficientnet-b0",
+        encoder_weights: Optional[str] = "imagenet",
+        freeze_encoder: bool = True,
+        projection_hidden_dim: Optional[int] = 768  # Hidden dimension for projection
+    ):
+        """Initialize UNet with feature distillation.
+        
+        Args:
+            encoder_name: Name of encoder architecture
+            encoder_weights: Pretrained weights
+            freeze_encoder: Whether to freeze encoder weights
+            projection_hidden_dim: Hidden dimension for feature projection (None = direct projection)
+        """
+        super().__init__()
+        
+        # Create full UNet model
+        self.unet = smp.Unet(
+            encoder_name=encoder_name,
+            encoder_weights=encoder_weights,
+            in_channels=3,
+            classes=1,
+            activation=None
+        )
+        
+        # Freeze encoder if requested
+        if freeze_encoder:
+            for param in self.unet.encoder.parameters():
+                param.requires_grad = False
+        
+        # Get encoder output channels at different levels
+        # For EfficientNet-B0, the channels are typically:
+        # [3, 32, 24, 40, 112, 320] at different resolutions
+        # [640, 320, 160, 80, 40, 20] spatial resolutions
+        self.encoder_channels = self.unet.encoder.out_channels
+        
+        # Use feature at 80x80 resolution (index 3) for YOLO feature matching
+        # For B0: 40 channels at 80x80 resolution
+        self.feature_index = 3  # Index of 80x80 feature
+        feature_channels = self.encoder_channels[self.feature_index]  # 40 for B0 at 80x80
+        
+        # Feature projection layer (only used during training)
+        # Projects from student feature (40 for B0 at 80x80) to YOLO features (1024 at 80x80)
+        if projection_hidden_dim is not None:
+            self.feature_projector = nn.Sequential(
+                nn.Conv2d(feature_channels, projection_hidden_dim, kernel_size=1),
+                nn.BatchNorm2d(projection_hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(projection_hidden_dim, 1024, kernel_size=1)
+            )
+        else:
+            # Direct projection
+            self.feature_projector = nn.Conv2d(feature_channels, 1024, kernel_size=1)
+        
+        # Initialize projection weights
+        for m in self.feature_projector.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x: torch.Tensor, return_features: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Forward pass through UNet.
+        
+        Args:
+            x: Input image tensor (B, 3, H, W)
+            return_features: If True, also return projected features for distillation
+            
+        Returns:
+            If return_features=False: Segmentation output (B, 1, H, W)
+            If return_features=True: (segmentation_output, projected_features)
+        """
+        # Encode features
+        features = self.unet.encoder(x)
+        
+        # Get features at 80x80 resolution if needed for distillation
+        if return_features:
+            # Use feature at index 3 which is 80x80 resolution (40 channels for B0)
+            feature_80x80 = features[self.feature_index]  # 40x80x80 for B0
+            projected_features = self.feature_projector(feature_80x80)  # Project to 1024x80x80
+        
+        # Decode to segmentation
+        # UnetDecoder expects features as a list/tuple, not unpacked
+        decoder_output = self.unet.decoder(features)
+        segmentation = self.unet.segmentation_head(decoder_output)
+        
+        if return_features:
+            return segmentation, projected_features
+        else:
+            return segmentation
+    
+    def get_decoder_parameters(self):
+        """Get decoder and projection parameters for optimization."""
+        # Include both decoder and projection layer parameters
+        params = list(self.unet.decoder.parameters()) + \
+                 list(self.unet.segmentation_head.parameters()) + \
+                 list(self.feature_projector.parameters())
+        return params
+
+
+class YOLOFeatureDistillationWrapper(nn.Module):
+    """Wrapper for distillation training with YOLO features.
+    
+    This wrapper handles:
+    1. Student model with feature projection
+    2. Teacher UNet model
+    3. YOLO feature extraction
+    """
+    
+    def __init__(
+        self,
+        student_encoder: str = "timm-efficientnet-b0",
+        teacher_checkpoint_path: str = "ext_extractor/2020-09-23a.pth",
+        yolo_onnx_path: str = "ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx",
+        yolo_target_layer: str = "segmentation_model_34_Concat_output_0",
+        device: str = "cuda",
+        freeze_teacher: bool = True,
+        projection_hidden_dim: Optional[int] = 768
+    ):
+        """Initialize distillation wrapper with YOLO features.
+        
+        Args:
+            student_encoder: Student model encoder name
+            teacher_checkpoint_path: Path to teacher model checkpoint
+            yolo_onnx_path: Path to YOLO ONNX model
+            yolo_target_layer: YOLO layer to extract features from
+            device: Device to use
+            freeze_teacher: Whether to freeze teacher model
+            projection_hidden_dim: Hidden dimension for projection
+        """
+        super().__init__()
+        
+        self.device = device
+        
+        # Initialize student model with projection capability
+        self.student = UNetWithYOLOFeatureDistillation(
+            encoder_name=student_encoder,
+            encoder_weights="imagenet",
+            freeze_encoder=True,  # Freeze student encoder too
+            projection_hidden_dim=projection_hidden_dim
+        ).to(device)
+        
+        # Load teacher model (same as train_distillation_staged.py)
+        print(f"Loading teacher model from {teacher_checkpoint_path}")
+        
+        # Create teacher model with B3 encoder
+        self.teacher = smp.Unet(
+            encoder_name="timm-efficientnet-b3",
+            encoder_weights="imagenet",  # Use ImageNet pretrained weights as base
+            in_channels=3,
+            classes=1,
+            activation=None
+        ).to(device)
+        
+        # Load teacher checkpoint
+        checkpoint = torch.load(teacher_checkpoint_path, map_location=device)
+        
+        # Extract state dict from checkpoint
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        else:
+            state_dict = checkpoint
+        
+        # Process state dict keys to remove 'model.' prefix if present
+        processed_state_dict = {}
+        for key, value in state_dict.items():
+            # Remove 'model.' prefix if present
+            new_key = key.replace('model.', '') if key.startswith('model.') else key
+            processed_state_dict[new_key] = value
+        
+        # Load the processed state dict
+        self.teacher.load_state_dict(processed_state_dict)
+        
+        # Freeze teacher
+        if freeze_teacher:
+            for param in self.teacher.parameters():
+                param.requires_grad = False
+        self.teacher.eval()
+        
+        # Initialize YOLO feature extractor
+        print(f"Initializing YOLO feature extractor from {yolo_onnx_path}")
+        self.yolo_extractor = YOLOFeatureExtractor(
+            onnx_path=yolo_onnx_path,
+            target_layer=yolo_target_layer,
+            device="cuda" if device == "cuda" else "cpu"
+        )
+        
+        # Cache for YOLO features (to avoid redundant extraction)
+        self.yolo_features_cache = None
+        self.cache_input_hash = None
+    
+    def extract_yolo_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Extract YOLO features with caching.
+        
+        Args:
+            x: Input images (B, 3, H, W) - normalized with ImageNet stats
+            
+        Returns:
+            YOLO features (B, 1024, 80, 80)
+        """
+        # Create a simple hash of the input to check if we need to recompute
+        input_hash = (x.shape, x.device, x.data_ptr())
+        
+        if self.cache_input_hash == input_hash and self.yolo_features_cache is not None:
+            return self.yolo_features_cache
+        
+        # YOLO expects images normalized to [0, 1] without ImageNet normalization
+        # Denormalize from ImageNet normalization
+        with torch.no_grad():
+            # ImageNet mean and std
+            mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(x.device)
+            std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(x.device)
+            
+            # Denormalize: x = (x_norm * std) + mean
+            x_denorm = (x * std) + mean
+            
+            # Clamp to [0, 1] range (YOLO expects this)
+            x_denorm = torch.clamp(x_denorm, 0, 1)
+            
+            # Extract features using YOLO
+            yolo_features = self.yolo_extractor.extract_features(x_denorm)
+        
+        # Cache the features
+        self.yolo_features_cache = yolo_features.detach()
+        self.cache_input_hash = input_hash
+        
+        return self.yolo_features_cache
+    
+    def forward(self, x: torch.Tensor, extract_features: bool = True) -> Dict[str, torch.Tensor]:
+        """Forward pass for distillation training.
+        
+        Args:
+            x: Input images (B, 3, H, W)
+            extract_features: Whether to extract features for distillation
+            
+        Returns:
+            Dictionary containing:
+                - student_output: Student segmentation output
+                - teacher_output: Teacher segmentation output
+                - student_features: Student projected features (if extract_features=True)
+                - yolo_features: YOLO features (if extract_features=True)
+        """
+        # Teacher forward pass
+        with torch.no_grad():
+            teacher_output = self.teacher(x)
+        
+        # Student forward pass
+        if extract_features:
+            student_output, student_features = self.student(x, return_features=True)
+            
+            # Extract YOLO features
+            yolo_features = self.extract_yolo_features(x)
+            
+            return {
+                'student_output': student_output,
+                'teacher_output': teacher_output,
+                'student_features': student_features,
+                'yolo_features': yolo_features
+            }
+        else:
+            student_output = self.student(x, return_features=False)
+            return {
+                'student_output': student_output,
+                'teacher_output': teacher_output
+            }
+
+
+class YOLODistillationLoss(nn.Module):
+    """Combined loss for YOLO feature distillation.
+    
+    Combines:
+    1. Output distillation loss (KL, MSE, BCE, Dice)
+    2. Feature alignment loss (L2 or Cosine similarity)
+    """
+    
+    def __init__(
+        self,
+        kl_weight: float = 1.0,
+        mse_weight: float = 0.5,
+        bce_weight: float = 0.5,
+        dice_weight: float = 1.0,
+        feature_weight: float = 1.0,
+        feature_loss_type: str = "mse",  # "mse" or "cosine"
+        temperature: float = 3.0
+    ):
+        """Initialize combined loss.
+        
+        Args:
+            kl_weight: Weight for KL divergence loss
+            mse_weight: Weight for MSE loss
+            bce_weight: Weight for BCE loss
+            dice_weight: Weight for Dice loss
+            feature_weight: Weight for feature alignment loss
+            feature_loss_type: Type of feature loss ("mse" or "cosine")
+            temperature: Temperature for KL divergence
+        """
+        super().__init__()
+        
+        self.kl_weight = kl_weight
+        self.mse_weight = mse_weight
+        self.bce_weight = bce_weight
+        self.dice_weight = dice_weight
+        self.feature_weight = feature_weight
+        self.feature_loss_type = feature_loss_type
+        self.temperature = temperature
+        self.initial_temperature = temperature  # Store initial temperature for scheduling
+        
+        # Initialize loss functions
+        self.kl_loss = nn.KLDivLoss(reduction='batchmean')
+        self.mse_loss = nn.MSELoss()
+        self.bce_loss = nn.BCEWithLogitsLoss()
+    
+    def update_temperature(self, current_epoch: int, total_epochs: int, 
+                          final_temperature: float = 1.0, 
+                          schedule_type: str = "linear") -> float:
+        """Update temperature based on schedule.
+        
+        Args:
+            current_epoch: Current training epoch (0-indexed)
+            total_epochs: Total number of training epochs
+            final_temperature: Target temperature at the end of training
+            schedule_type: Type of schedule ("linear", "cosine", or "exponential")
+            
+        Returns:
+            Updated temperature value
+        """
+        if total_epochs <= 1:
+            self.temperature = final_temperature
+            return self.temperature
+            
+        progress = current_epoch / (total_epochs - 1)
+        
+        if schedule_type == "linear":
+            # Linear interpolation from initial to final
+            self.temperature = self.initial_temperature + \
+                             (final_temperature - self.initial_temperature) * progress
+                             
+        elif schedule_type == "cosine":
+            # Cosine annealing
+            import math
+            cosine_factor = 0.5 * (1 + math.cos(math.pi * progress))
+            self.temperature = final_temperature + \
+                             (self.initial_temperature - final_temperature) * cosine_factor
+                             
+        elif schedule_type == "exponential":
+            # Exponential decay
+            import math
+            decay_rate = math.log(final_temperature / self.initial_temperature)
+            self.temperature = self.initial_temperature * math.exp(decay_rate * progress)
+            
+        else:
+            # Default to no scheduling
+            pass
+            
+        return self.temperature
+    
+    def get_temperature(self) -> float:
+        """Get current temperature value."""
+        return self.temperature
+    
+    def dice_loss(self, pred: torch.Tensor, target: torch.Tensor, smooth: float = 1e-5) -> torch.Tensor:
+        """Compute Dice loss with mixed precision stability."""
+        # Use larger smooth value for fp16
+        if pred.dtype == torch.float16:
+            smooth = 1e-4
+        
+        pred_sigmoid = torch.sigmoid(pred)
+        intersection = (pred_sigmoid * target).sum(dim=(2, 3))
+        union = pred_sigmoid.sum(dim=(2, 3)) + target.sum(dim=(2, 3))
+        
+        # Clamp to prevent division issues
+        dice = (2.0 * intersection + smooth) / (union + smooth).clamp(min=smooth)
+        dice_loss = 1.0 - dice.mean()
+        
+        # Safety clamp
+        return torch.clamp(dice_loss, min=0.0, max=2.0)
+    
+    def feature_alignment_loss(self, student_features: torch.Tensor, yolo_features: torch.Tensor) -> torch.Tensor:
+        """Compute feature alignment loss.
+        
+        Args:
+            student_features: Student projected features (B, 1024, 80, 80)
+            yolo_features: YOLO features (B, 1024, 80, 80)
+            
+        Returns:
+            Feature alignment loss
+        """
+        if self.feature_loss_type == "mse":
+            # MSE loss with gradient clipping for stability
+            loss = F.mse_loss(student_features, yolo_features)
+            # Clamp to prevent explosion in mixed precision
+            return torch.clamp(loss, min=0.0, max=10.0)
+        
+        elif self.feature_loss_type == "cosine":
+            # Cosine similarity loss
+            # Flatten spatial dimensions
+            student_flat = student_features.view(student_features.size(0), student_features.size(1), -1)  # B, C, H*W
+            yolo_flat = yolo_features.view(yolo_features.size(0), yolo_features.size(1), -1)  # B, C, H*W
+            
+            # Normalize
+            student_norm = F.normalize(student_flat, p=2, dim=1)
+            yolo_norm = F.normalize(yolo_flat, p=2, dim=1)
+            
+            # Compute cosine similarity
+            cosine_sim = (student_norm * yolo_norm).sum(dim=1).mean()  # Average over channels and spatial
+            
+            # Convert to loss (1 - similarity)
+            return 1.0 - cosine_sim.mean()
+        
+        else:
+            raise ValueError(f"Unknown feature loss type: {self.feature_loss_type}")
+    
+    def forward(
+        self, 
+        outputs: Dict[str, torch.Tensor],
+        ground_truth: torch.Tensor
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """Compute combined loss.
+        
+        Args:
+            outputs: Dictionary containing model outputs
+            ground_truth: Ground truth masks (B, 1, H, W)
+            
+        Returns:
+            Total loss and dictionary of individual losses
+        """
+        student_output = outputs['student_output']
+        teacher_output = outputs['teacher_output']
+        
+        # Output distillation losses for binary segmentation
+        # For binary outputs, use KL divergence between sigmoid outputs
+        with torch.no_grad():
+            teacher_sigmoid = torch.sigmoid(teacher_output / self.temperature)
+        student_sigmoid = torch.sigmoid(student_output / self.temperature)
+        
+        # Compute KL divergence for binary distributions
+        # KL(P||Q) = P * log(P/Q) + (1-P) * log((1-P)/(1-Q))
+        # Use larger epsilon for mixed precision stability
+        eps = 1e-6 if student_output.dtype == torch.float16 else 1e-7
+        
+        # Teacher probabilities (detached)
+        p = teacher_sigmoid.clamp(eps, 1 - eps)
+        # Student probabilities
+        q = student_sigmoid.clamp(eps, 1 - eps)
+        
+        # KL divergence for Bernoulli distributions with stability checks
+        kl_pos = p * torch.log(p / q.clamp(min=eps))
+        kl_neg = (1 - p) * torch.log((1 - p).clamp(min=eps) / (1 - q).clamp(min=eps))
+        
+        # Check for NaN/Inf and clamp extreme values
+        kl_pos = torch.nan_to_num(kl_pos, nan=0.0, posinf=10.0, neginf=-10.0)
+        kl_neg = torch.nan_to_num(kl_neg, nan=0.0, posinf=10.0, neginf=-10.0)
+        
+        kl_loss = (kl_pos + kl_neg).mean() * self.temperature
+        
+        # Additional safety clamp for the final loss
+        kl_loss = torch.clamp(kl_loss, min=0.0, max=100.0)
+        
+        # MSE loss
+        mse_loss = self.mse_loss(student_output, teacher_output.detach())
+        
+        # BCE loss with ground truth
+        bce_loss = self.bce_loss(student_output, ground_truth)
+        
+        # Dice loss with ground truth
+        dice_loss = self.dice_loss(student_output, ground_truth)
+        
+        # Feature alignment loss (if features are provided)
+        feature_loss = torch.tensor(0.0).to(student_output.device)
+        if 'student_features' in outputs and 'yolo_features' in outputs:
+            feature_loss = self.feature_alignment_loss(
+                outputs['student_features'],
+                outputs['yolo_features'].detach()  # Detach YOLO features
+            )
+        
+        # Combine losses with NaN checking
+        total_loss = (
+            self.kl_weight * kl_loss +
+            self.mse_weight * mse_loss +
+            self.bce_weight * bce_loss +
+            self.dice_weight * dice_loss +
+            self.feature_weight * feature_loss
+        )
+        
+        # Final safety check for NaN/Inf
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print(f"Warning: NaN/Inf detected in loss. KL: {kl_loss.item():.4f}, "
+                  f"MSE: {mse_loss.item():.4f}, BCE: {bce_loss.item():.4f}, "
+                  f"Dice: {dice_loss.item():.4f}, Feature: {feature_loss.item():.4f}")
+            total_loss = torch.tensor(1.0, device=total_loss.device, requires_grad=True)
+        
+        # Return losses
+        loss_dict = {
+            'kl_loss': kl_loss.item(),
+            'mse_loss': mse_loss.item(),
+            'bce_loss': bce_loss.item(),
+            'dice_loss': dice_loss.item(),
+            'feature_loss': feature_loss.item(),
+        }
+        
+        return total_loss, loss_dict
+
+
+def create_yolo_distillation_model(
+    student_encoder: str = "timm-efficientnet-b0",
+    teacher_checkpoint: str = "ext_extractor/2020-09-23a.pth",
+    yolo_onnx_path: str = "ext_extractor/yolov9_e_wholebody25_Nx3x640x640_featext_optimized.onnx",
+    device: str = "cuda"
+) -> Tuple[YOLOFeatureDistillationWrapper, YOLODistillationLoss]:
+    """Create model and loss for YOLO feature distillation.
+    
+    Args:
+        student_encoder: Student encoder architecture
+        teacher_checkpoint: Path to teacher checkpoint
+        yolo_onnx_path: Path to YOLO ONNX model
+        device: Device to use
+        
+    Returns:
+        Model wrapper and loss function
+    """
+    # Create model wrapper
+    model = YOLOFeatureDistillationWrapper(
+        student_encoder=student_encoder,
+        teacher_checkpoint_path=teacher_checkpoint,
+        yolo_onnx_path=yolo_onnx_path,
+        device=device,
+        freeze_teacher=True,
+        projection_hidden_dim=768  # Use hidden layer for better projection
+    )
+    
+    # Create loss function with balanced weights
+    loss_fn = YOLODistillationLoss(
+        kl_weight=1.0,
+        mse_weight=0.5,
+        bce_weight=0.5,
+        dice_weight=1.0,
+        feature_weight=0.5,  # Start with moderate feature weight
+        feature_loss_type="mse",  # Use MSE for stability
+        temperature=3.0
+    )
+    
+    return model, loss_fn

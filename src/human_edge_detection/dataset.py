@@ -26,7 +26,7 @@ class COCOInstanceSegmentationDataset(Dataset):
         annotation_file: str,
         image_dir: str,
         transform=None,
-        roi_padding: float = 0.1,
+        roi_padding: float = 0.0,  # Default: no padding
         mask_size: Tuple[int, int] = (56, 56),
         feature_size: Tuple[int, int] = (80, 80),
         image_size: Tuple[int, int] = (640, 640),
@@ -159,9 +159,6 @@ class COCOInstanceSegmentationDataset(Dataset):
                 # Only mark as non-target if not already marked as target
                 roi_mask[(other_mask_roi > 0) & (roi_mask == 0)] = 2
         
-        # Resize ROI mask to fixed size
-        roi_mask_resized = cv2.resize(roi_mask, self.mask_size, interpolation=cv2.INTER_NEAREST)
-        
         # Normalize ROI coordinates
         roi_norm = np.array([
             x1 / self.image_size[0],
@@ -172,9 +169,72 @@ class COCOInstanceSegmentationDataset(Dataset):
         
         # Apply transforms to image if provided
         if self.transform:
-            image_np = self.transform(image_np)
+            # Try albumentations-style call first
+            try:
+                # Check if transform has bbox processor (for ROI-safe transforms with HorizontalFlip)
+                if hasattr(self.transform, 'processors') and 'bboxes' in self.transform.processors:
+                    # Convert ROI to bbox format for albumentations (x1, y1, x2, y2)
+                    bbox = [[x1, y1, x2, y2]]
+                    class_labels = ['roi']
+                    
+                    # Pad ROI mask to full image size for transformation
+                    full_mask = np.zeros(image_np.shape[:2], dtype=np.uint8)
+                    full_mask[y1:y2, x1:x2] = roi_mask
+                    
+                    # Apply transform with bbox AND mask
+                    transformed = self.transform(
+                        image=image_np,
+                        mask=full_mask,  # Include full-size mask in transformation
+                        bboxes=bbox,
+                        class_labels=class_labels
+                    )
+                    image_np = transformed['image']
+                    full_mask_transformed = transformed['mask']  # Get transformed mask
+                    
+                    # Update ROI coordinates if bbox was transformed
+                    if transformed['bboxes']:
+                        x1_new, y1_new, x2_new, y2_new = transformed['bboxes'][0]
+                        # Update ROI coordinates
+                        x1, y1, x2, y2 = int(x1_new), int(y1_new), int(x2_new), int(y2_new)
+                        
+                        # Update normalized ROI coordinates
+                        roi_norm = np.array([
+                            x1 / self.image_size[0],
+                            y1 / self.image_size[1],
+                            x2 / self.image_size[0],
+                            y2 / self.image_size[1]
+                        ], dtype=np.float32)
+                    
+                    # Extract transformed ROI mask
+                    # Convert from tensor to numpy if needed
+                    if isinstance(full_mask_transformed, torch.Tensor):
+                        full_mask_transformed = full_mask_transformed.numpy()
+                    roi_mask = full_mask_transformed[y1:y2, x1:x2]
+                else:
+                    # Standard albumentations call without bbox
+                    transformed = self.transform(image=image_np)
+                    image_np = transformed['image']
+                    # Note: roi_mask remains unchanged for non-bbox transforms
+            except TypeError:
+                # Fallback to legacy transform (callable with single argument)
+                image_np = self.transform(image_np)
+                # Note: roi_mask remains unchanged for legacy transforms
+        # Resize ROI mask to fixed size (common for all paths)
+        # cv2.resize expects (width, height) but mask_size is (height, width)
+        # Ensure mask_size values are integers (handle tuple, list, or scalar)
+        if isinstance(self.mask_size, (tuple, list)):
+            mask_size_cv2 = (int(self.mask_size[1]), int(self.mask_size[0]))
         else:
-            # Default normalization
+            mask_size_cv2 = (int(self.mask_size), int(self.mask_size))
+        roi_mask_resized = cv2.resize(roi_mask, mask_size_cv2, interpolation=cv2.INTER_NEAREST)
+        
+        # Convert image to tensor if needed (since ToTensorV2 was removed from augmentations)
+        if self.transform and not isinstance(image_np, torch.Tensor):
+            # Augmented images are already normalized but need tensor conversion
+            # Albumentations returns HWC format, convert to CHW for PyTorch
+            image_np = torch.from_numpy(image_np.transpose(2, 0, 1))
+        elif not self.transform:
+            # Default normalization for non-augmented images
             image_np = image_np.astype(np.float32) / 255.0
             image_np = torch.from_numpy(image_np).permute(2, 0, 1)
         

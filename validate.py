@@ -5,6 +5,12 @@ import json
 import torch
 from pathlib import Path
 from typing import Dict, Optional
+import warnings
+
+# Suppress warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="torch.jit._trace")
+warnings.filterwarnings("ignore", message="Converting a tensor to a Python boolean might cause the trace to be incorrect")
 
 from src.human_edge_detection.feature_extractor import YOLOv9FeatureExtractor
 from src.human_edge_detection.model import create_model, ROIBatchProcessor
@@ -28,7 +34,7 @@ def validate_checkpoint(
     execution_provider: str = 'cuda'
 ) -> Dict[str, float]:
     """Run validation on a single checkpoint.
-    
+
     Args:
         checkpoint_path: Path to the checkpoint file
         val_annotation_file: Path to validation annotations
@@ -42,43 +48,43 @@ def validate_checkpoint(
         val_output_dir: Output directory for visualizations
         validate_all: Whether to validate all images from the annotation file instead of just the 4 default test images
         execution_provider: Execution provider for ONNX Runtime (cpu/cuda/tensorrt)
-        
+
     Returns:
         Dictionary containing validation metrics
     """
     print(f"Loading checkpoint: {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    
+
     # Extract epoch number from checkpoint
     epoch = checkpoint.get('epoch', 0)
     best_miou = checkpoint.get('best_miou', 0.0)
     checkpoint_miou = checkpoint.get('miou', 0.0)
-    
+
     print(f"Checkpoint info:")
     print(f"  Epoch: {epoch}")
     print(f"  Best mIoU: {best_miou:.4f}")
     print(f"  Checkpoint mIoU: {checkpoint_miou:.4f}")
-    
+
     # Load data statistics
     with open(data_stats_path, 'r') as f:
         data_stats = json.load(f)
     pixel_ratios = data_stats['pixel_ratios']
     separation_aware_weights = data_stats.get('separation_aware_weights', None)
-    
+
     print(f"\nData statistics:")
     print(f"  Background: {pixel_ratios['background']:.4f}")
     print(f"  Target: {pixel_ratios['target']:.4f}")
     print(f"  Non-target: {pixel_ratios['non_target']:.4f}")
-    
+
     # Create validation data loader directly
     from src.human_edge_detection.dataset import COCOInstanceSegmentationDataset
     from torch.utils.data import DataLoader
-    
+
     val_dataset = COCOInstanceSegmentationDataset(
         val_annotation_file,
         val_image_dir
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -86,9 +92,9 @@ def validate_checkpoint(
         num_workers=num_workers,
         pin_memory=True
     )
-    
+
     print(f"\nValidation dataset size: {len(val_loader.dataset)} samples")
-    
+
     # Setup providers based on execution_provider option
     if execution_provider == 'cpu':
         providers = ['CPUExecutionProvider']
@@ -97,14 +103,14 @@ def validate_checkpoint(
         providers = setup_tensorrt_providers(Path(onnx_model_path))
     else:  # cuda (default)
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-    
+
     # Create feature extractor
     feature_extractor = YOLOv9FeatureExtractor(
         onnx_path=onnx_model_path,
         device=device,
         providers=providers
     )
-    
+
     # Create model and load weights
     model = create_model(
         num_classes=3,
@@ -115,7 +121,7 @@ def validate_checkpoint(
     model.load_state_dict(checkpoint['model_state_dict'])
     model = model.to(device)
     model.eval()
-    
+
     # Create loss function
     loss_fn = create_loss_function(
         pixel_ratios=pixel_ratios,
@@ -126,14 +132,14 @@ def validate_checkpoint(
         device=device,
         separation_aware_weights=separation_aware_weights
     )
-    
+
     # Create a minimal trainer just for validation
     # We'll use dummy components since we're not training
     dummy_optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    
+
     # Import Trainer directly to avoid circular import issues
     from src.human_edge_detection.train_tutorial import Trainer
-    
+
     trainer = Trainer(
         model=model,
         feature_extractor=feature_extractor,
@@ -147,21 +153,21 @@ def validate_checkpoint(
         save_every=1,  # Not used
         validate_every=1  # Not used
     )
-    
+
     # Set epoch for proper visualization naming
     trainer.epoch = epoch - 1  # Trainer will add 1 in validate()
-    
+
     # Run validation
     print("\nRunning validation...")
     val_losses, miou = trainer.validate()
-    
+
     # Print results
     print(f"\nValidation Results:")
     print(f"  Total Loss: {val_losses['total_loss']:.4f}")
     print(f"  CE Loss: {val_losses['ce_loss']:.4f}")
     print(f"  Dice Loss: {val_losses['dice_loss']:.4f}")
     print(f"  mIoU: {miou:.4f} (excluding background)")
-    
+
     # Generate visualization if requested
     if generate_visualization:
         print("\nGenerating validation visualization...")
@@ -176,7 +182,7 @@ def validate_checkpoint(
         )
         visualizer.visualize_validation_images(epoch, validate_all=validate_all)
         print(f"Visualization saved to: {val_output_dir}/")
-    
+
     # Return metrics
     return {
         'epoch': epoch,
@@ -204,26 +210,26 @@ def validate_multiple_checkpoints(
     execution_provider: str = 'cuda'
 ):
     """Validate multiple checkpoints matching a pattern.
-    
+
     Args:
         checkpoint_pattern: Glob pattern for checkpoint files
         Other args same as validate_checkpoint
     """
     from glob import glob
-    
+
     checkpoint_files = sorted(glob(checkpoint_pattern))
     if not checkpoint_files:
         print(f"No checkpoint files found matching pattern: {checkpoint_pattern}")
         return
-    
+
     print(f"Found {len(checkpoint_files)} checkpoints to validate")
-    
+
     results = []
     for checkpoint_path in checkpoint_files:
         print(f"\n{'='*60}")
         print(f"Validating: {Path(checkpoint_path).name}")
         print(f"{'='*60}")
-        
+
         metrics = validate_checkpoint(
             checkpoint_path=checkpoint_path,
             val_annotation_file=val_annotation_file,
@@ -238,21 +244,21 @@ def validate_multiple_checkpoints(
             validate_all=validate_all,
             execution_provider=execution_provider
         )
-        
+
         metrics['checkpoint_file'] = Path(checkpoint_path).name
         results.append(metrics)
-    
+
     # Print summary
     print(f"\n{'='*60}")
     print("Validation Summary")
     print(f"{'='*60}")
     print(f"{'Checkpoint':<50} {'Epoch':>6} {'mIoU':>8} {'Loss':>8}")
     print("-" * 75)
-    
+
     for result in results:
         print(f"{result['checkpoint_file']:<50} {result['epoch']:>6} "
               f"{result['miou']:>8.4f} {result['total_loss']:>8.4f}")
-    
+
     # Find best checkpoint
     best_result = max(results, key=lambda x: x['miou'])
     print(f"\nBest checkpoint: {best_result['checkpoint_file']}")
@@ -262,11 +268,11 @@ def validate_multiple_checkpoints(
 
 def main():
     parser = argparse.ArgumentParser(description='Validate trained checkpoints')
-    
+
     # Checkpoint argument
     parser.add_argument('--checkpoint', type=str, required=True,
                         help='Path to checkpoint file or glob pattern for multiple files')
-    
+
     # Data arguments
     parser.add_argument('--val_ann', type=str,
                         default='data/annotations/instances_val2017_person_only_no_crowd_100.json',
@@ -280,7 +286,7 @@ def main():
     parser.add_argument('--data_stats', type=str,
                         default='data_analyze_100.json',
                         help='Data statistics file')
-    
+
     # Validation arguments
     parser.add_argument('--batch_size', type=int, default=8,
                         help='Batch size')
@@ -288,28 +294,28 @@ def main():
                         help='Number of data loader workers')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda/cpu)')
-    
+
     # Output arguments
     parser.add_argument('--no_visualization', action='store_true',
                         help='Skip generating visualization images')
     parser.add_argument('--val_output_dir', type=str, default='validation_results',
                         help='Validation visualization output directory')
-    
+
     # Multiple checkpoint validation
     parser.add_argument('--multiple', action='store_true',
                         help='Validate multiple checkpoints using glob pattern')
-    
+
     # All images validation
     parser.add_argument('--validate_all', action='store_true',
                         help='Validate all images from the annotation file instead of just the 4 default test images')
-    
+
     # Execution provider
     parser.add_argument('--execution_provider', type=str, default='cuda',
                         choices=['cpu', 'cuda', 'tensorrt'],
                         help='Execution provider for ONNX Runtime (default: cuda)')
-    
+
     args = parser.parse_args()
-    
+
     # Check device
     if args.device == 'cuda' and not torch.cuda.is_available():
         print("CUDA not available, using CPU")
@@ -317,10 +323,10 @@ def main():
         if args.execution_provider in ['cuda', 'tensorrt']:
             print("Switching execution provider to CPU")
             args.execution_provider = 'cpu'
-    
+
     print(f"Using device: {args.device}")
     print(f"Using execution provider: {args.execution_provider}")
-    
+
     if args.multiple:
         # Validate multiple checkpoints
         validate_multiple_checkpoints(
@@ -342,7 +348,7 @@ def main():
         if '*' in args.checkpoint or '?' in args.checkpoint:
             print("Error: Use --multiple flag for glob patterns")
             return
-            
+
         validate_checkpoint(
             checkpoint_path=args.checkpoint,
             val_annotation_file=args.val_ann,
