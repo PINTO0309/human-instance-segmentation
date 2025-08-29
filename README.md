@@ -1,5 +1,7 @@
 # Human Instance Segmentation
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/PINTO0309/human-instance-segmentation)
+
 English / [日本語](./README_jp.md)
 
 A lightweight ROI-based hierarchical instance segmentation model for human detection with knowledge distillation from EfficientNet-based teacher models. The model achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
