@@ -1,5 +1,7 @@
 # 人物インスタンスセグメンテーション
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/PINTO0309/human-instance-segmentation)
+
 [English](./README.md) / 日本語
 
 EfficientNetベースの教師モデルからの知識蒸留を用いた、人物検出のための軽量ROIベース階層型インスタンスセグメンテーションモデル。2段階の階層型アーキテクチャと温度進行蒸留技術により、効率的なリアルタイム性能を実現します。
