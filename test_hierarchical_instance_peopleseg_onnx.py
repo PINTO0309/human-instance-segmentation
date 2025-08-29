@@ -74,6 +74,11 @@ def parse_args():
         action='store_true',
         help='Save individual mask predictions'
     )
+    parser.add_argument(
+        '--binary_mode',
+        action='store_true',
+        help='Use binary_masks output for green mask overlay instead of instance segmentation'
+    )
     return parser.parse_args()
 
 
@@ -228,6 +233,48 @@ def process_mask_output(masks: np.ndarray, rois: np.ndarray,
     return results
 
 
+def visualize_binary_mask(image: np.ndarray,
+                         binary_mask: np.ndarray,
+                         alpha: float = 0.5) -> np.ndarray:
+    """Visualize binary mask as green overlay on image.
+    
+    Args:
+        image: Original image [H, W, 3]
+        binary_mask: Binary mask [1, H, W] with values in [0, 1]
+        alpha: Alpha value for overlay
+        
+    Returns:
+        Image with green mask overlay
+    """
+    output_image = image.copy()
+    h, w = image.shape[:2]
+    
+    # Ensure binary_mask is 2D
+    if binary_mask.ndim == 3:
+        binary_mask = binary_mask.squeeze(0)  # Remove channel dimension
+    
+    # Resize binary mask to match image size if needed
+    if binary_mask.shape != (h, w):
+        binary_mask = cv2.resize(binary_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+    
+    # Debug: check mask value range (optional - can be commented out)
+    # print(f"Binary mask stats - min: {binary_mask.min():.3f}, max: {binary_mask.max():.3f}, mean: {binary_mask.mean():.3f}")
+    
+    # Create green overlay
+    overlay = np.zeros_like(image)
+    overlay[:, :, 1] = 255  # Green channel
+    
+    # Apply mask with alpha blending
+    # Use the binary mask as alpha channel
+    mask_3d = np.stack([binary_mask] * 3, axis=-1)
+    
+    # Blend: output = image * (1 - alpha * mask) + overlay * (alpha * mask)
+    output_image = image * (1 - alpha * mask_3d) + overlay * (alpha * mask_3d)
+    output_image = np.clip(output_image, 0, 255).astype(np.uint8)
+    
+    return output_image
+
+
 def visualize_instance_segmentation(image: np.ndarray,
                                    mask_results: List[Dict[str, Any]],
                                    alpha: float = 0.5) -> np.ndarray:
@@ -365,6 +412,15 @@ def main():
     output_names = [out.name for out in session.get_outputs()]
     print(f"Model inputs: {input_names}")
     print(f"Model outputs: {output_names}")
+    
+    # Check if binary_mode is compatible with model
+    if args.binary_mode:
+        if len(output_names) < 2 or 'binary_masks' not in output_names[1]:
+            print("Warning: Binary mode requested but model doesn't have binary_masks output.")
+            print("         Falling back to instance segmentation mode.")
+            args.binary_mode = False
+        else:
+            print("Binary mode enabled - will use binary_masks output for green overlay")
 
     # Load COCO annotations
     print(f"Loading annotations: {args.annotations}")
@@ -435,26 +491,40 @@ def main():
             'rois': rois, #rois_scaled
         })
 
-        # Process mask outputs
-        masks = outputs[0]  # [N, 3, H, W]
+        # Check if binary_mode is enabled and binary_masks output exists
+        if args.binary_mode and len(outputs) > 1:
+            # Use binary_masks output (second output)
+            binary_masks = outputs[1]  # [B, 1, H, W]
+            
+            # Get the first batch's binary mask
+            binary_mask = binary_masks[0]  # [1, H, W]
+            
+            # Visualize binary mask
+            output_image = visualize_binary_mask(
+                image_orig, binary_mask, alpha=args.alpha
+            )
+        else:
+            # Process mask outputs for instance segmentation
+            masks = outputs[0]  # [N, 3, H, W]
 
-        # Process masks
-        mask_results = process_mask_output(
-            masks, rois, img_width, img_height,
-            score_threshold=args.score_threshold
-        )
+            # Process masks
+            mask_results = process_mask_output(
+                masks, rois, img_width, img_height,
+                score_threshold=args.score_threshold
+            )
 
-        # Visualize results
-        output_image = visualize_instance_segmentation(
-            image_orig, mask_results, alpha=args.alpha
-        )
+            # Visualize results
+            output_image = visualize_instance_segmentation(
+                image_orig, mask_results, alpha=args.alpha
+            )
 
         # Save output image
-        output_path = output_dir / f"{Path(img_info['file_name']).stem}_segmented.png"
+        output_suffix = "_binary" if args.binary_mode else "_segmented"
+        output_path = output_dir / f"{Path(img_info['file_name']).stem}{output_suffix}.png"
         cv2.imwrite(str(output_path), cv2.cvtColor(output_image, cv2.COLOR_RGB2BGR))
 
-        # Save individual masks if requested
-        if args.save_masks:
+        # Save individual masks if requested (only for instance segmentation mode)
+        if args.save_masks and not args.binary_mode:
             save_individual_masks(mask_results, str(output_path), img_width, img_height)
             print(f"  Saved individual masks to {output_path.stem}_masks/")
 

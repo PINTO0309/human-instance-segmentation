@@ -30,7 +30,7 @@ except ImportError:
 class AdvancedONNXExporter:
     """Export both baseline and multiscale models to ONNX format."""
 
-    def __init__(self, model: nn.Module, model_type: str = 'baseline', device: str = 'cpu', include_auxiliary: bool = False, mask_size=None):
+    def __init__(self, model: nn.Module, model_type: str = 'baseline', device: str = 'cpu', include_auxiliary: bool = False, mask_size=None, image_size=(640, 640)):
         """Initialize exporter.
 
         Args:
@@ -39,6 +39,7 @@ class AdvancedONNXExporter:
             device: Device to use for export
             include_auxiliary: Whether to include auxiliary outputs in ONNX export
             mask_size: Mask size (int or tuple) from config
+            image_size: Input image size (int for square or (height, width) tuple)
         """
         # Handle DistillationModelWrapper - export only student model
         from src.human_edge_detection.advanced.knowledge_distillation import DistillationModelWrapper
@@ -48,6 +49,15 @@ class AdvancedONNXExporter:
         self.model_type = model_type
         self.device = device
         self.include_auxiliary = include_auxiliary
+        
+        # Handle image size - convert to (height, width) tuple
+        if isinstance(image_size, int):
+            self.image_height = image_size
+            self.image_width = image_size
+        elif isinstance(image_size, (list, tuple)) and len(image_size) == 2:
+            self.image_height, self.image_width = image_size
+        else:
+            raise ValueError(f"image_size must be int or (height, width) tuple, got {image_size}")
         
         # Extract mask size
         if mask_size is not None:
@@ -308,7 +318,7 @@ class AdvancedONNXExporter:
             # RGB hierarchical models take images as input
             print("Detected RGB hierarchical model - using image input")
             # Create dummy image in [0, 1] range to match validation pipeline
-            dummy_image = torch.rand(batch_size, 3, 640, 640).to(self.device)
+            dummy_image = torch.rand(batch_size, 3, self.image_height, self.image_width).to(self.device)
             num_rois = 2
             dummy_rois = torch.zeros(num_rois, 5).to(self.device)
             dummy_rois[:, 0] = torch.arange(num_rois) % batch_size
@@ -318,13 +328,38 @@ class AdvancedONNXExporter:
             ]).float()
 
             class RGBHierarchicalWrapper(nn.Module):
-                def __init__(self, model, include_auxiliary=False):
+                def __init__(self, model, include_auxiliary=False, include_binary_masks=True):
                     super().__init__()
                     self.model = model
                     self.include_auxiliary = include_auxiliary
+                    self.include_binary_masks = include_binary_masks
 
                 def forward(self, images, rois):
+                    # Check if model has pretrained_unet to get binary masks
+                    model_to_check = self.model
+                    if hasattr(self.model, 'base_model'):
+                        # If wrapped with dilation module
+                        model_to_check = self.model.base_model
+                    
+                    binary_masks = None
+                    if self.include_binary_masks and hasattr(model_to_check, 'pretrained_unet'):
+                        # Get binary masks from pretrained UNet
+                        with torch.no_grad():
+                            unet_output = model_to_check.pretrained_unet(images)
+                            if isinstance(unet_output, tuple):
+                                logits = unet_output[0]  # (B, 2, H, W) - background/foreground logits
+                            else:
+                                logits = unet_output  # (B, 2, H, W)
+                            
+                            # Extract foreground probability as binary mask
+                            # Use softmax to get probabilities
+                            # Note: Channel 0 is foreground (person), Channel 1 is background
+                            probs = torch.softmax(logits, dim=1)
+                            binary_masks = probs[:, 0:1, :, :]  # (B, 1, H, W) - foreground (person) probability
+                    
+                    # Get main model output
                     output = self.model(images, rois)
+                    
                     if isinstance(output, tuple) and self.include_auxiliary:
                         # Extract main output and auxiliary outputs
                         masks = output[0]
@@ -334,33 +369,49 @@ class AdvancedONNXExporter:
                         if isinstance(aux_dict, dict):
                             bg_fg_logits = aux_dict.get('bg_fg_logits', torch.zeros_like(masks)[:, :2])
                             target_nontarget_logits = aux_dict.get('target_nontarget_logits', torch.zeros_like(masks)[:, :2])
-                            return masks, bg_fg_logits, target_nontarget_logits
+                            if binary_masks is not None:
+                                return masks, binary_masks, bg_fg_logits, target_nontarget_logits
+                            else:
+                                return masks, bg_fg_logits, target_nontarget_logits
+                        else:
+                            if binary_masks is not None:
+                                return masks, binary_masks
+                            else:
+                                return output
+                    elif isinstance(output, tuple):
+                        if binary_masks is not None:
+                            return output[0], binary_masks
+                        else:
+                            return output[0]  # Return only logits
+                    else:
+                        if binary_masks is not None:
+                            return output, binary_masks
                         else:
                             return output
-                    elif isinstance(output, tuple):
-                        return output[0]  # Return only logits
-                    return output
 
-            wrapper = RGBHierarchicalWrapper(self.model, self.include_auxiliary)
+            # Create wrapper with binary masks output
+            wrapper = RGBHierarchicalWrapper(self.model, self.include_auxiliary, include_binary_masks=True)
             wrapper.eval()
 
             try:
-                # Determine output names and dynamic axes
+                # Determine output names and dynamic axes (always include binary_masks)
                 if self.include_auxiliary:
-                    output_names = ['masks', 'bg_fg_logits', 'target_nontarget_logits']
+                    output_names = ['masks', 'binary_masks', 'bg_fg_logits', 'target_nontarget_logits']
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
                         'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)},
+                        'binary_masks': {0: 'batch_size', 1: str(1), 2: str(self.image_height), 3: str(self.image_width)},
                         'bg_fg_logits': {0: 'num_rois'},
                         'target_nontarget_logits': {0: 'num_rois'}
                     }
                 else:
-                    output_names = ['masks']
+                    output_names = ['masks', 'binary_masks']
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)}
+                        'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)},
+                        'binary_masks': {0: 'batch_size', 1: str(1), 2: str(self.image_height), 3: str(self.image_width)}
                     }
 
                 torch.onnx.export(

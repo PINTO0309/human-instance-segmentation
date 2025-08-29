@@ -80,16 +80,16 @@ def get_experiment_config_from_architecture(arch: str, roi_size: tuple, mask_siz
 
 class MaskDilationModule(nn.Module):
     """Post-processing module for mask dilation using MaxPool."""
-    
+
     def __init__(self, dilation_pixels: int = 1):
         """Initialize dilation module.
-        
+
         Args:
             dilation_pixels: Number of pixels to dilate (0 means no dilation)
         """
         super().__init__()
         self.dilation_pixels = dilation_pixels
-        
+
         if dilation_pixels > 0:
             # kernel_size = 2 * dilation_pixels + 1 for symmetric dilation
             kernel_size = 2 * dilation_pixels + 1
@@ -100,32 +100,32 @@ class MaskDilationModule(nn.Module):
             )
         else:
             self.maxpool = None
-    
+
     def forward(self, masks: torch.Tensor) -> torch.Tensor:
         """Apply dilation to masks.
-        
+
         Args:
             masks: Segmentation logits of shape [N, 3, H, W]
-            
+
         Returns:
             Dilated masks of same shape [N, 3, H, W]
         """
         if self.maxpool is None or self.dilation_pixels == 0:
             return masks
-        
+
         # Apply softmax to get probabilities
         probs = F.softmax(masks, dim=1)
-        
+
         # Extract target class (class 1) probabilities
         target_probs = probs[:, 1:2, :, :]  # [N, 1, H, W]
-        
+
         # Apply dilation via MaxPool
         dilated_target = self.maxpool(target_probs)
-        
+
         # Update logits for target class where dilation occurred
         # Increase confidence at dilated pixels
         mask_diff = (dilated_target - target_probs) > 0.1  # Threshold for new pixels
-        
+
         # Boost target class logits at dilated pixels
         masks = masks.clone()
         masks[:, 1:2, :, :] = torch.where(
@@ -133,16 +133,16 @@ class MaskDilationModule(nn.Module):
             masks[:, 1:2, :, :] + 2.0,  # Boost confidence
             masks[:, 1:2, :, :]
         )
-        
+
         return masks
 
 
 class ModelWithDilation(nn.Module):
     """Wrapper to combine model with dilation post-processing."""
-    
+
     def __init__(self, base_model: nn.Module, dilation_pixels: int = 1):
         """Initialize model with dilation.
-        
+
         Args:
             base_model: The base segmentation model
             dilation_pixels: Number of pixels to dilate
@@ -150,20 +150,20 @@ class ModelWithDilation(nn.Module):
         super().__init__()
         self.base_model = base_model
         self.dilation = MaskDilationModule(dilation_pixels) if dilation_pixels > 0 else None
-    
+
     def forward(self, images: torch.Tensor, rois: torch.Tensor):
         """Forward pass with optional dilation.
-        
+
         Args:
             images: Input images [B, 3, H, W]
             rois: ROI coordinates [N, 5]
-            
+
         Returns:
             Segmentation masks with optional dilation
         """
         # Get base model output
         output = self.base_model(images, rois)
-        
+
         # Handle tuple outputs (with auxiliary)
         if isinstance(output, tuple):
             masks = output[0]
@@ -207,7 +207,8 @@ def export_checkpoint_to_onnx(
     simplify: bool = True,
     opset_version: int = 16,
     batch_size: int = 1,
-    dilation_pixels: int = 0
+    dilation_pixels: int = 0,
+    image_size=(640, 640)
 ) -> bool:
     """Export RGB Hierarchical UNet V2 checkpoint to ONNX.
 
@@ -219,11 +220,22 @@ def export_checkpoint_to_onnx(
         opset_version: ONNX opset version
         batch_size: Batch size for export
         dilation_pixels: Number of pixels to dilate masks (0 = no dilation)
+        image_size: Input image size - int for square or (height, width) tuple
 
     Returns:
         Success status
     """
     checkpoint_path = Path(checkpoint_path)
+
+    # Handle image size - convert to (height, width) tuple
+    if isinstance(image_size, int):
+        image_height = image_size
+        image_width = image_size
+    elif isinstance(image_size, (list, tuple)) and len(image_size) == 2:
+        image_height, image_width = image_size
+    else:
+        print(f"Error: image_size must be int or (height, width) tuple, got {image_size}")
+        return False
 
     # Check if checkpoint exists
     if not checkpoint_path.exists():
@@ -302,7 +314,7 @@ def export_checkpoint_to_onnx(
 
     # Set model to eval mode
     model.eval()
-    
+
     # Wrap model with dilation if requested
     if dilation_pixels > 0:
         print(f"Adding {dilation_pixels}-pixel dilation post-processing")
@@ -315,7 +327,8 @@ def export_checkpoint_to_onnx(
         model_type='hierarchical',
         device=device,
         include_auxiliary=False,  # Don't include auxiliary outputs for cleaner ONNX
-        mask_size=mask_size
+        mask_size=mask_size,
+        image_size=(image_height, image_width)
     )
 
     # Export to ONNX
@@ -363,12 +376,14 @@ def export_checkpoint_to_onnx(
             'mask_size': list(mask_size),
             'experiment_config': config_name,
             'dilation_pixels': dilation_pixels,
+            'image_size': [image_height, image_width],
             'input_format': {
-                'images': f'[{batch_size}, 3, 640, 640] - RGB input images',
+                'images': f'[{batch_size}, 3, {image_height}, {image_width}] - RGB input images',
                 'rois': '[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]'
             },
             'output_format': {
-                'masks': f'[N, 3, {mask_size[0]}, {mask_size[1]}] - Segmentation logits for each ROI'
+                'masks': f'[N, 3, {mask_size[0]}, {mask_size[1]}] - Segmentation logits for each ROI',
+                'binary_masks': f'[B, 1, {image_height}, {image_width}] - Binary foreground/background masks from pretrained UNet'
             }
         }
 
@@ -441,8 +456,34 @@ def main():
         default=0,
         help='Number of pixels to dilate masks in post-processing (0 = no dilation, default: 0)'
     )
+    parser.add_argument(
+        '--image_size',
+        type=str,
+        default='640,640',
+        help='Input image size - single value for square (e.g., 640) or "height,width" (e.g., 480,640). Default: 640,640'
+    )
 
     args = parser.parse_args()
+
+    # Parse image_size argument
+    if ',' in args.image_size:
+        # Parse as height,width
+        parts = args.image_size.split(',')
+        if len(parts) != 2:
+            print(f"Error: image_size must be a single value or 'height,width' format")
+            sys.exit(1)
+        try:
+            image_size = (int(parts[0]), int(parts[1]))
+        except ValueError:
+            print(f"Error: Invalid image_size format: {args.image_size}")
+            sys.exit(1)
+    else:
+        # Parse as single value for square image
+        try:
+            image_size = int(args.image_size)
+        except ValueError:
+            print(f"Error: Invalid image_size format: {args.image_size}")
+            sys.exit(1)
 
     # Run export
     success = export_checkpoint_to_onnx(
@@ -452,7 +493,8 @@ def main():
         simplify=not args.no_simplify,
         opset_version=args.opset,
         batch_size=args.batch_size,
-        dilation_pixels=args.dilation_pixels
+        dilation_pixels=args.dilation_pixels,
+        image_size=image_size
     )
 
     sys.exit(0 if success else 1)
