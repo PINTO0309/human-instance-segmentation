@@ -1,4 +1,4 @@
-# Human Edge Detection
+# Human Instance Segmentation
 
 A lightweight ROI-based hierarchical instance segmentation system for human detection with knowledge distillation from EfficientNet-based teacher models. The system achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
 
