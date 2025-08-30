@@ -469,17 +469,10 @@ experiments/*/checkpoints/best_model_b7_*.pth \
 
 ```bash
 # Export edge smoothing module
-uv run python export_edge_smoothing_onnx.py \
---output models/edge_smoothing.onnx \
---threshold 0.5 \
---blur_strength 3.0
+uv run python export_edge_smoothing_onnx.py
 
 # Export bilateral filter
-uv run python export_bilateral_filter.py \
---output models/bilateral_filter.onnx \
---d 9 \
---sigma_color 75 \
---sigma_space 75
+uv run python export_bilateral_filter.py
 ```
 
 ### ONNX Optimization
