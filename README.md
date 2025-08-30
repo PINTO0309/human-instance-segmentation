@@ -575,6 +575,9 @@ This project builds upon several excellent works in the computer vision communit
 We gratefully acknowledge the work by Vladimir Iglovikov (Ternaus) on people segmentation:
 - Repository: [https://github.com/ternaus/people_segmentation](https://github.com/ternaus/people_segmentation)
 
+### People Segmentation Custom
+- Repository: [https://github.com/PINTO0309/people_segmentation](https://github.com/PINTO0309/people_segmentation)
+
 ### EfficientNet
 ```bibtex
 @article{tan2019efficientnet,
