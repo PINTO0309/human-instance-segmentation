@@ -575,6 +575,9 @@ SOFTWARE.
 Vladimir Iglovikov (Ternaus)による人物セグメンテーションの作業に深く感謝します：
 - リポジトリ: [https://github.com/ternaus/people_segmentation](https://github.com/ternaus/people_segmentation)
 
+### People Segmentation Custom
+- リポジトリ: [https://github.com/PINTO0309/people_segmentation](https://github.com/PINTO0309/people_segmentation)
+
 ### EfficientNet
 ```bibtex
 @article{tan2019efficientnet,
