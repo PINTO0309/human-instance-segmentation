@@ -597,7 +597,6 @@ SOFTWARE.
 ### People Segmentation
 Vladimir Iglovikov (Ternaus)による人物セグメンテーションの作業に深く感謝します：
 - リポジトリ: [https://github.com/ternaus/people_segmentation](https://github.com/ternaus/people_segmentation)
-- 論文: "TernausNet: U-Net with VGG11 Encoder Pre-Trained on ImageNet for Image Segmentation"
 
 ### EfficientNet
 ```bibtex
