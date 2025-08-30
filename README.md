@@ -549,7 +549,6 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 --onnx models/b0_model_opt.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
 --num_images 50 \
---benchmark \
 --provider cuda
 
 # Compare different model variants
@@ -559,7 +558,6 @@ for model in b0 b1 b7; do
     --onnx models/${model}_model_opt.onnx \
     --annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
     --num_images 20 \
-    --benchmark \
     --output_dir benchmark_${model}
 done
 ```
