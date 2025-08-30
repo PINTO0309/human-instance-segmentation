@@ -597,7 +597,6 @@ This project builds upon several excellent works in the computer vision communit
 ### People Segmentation
 We gratefully acknowledge the work by Vladimir Iglovikov (Ternaus) on people segmentation:
 - Repository: [https://github.com/ternaus/people_segmentation](https://github.com/ternaus/people_segmentation)
-- Paper: "TernausNet: U-Net with VGG11 Encoder Pre-Trained on ImageNet for Image Segmentation"
 
 ### EfficientNet
 ```bibtex
