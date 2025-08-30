@@ -460,9 +460,7 @@ experiments/*/checkpoints/best_model_b1_*.pth \
 uv run python export_hierarchical_instance_peopleseg_onnx.py \
 experiments/*/checkpoints/best_model_b7_*.pth \
 --output models/b7_model_ultra.onnx \
---image_size 1024,1024 \
---roi_size 128,96 \
---mask_size 256,192
+--image_size 1024,1024
 ```
 
 ### 後処理モジュールのエクスポート
