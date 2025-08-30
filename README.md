@@ -307,33 +307,21 @@ uv run python -c "import onnxruntime as ort; print(f'ONNX Runtime: {ort.__versio
 # B7 to B0 distillation with temperature progression
 uv run python train_distillation_staged.py \
 --config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
 --epochs 100 \
 --batch_size 16
 
 # B7 to B1 distillation
 uv run python train_distillation_staged.py \
 --config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
 --epochs 100 \
 --batch_size 12
 ```
 
 ### Advanced Distillation Options
 ```bash
-# With custom temperature schedule
-uv run python train_distillation_staged.py \
---config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
---initial_temperature 10.0 \
---final_temperature 1.0 \
---temperature_decay_epochs 50 \
---epochs 100
-
 # Resume from checkpoint
 uv run python train_distillation_staged.py \
 --config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
 --resume checkpoints/distillation_epoch_050.pth \
 --epochs 100
 ```
