@@ -307,33 +307,21 @@ uv run python -c "import onnxruntime as ort; print(f'ONNX Runtime: {ort.__versio
 # 温度進行を使用したB7からB0への蒸留
 uv run python train_distillation_staged.py \
 --config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
 --epochs 100 \
 --batch_size 16
 
 # B7からB1への蒸留
 uv run python train_distillation_staged.py \
 --config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
 --epochs 100 \
 --batch_size 12
 ```
 
 ### 高度な蒸留オプション
 ```bash
-# カスタム温度スケジュールを使用
-uv run python train_distillation_staged.py \
---config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
---initial_temperature 10.0 \
---final_temperature 1.0 \
---temperature_decay_epochs 50 \
---epochs 100
-
 # チェックポイントから再開
 uv run python train_distillation_staged.py \
 --config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
---teacher_checkpoint ext_extractor/best_model_b7_0.9009.pth \
 --resume checkpoints/distillation_epoch_050.pth \
 --epochs 100
 ```
