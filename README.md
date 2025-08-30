@@ -470,10 +470,14 @@ experiments/*/checkpoints/best_model_b7_*.pth \
 ```bash
 # Export edge smoothing module
 uv run python export_edge_smoothing_onnx.py
+```
+<img width="843" height="777" alt="image" src="https://github.com/user-attachments/assets/fea811f4-2aa5-436d-9845-c714b511831f" />
 
+```bash
 # Export bilateral filter
 uv run python export_bilateral_filter.py
 ```
+<img width="1245" height="1297" alt="image" src="https://github.com/user-attachments/assets/c49c82e7-08ba-49be-abb1-17dddefb16b4" />
 
 ### ONNX Optimization
 
