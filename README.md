@@ -4,6 +4,12 @@
 
 English / [日本語](./README_jp.md)
 
+❗Note❗
+
+The README was written entirely by Claude Code, so it contains non-existent command line options. Please check the options yourself and replace them correctly. Pull requests are welcome.
+
+---
+
 A lightweight ROI-based hierarchical instance segmentation model for human detection with knowledge distillation from EfficientNet-based teacher models. The model achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
 
 - Instance Segmentation Mode
