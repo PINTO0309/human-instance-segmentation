@@ -396,19 +396,6 @@ uv run python validate_advanced.py \
 experiments/*/checkpoints/best_model_epoch_*_640x640_*.pth \
 --val_ann data/annotations/instances_val2017_person_only_no_crowd.json \
 --batch_size 16
-
-# Validate multiple checkpoints
-uv run python validate_advanced.py \
-"experiments/*/checkpoints/best_model*.pth" \
---multiple \
---val_ann data/annotations/instances_val2017_person_only_no_crowd.json
-
-# Validation with visualization
-uv run python validate_advanced.py \
-experiments/*/checkpoints/best_model_*.pth \
---visualize \
---num_visualize 20 \
---output_dir validation_results
 ```
 
 ## ONNX Export
