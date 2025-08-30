@@ -312,13 +312,13 @@ uv run python -c "import onnxruntime as ort; print(f'ONNX Runtime: {ort.__versio
 ```bash
 # B7 to B0 distillation with temperature progression
 uv run python train_distillation_staged.py \
---config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--config rgb_hierarchical_unet_v2_distillation_b0_from_b7_temp_prog \
 --epochs 100 \
 --batch_size 16
 
 # B7 to B1 distillation
 uv run python train_distillation_staged.py \
---config rgb_hierarchical_unet_v2_distillation_b7_from_b7_temp_prog \
+--config rgb_hierarchical_unet_v2_distillation_b1_from_b7_temp_prog \
 --epochs 100 \
 --batch_size 12
 ```
