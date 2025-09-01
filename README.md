@@ -516,6 +516,18 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 pip install sit4onnx
 
 # CUDA
+sit4onnx -if best_model_b0_64x48_0.8545_dil1.onnx -oep cuda
+
+INFO: file: best_model_b0_64x48_0.8545_dil1.onnx
+INFO: providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 480, 640] dtype: float32
+INFO: input_name.2: rois shape: [1, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  177.2298812866211 ms
+INFO: avg elapsed time per pred:  17.72298812866211 ms
+INFO: output_name.1: masks shape: [1, 3, 128, 96] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 480, 640] dtype: float32
+
 sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep cuda
 
 INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
@@ -529,6 +541,18 @@ INFO: output_name.1: masks shape: [1, 3, 160, 120] dtype: float32
 INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
 
 # TensorRT
+sit4onnx -if best_model_b0_64x48_0.8545_dil1.onnx -oep tensorrt
+
+INFO: file: best_model_b0_64x48_0.8545_dil1.onnx
+INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 480, 640] dtype: float32
+INFO: input_name.2: rois shape: [1, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  47.41835594177246 ms
+INFO: avg elapsed time per pred:  4.741835594177246 ms
+INFO: output_name.1: masks shape: [1, 3, 128, 96] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 480, 640] dtype: float32
+
 sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep tensorrt
 
 INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
@@ -542,6 +566,18 @@ INFO: output_name.1: masks shape: [1, 3, 160, 120] dtype: float32
 INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
 
 # TensorRT + Multi-ROI
+sit4onnx -if best_model_b0_64x48_0.8545_dil1.onnx -oep tensorrt -fs 1 3 480 640 -fs 3 5
+
+INFO: file: best_model_b0_64x48_0.8545_dil1.onnx
+INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 480, 640] dtype: float32
+INFO: input_name.2: rois shape: [3, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  65.09065628051758 ms
+INFO: avg elapsed time per pred:  6.509065628051758 ms
+INFO: output_name.1: masks shape: [3, 3, 128, 96] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 480, 640] dtype: float32
+
 sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep tensorrt -fs 1 3 640 640 -fs 3 5
 
 INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
@@ -553,6 +589,18 @@ INFO: total elapsed time:  97.52345085144043 ms
 INFO: avg elapsed time per pred:  9.752345085144043 ms
 INFO: output_name.1: masks shape: [3, 3, 160, 120] dtype: float32
 INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
+
+sit4onnx -if best_model_b0_64x48_0.8545_dil1.onnx -oep tensorrt -fs 1 3 480 640 -fs 10 5
+
+INFO: file: best_model_b0_64x48_0.8545_dil1.onnx
+INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 480, 640] dtype: float32
+INFO: input_name.2: rois shape: [10, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  126.00469589233398 ms
+INFO: avg elapsed time per pred:  12.600469589233398 ms
+INFO: output_name.1: masks shape: [10, 3, 128, 96] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 480, 640] dtype: float32
 
 sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep tensorrt -fs 1 3 640 640 -fs 10 5
 
