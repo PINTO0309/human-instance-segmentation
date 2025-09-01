@@ -473,7 +473,7 @@ uv run python -c "import onnx; model = onnx.load('models/b0_model_opt.onnx'); on
 ```bash
 # Test ONNX model on validation images
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
 --images_dir data/images/val2017 \
 --num_images 5 \
@@ -481,7 +481,7 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 
 # Test with CUDA provider
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b1_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
 --provider cuda \
 --num_images 10 \
@@ -508,14 +508,6 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 --score_threshold 0.5 \
 --save_masks \
 --output_dir test_high_confidence
-
-# Batch processing test
-uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
---annotations data/annotations/instances_val2017_person_only_no_crowd.json \
---num_images 100 \
---batch_size 8 \
---output_dir batch_test_outputs
 ```
 
 ### Performance Benchmarking
