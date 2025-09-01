@@ -493,7 +493,7 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 ```bash
 # Test with binary mask visualization (green overlay)
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
 --num_images 20 \
 --binary_mode \
@@ -502,7 +502,7 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 
 # Test with custom score threshold
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b7_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
 --num_images 15 \
 --score_threshold 0.5 \
@@ -513,22 +513,33 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 ### Performance Benchmarking
 
 ```bash
-# Benchmark inference speed
-uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
---annotations data/annotations/instances_val2017_person_only_no_crowd.json \
---num_images 50 \
---provider cuda
+pip install sit4onnx
 
-# Compare different model variants
-for model in b0 b1 b7; do
-  echo "Testing $model model..."
-  uv run python test_hierarchical_instance_peopleseg_onnx.py \
-    --onnx models/${model}_model_opt.onnx \
-    --annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
-    --num_images 20 \
-    --output_dir benchmark_${model}
-done
+# CUDA
+sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep cuda
+
+INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
+INFO: providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 640, 640] dtype: float32
+INFO: input_name.2: rois shape: [1, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  251.79290771484375 ms
+INFO: avg elapsed time per pred:  25.179290771484375 ms
+INFO: output_name.1: masks shape: [1, 3, 160, 120] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
+
+# TensorRT
+sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep tensorrt
+
+INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
+INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 640, 640] dtype: float32
+INFO: input_name.2: rois shape: [1, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  68.60971450805664 ms
+INFO: avg elapsed time per pred:  6.860971450805664 ms
+INFO: output_name.1: masks shape: [1, 3, 160, 120] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
 ```
 
 ## License
