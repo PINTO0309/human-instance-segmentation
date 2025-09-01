@@ -513,6 +513,9 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 ### パフォーマンスベンチマーク
 
 ```bash
+pip install sit4onnx
+
+# CUDA
 sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep cuda
 
 INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
@@ -522,6 +525,19 @@ INFO: input_name.2: rois shape: [1, 5] dtype: float32
 INFO: test_loop_count: 10
 INFO: total elapsed time:  251.79290771484375 ms
 INFO: avg elapsed time per pred:  25.179290771484375 ms
+INFO: output_name.1: masks shape: [1, 3, 160, 120] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
+
+# TensorRT
+sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep tensorrt
+
+INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
+INFO: providers: ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 640, 640] dtype: float32
+INFO: input_name.2: rois shape: [1, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  68.60971450805664 ms
+INFO: avg elapsed time per pred:  6.860971450805664 ms
 INFO: output_name.1: masks shape: [1, 3, 160, 120] dtype: float32
 INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
 ```
