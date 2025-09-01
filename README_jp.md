@@ -473,7 +473,7 @@ uv run python -c "import onnx; model = onnx.load('models/b0_model_opt.onnx'); on
 ```bash
 # 検証画像でONNXモデルをテスト
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
 --images_dir data/images/val2017 \
 --num_images 5 \
@@ -481,7 +481,7 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 
 # CUDAプロバイダーでテスト
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b1_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
 --provider cuda \
 --num_images 10 \
@@ -493,7 +493,7 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 ```bash
 # バイナリマスク可視化でテスト（緑色オーバーレイ）
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
 --num_images 20 \
 --binary_mode \
@@ -502,41 +502,28 @@ uv run python test_hierarchical_instance_peopleseg_onnx.py \
 
 # カスタムスコア閾値でテスト
 uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b7_model_opt.onnx \
+--onnx best_model_b1_80x60_0.8551_dil1.onnx \
 --annotations data/annotations/instances_val2017_person_only_no_crowd.json \
 --num_images 15 \
 --score_threshold 0.5 \
 --save_masks \
 --output_dir test_high_confidence
-
-# バッチ処理テスト
-uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
---annotations data/annotations/instances_val2017_person_only_no_crowd.json \
---num_images 100 \
---batch_size 8 \
---output_dir batch_test_outputs
 ```
 
 ### パフォーマンスベンチマーク
 
 ```bash
-# 推論速度をベンチマーク
-uv run python test_hierarchical_instance_peopleseg_onnx.py \
---onnx models/b0_model_opt.onnx \
---annotations data/annotations/instances_val2017_person_only_no_crowd.json \
---num_images 50 \
---provider cuda
+sit4onnx -if best_model_b1_80x60_0.8551_dil1.onnx -oep cuda
 
-# 異なるモデルバリアントを比較
-for model in b0 b1 b7; do
-  echo "Testing $model model..."
-  uv run python test_hierarchical_instance_peopleseg_onnx.py \
-    --onnx models/${model}_model_opt.onnx \
-    --annotations data/annotations/instances_val2017_person_only_no_crowd_100imgs.json \
-    --num_images 20 \
-    --output_dir benchmark_${model}
-done
+INFO: file: best_model_b1_80x60_0.8551_dil1.onnx
+INFO: providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+INFO: input_name.1: images shape: [1, 3, 640, 640] dtype: float32
+INFO: input_name.2: rois shape: [1, 5] dtype: float32
+INFO: test_loop_count: 10
+INFO: total elapsed time:  251.79290771484375 ms
+INFO: avg elapsed time per pred:  25.179290771484375 ms
+INFO: output_name.1: masks shape: [1, 3, 160, 120] dtype: float32
+INFO: output_name.2: binary_masks shape: [1, 1, 640, 640] dtype: float32
 ```
 
 ## ライセンス
