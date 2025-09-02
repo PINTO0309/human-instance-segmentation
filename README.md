@@ -20,6 +20,10 @@ A lightweight ROI-based hierarchical instance segmentation model for human detec
 
   <img width="427" height="640" alt="000000229849_binary" src="https://github.com/user-attachments/assets/f73ef1b2-36d8-4eb0-b167-06764e05ebe3" />
 
+- 160x120 Instance Segmentation Mode
+
+  <img width="160" height="120" alt="000000229659_segmented" src="https://github.com/user-attachments/assets/6452429a-31d4-4f8b-afd6-5db5290dcc88" />
+
 ## Table of Contents
 - [Architecture Overview](#architecture-overview)
 - [Architecture Details](#architecture-details)
