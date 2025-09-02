@@ -18,3 +18,4 @@ experiment_runs.json
 experiment_log.txt
 *.pth
 test_outputs/
+test_data/
