@@ -17,7 +17,5 @@ experiment_comparison.png
 experiment_runs.json
 experiment_log.txt
 *.pth
-test_outputs/
-test_data/images_resized_160x120/
-test_data/images_resized_320x240/
-test_data/images_resized_640x480/
+test_outputs*/
+test_data/images_resized_*/

@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torch.jit._trace
 
 from .model import create_model, ROISegmentationHead
 from .advanced.multi_scale_model import MultiScaleSegmentationModel
+from .dynamic_roi_align import DynamicRoIAlign
 
 try:
     from onnxsim import simplify as onnxsim_simplify
@@ -75,6 +76,26 @@ class AdvancedONNXExporter:
             self.mask_width = self.mask_size
         else:
             self.mask_height, self.mask_width = self.mask_size
+
+    def _adjust_roi_align_spatial_scale(self):
+        """Adjust DynamicRoIAlign.spatial_scale to match image size.
+
+        For RGB hierarchical models that take `images` as input, ROIs are
+        provided in normalized [0,1] coordinates and DynamicRoIAlign multiplies
+        by `spatial_scale`. When exporting with a non-640 resolution (e.g.,
+        120x160), ensure ROIAlign uses (H, W) = (image_height, image_width).
+        """
+        h, w = int(self.image_height), int(self.image_width)
+        count = 0
+        for m in self.model.modules():
+            if isinstance(m, DynamicRoIAlign):
+                # Set both tuple and individual cached fields
+                m.spatial_scale = (h, w)
+                m.spatial_scale_h = h
+                m.spatial_scale_w = w
+                count += 1
+        if count > 0:
+            print(f"Adjusted DynamicRoIAlign spatial_scale to ({h}, {w}) for {count} module(s)")
 
     def export(
         self,
@@ -317,6 +338,8 @@ class AdvancedONNXExporter:
         if is_rgb_hierarchical:
             # RGB hierarchical models take images as input
             print("Detected RGB hierarchical model - using image input")
+            # Ensure ROIAlign uses the actual image size when exporting
+            self._adjust_roi_align_spatial_scale()
             # Create dummy image in [0, 1] range to match validation pipeline
             dummy_image = torch.rand(batch_size, 3, self.image_height, self.image_width).to(self.device)
             num_rois = 2

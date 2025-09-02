@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import numpy as np
 import cv2
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 import onnxruntime as ort
 from pycocotools.coco import COCO
 import matplotlib.pyplot as plt
@@ -79,6 +79,11 @@ def parse_args():
         action='store_true',
         help='Use binary_masks output for green mask overlay instead of instance segmentation'
     )
+    parser.add_argument(
+        '--draw_rois',
+        action='store_true',
+        help='Debug: always draw all GT ROIs as rectangles'
+    )
     return parser.parse_args()
 
 
@@ -140,6 +145,12 @@ def denormalize_bbox(bbox: List[float], img_width: int, img_height: int) -> List
     ]
 
 
+def scale_bbox(bbox: List[float], sx: float, sy: float) -> List[float]:
+    """Scale COCO-format bbox [x, y, w, h] by factors (sx, sy)."""
+    x, y, w, h = bbox
+    return [x * sx, y * sy, w * sx, h * sy]
+
+
 def prepare_image(image_path: str, target_size: Tuple[int, int] = (640, 640)) -> np.ndarray:
     """Load and preprocess image for model input.
 
@@ -167,6 +178,37 @@ def prepare_image(image_path: str, target_size: Tuple[int, int] = (640, 640)) ->
     image_batch = np.expand_dims(image_chw, axis=0)
 
     return image_batch
+
+
+def _to_int(v) -> Optional[int]:
+    """Convert ONNX dim value to int if possible, else None."""
+    try:
+        if isinstance(v, (int, np.integer)):
+            return int(v)
+        # Some ONNX shapes may be strings/symbolic; return None
+        return None
+    except Exception:
+        return None
+
+
+def get_images_input_size(session: ort.InferenceSession, input_name: str = 'images') -> Optional[Tuple[int, int]]:
+    """Return (width, height) for the specified input if statically known.
+
+    Looks up the input named `images` (by default) and extracts width/height from
+    the 4D shape [N, C, H, W]. Returns None if dynamic/unknown.
+    """
+    try:
+        for inp in session.get_inputs():
+            if inp.name == input_name:
+                shape = list(inp.shape)
+                if len(shape) == 4:
+                    h = _to_int(shape[2])
+                    w = _to_int(shape[3])
+                    if h is not None and w is not None:
+                        return (w, h)
+        return None
+    except Exception:
+        return None
 
 
 def process_mask_output(masks: np.ndarray, rois: np.ndarray,
@@ -413,6 +455,14 @@ def main():
     print(f"Model inputs: {input_names}")
     print(f"Model outputs: {output_names}")
     
+    # Determine model input spatial size for `images`
+    target_size = get_images_input_size(session, input_name='images')
+    if target_size is not None:
+        print(f"Detected model input size for 'images': {target_size[0]}x{target_size[1]}")
+    else:
+        target_size = (640, 640)
+        print(f"Could not determine static input size; defaulting to {target_size[0]}x{target_size[1]}")
+    
     # Check if binary_mode is compatible with model
     if args.binary_mode:
         if len(output_names) < 2 or 'binary_masks' not in output_names[1]:
@@ -460,20 +510,23 @@ def main():
             print(f"No person annotations for image {img_info['file_name']}")
             continue
 
-        # Load and preprocess image
-        image_input = prepare_image(str(img_path))
-
-        # Load original image for visualization
+        # Load original image for visualization and size reference
         image_orig = cv2.imread(str(img_path))
         image_orig = cv2.cvtColor(image_orig, cv2.COLOR_BGR2RGB)
         img_height, img_width = image_orig.shape[:2]
 
+        # Load and preprocess image to model input resolution
+        image_input = prepare_image(str(img_path), target_size=target_size)
+
         # Prepare ROIs from annotations
         rois_list = []
+        # Normalize bboxes using ORIGINAL dimensions in annotations, not the resized image size.
+        # This avoids degenerate boxes when images_dir contains resized images (e.g. 160x120).
+        ann_img_width = int(img_info.get('width', img_width))
+        ann_img_height = int(img_info.get('height', img_height))
         for ann in anns:
             if 'bbox' in ann:
-                # Normalize bbox coordinates
-                norm_bbox = normalize_bbox(ann['bbox'], img_width, img_height)
+                norm_bbox = normalize_bbox(ann['bbox'], ann_img_width, ann_img_height)
                 # Add batch index (0 for single image)
                 roi = [0] + norm_bbox
                 rois_list.append(roi)
@@ -517,6 +570,15 @@ def main():
             output_image = visualize_instance_segmentation(
                 image_orig, mask_results, alpha=args.alpha
             )
+
+        # Optionally overlay GT ROIs for debugging
+        if args.draw_rois:
+            # Draw all ROIs on top of current output_image
+            dbg_img = output_image.copy()
+            for roi in rois:
+                x1, y1, x2, y2 = denormalize_bbox(roi[1:5].tolist(), img_width, img_height)
+                cv2.rectangle(dbg_img, (x1, y1), (x2, y2), (0, 0, 255), 1)
+            output_image = dbg_img
 
         # Save output image
         output_suffix = "_binary" if args.binary_mode else "_segmented"
