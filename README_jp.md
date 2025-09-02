@@ -20,6 +20,10 @@ EfficientNetベースの教師モデルからの知識蒸留を用いた、人�
 
   <img width="427" height="640" alt="000000229849_binary" src="https://github.com/user-attachments/assets/f73ef1b2-36d8-4eb0-b167-06764e05ebe3" />
 
+- 160x120 インスタンスセグメンテーションモード
+
+  <img width="160" height="120" alt="000000229659_segmented" src="https://github.com/user-attachments/assets/6452429a-31d4-4f8b-afd6-5db5290dcc88" />
+
 ## 目次
 - [アーキテクチャ概要](#アーキテクチャ概要)
 - [アーキテクチャ詳細](#アーキテクチャ詳細)
