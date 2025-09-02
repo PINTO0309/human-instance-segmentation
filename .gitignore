@@ -20,3 +20,4 @@ experiment_log.txt
 test_outputs/
 test_data/images_resized_160x120/
 test_data/images_resized_320x240/
+test_data/images_resized_640x480/
