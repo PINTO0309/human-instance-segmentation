@@ -19,3 +19,4 @@ experiment_log.txt
 *.pth
 test_outputs*/
 test_data/images_resized_*/
+test_data/train_images_resized_*/
