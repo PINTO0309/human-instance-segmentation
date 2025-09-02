@@ -79,10 +79,26 @@ def parse_args():
         action='store_true',
         help='Use binary_masks output for green mask overlay instead of instance segmentation'
     )
+    # Drawing controls
+    parser.add_argument(
+        '--draw_pred_boxes',
+        action='store_true',
+        help='Draw predicted instance bounding boxes'
+    )
+    parser.add_argument(
+        '--draw_gt_boxes',
+        action='store_true',
+        help='Draw ground-truth ROI boxes (from annotations)'
+    )
     parser.add_argument(
         '--draw_rois',
         action='store_true',
-        help='Debug: always draw all GT ROIs as rectangles'
+        help='[Deprecated] Draw all GT ROIs and predicted boxes (use --draw_gt_boxes/--draw_pred_boxes)'
+    )
+    parser.add_argument(
+        '--draw_label',
+        action='store_true',
+        help='Draw score labels for predicted boxes'
     )
     return parser.parse_args()
 
@@ -319,7 +335,9 @@ def visualize_binary_mask(image: np.ndarray,
 
 def visualize_instance_segmentation(image: np.ndarray,
                                    mask_results: List[Dict[str, Any]],
-                                   alpha: float = 0.5) -> np.ndarray:
+                                   alpha: float = 0.5,
+                                   draw_boxes: bool = False,
+                                   draw_label: bool = False) -> np.ndarray:
     """Visualize instance segmentation results on image.
 
     Args:
@@ -366,15 +384,17 @@ def visualize_instance_segmentation(image: np.ndarray,
                     overlay
                 )
 
-                # Draw bounding box
-                cv2.rectangle(output_image, (x1, y1), (x2, y2), colors[idx].tolist(), 2)
+                # Draw bounding box (optional)
+                if draw_boxes:
+                    cv2.rectangle(output_image, (x1, y1), (x2, y2), colors[idx].tolist(), 2)
 
-                # Add score text
-                label = f"Instance {idx+1}: {score:.2f}"
-                cv2.putText(
-                    output_image, label, (x1, y1 - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors[idx].tolist(), 2
-                )
+                # Add score text (optional)
+                if draw_label:
+                    label = f"Instance {idx+1}: {score:.2f}"
+                    cv2.putText(
+                        output_image, label, (x1, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, colors[idx].tolist(), 2
+                    )
 
     # Alpha blend overlay with original image
     output_image = cv2.addWeighted(output_image, 1 - alpha, overlay, alpha, 0)
@@ -438,6 +458,14 @@ def save_individual_masks(mask_results: List[Dict[str, Any]],
 def main():
     """Main function."""
     args = parse_args()
+
+    # Handle deprecated flag mapping
+    if getattr(args, 'draw_rois', False):
+        print("[WARN] --draw_rois is deprecated. Use --draw_pred_boxes and/or --draw_gt_boxes instead.")
+        # If user didn't set the new flags, enable both for backward compatibility
+        if not args.draw_pred_boxes and not args.draw_gt_boxes:
+            args.draw_pred_boxes = True
+            args.draw_gt_boxes = True
 
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -568,11 +596,12 @@ def main():
 
             # Visualize results
             output_image = visualize_instance_segmentation(
-                image_orig, mask_results, alpha=args.alpha
+                image_orig, mask_results, alpha=args.alpha,
+                draw_boxes=args.draw_pred_boxes, draw_label=args.draw_label
             )
 
         # Optionally overlay GT ROIs for debugging
-        if args.draw_rois:
+        if args.draw_gt_boxes:
             # Draw all ROIs on top of current output_image
             dbg_img = output_image.copy()
             for roi in rois:
