@@ -18,4 +18,5 @@ experiment_runs.json
 experiment_log.txt
 *.pth
 test_outputs/
-test_data/
+test_data/images_resized_160x120/
+test_data/images_resized_320x240/
