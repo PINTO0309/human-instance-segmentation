@@ -12,6 +12,8 @@ READMEを Claude Code に全て書かせたので存在しないコマンドラ�
 
 EfficientNetベースの教師モデルからの知識蒸留を用いた、人物検出のための軽量ROIベース階層型インスタンスセグメンテーションモデル。2段階の階層型アーキテクチャと温度進行蒸留技術により、効率的なリアルタイム性能を実現します。
 
+Detectron/Detectron2、YOLOは使用していません。ただし、これを YOLO、DEIM、RT-DETR などのお気に入りのオブジェクト検出モデルといつでも統合して、エンドツーエンドのインスタンスセグメンテーションモデルを作成できます。まぁ、見ていてください。
+
 - インスタンスセグメンテーションモード
 
   <img width="640" height="424" alt="image" src="https://github.com/user-attachments/assets/10431a3c-0bba-422f-9d98-67af8e77b777" />
