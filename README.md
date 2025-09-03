@@ -12,6 +12,8 @@ The README was written entirely by Claude Code, so it contains non-existent comm
 
 A lightweight ROI-based hierarchical instance segmentation model for human detection with knowledge distillation from EfficientNet-based teacher models. The model achieves efficient real-time performance through a two-stage hierarchical architecture and temperature progression distillation techniques.
 
+Detectron/Detectron2, YOLO not used. However, you can always merge this with your favorite object detection model such as YOLO, DEIM, or RT-DETR to have an end-to-end instance segmentation model.
+
 - Instance Segmentation Mode
 
   <img width="640" height="424" alt="image" src="https://github.com/user-attachments/assets/10431a3c-0bba-422f-9d98-67af8e77b777" />
