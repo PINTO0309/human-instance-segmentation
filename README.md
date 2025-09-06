@@ -419,6 +419,8 @@ experiments/*/checkpoints/best_model_epoch_*_640x640_*.pth \
 - `export_edge_smoothing_onnx.py`: Export edge smoothing modules
 
 ### Pre-trained weights
+If the overall size of the image is large, selecting a model with a large input ROI will provide a better balance between accuracy and speed, and if the overall size of the image is small, selecting a model with a small input ROI will provide a better balance between accuracy and speed. If a model with a small input ROI is selected for a large image, the ROI will be too large, especially for close-range objects, and most of the features will be lost, resulting in a significant decrease in inference accuracy. On the other hand, if a small ROI model is selected for a small image, the inference speed increases dramatically with almost no degradation in accuracy.
+
 https://github.com/PINTO0309/human-instance-segmentation/releases/tag/weights
 
 <img width="747" height="442" alt="image" src="https://github.com/user-attachments/assets/2278a435-355d-4cd3-b307-11b6fcd6b3e4" />
