@@ -419,6 +419,8 @@ experiments/*/checkpoints/best_model_epoch_*_640x640_*.pth \
 - `export_edge_smoothing_onnx.py`: エッジスムージングモジュールのエクスポート
 
 ### 事前学習済み重み
+画像の全体サイズが大きい場合は入力ROIが大きいモデルを選択し、画像の全体サイズが小さい場合は入力ROIが小さいモデルを選択したほうが精度と速度のバランスがとても良い。大きな画像に対して小さな入力ROIのモデルを選択した場合、特に近距離のオブジェクトはROIが大きすぎて特徴の大部分が消失し、推論精度が著しく低下する。一方で、小さな画像に対して小さなROIのモデルを選択した場合、推論速度が劇的に高速化するとともに精度劣化はほとんど発生しない。
+
 https://github.com/PINTO0309/human-instance-segmentation/releases/tag/weights
 
 <img width="747" height="442" alt="image" src="https://github.com/user-attachments/assets/2278a435-355d-4cd3-b307-11b6fcd6b3e4" />
