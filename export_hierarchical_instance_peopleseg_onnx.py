@@ -14,6 +14,10 @@ from pathlib import Path
 import json
 import re
 import sys
+from typing import Sequence
+
+import numpy as np
+from onnx import helper, numpy_helper
 
 # Add src directory to path
 sys.path.append(str(Path(__file__).parent))
@@ -200,6 +204,130 @@ def extract_sizes_from_checkpoint_path(checkpoint_path: str) -> tuple:
     return roi_size, mask_size
 
 
+def replace_target_batchnorms_with_affine(onnx_model_path: Path, target_node_names: Sequence[str]) -> int:
+    """Replace specific BatchNormalization nodes with Mul/Add affine operations.
+
+    Args:
+        onnx_model_path: Path to the ONNX model to modify.
+        target_node_names: Iterable of BatchNormalization node names to replace.
+
+    Returns:
+        Number of BatchNormalization nodes replaced.
+    """
+    if not onnx_model_path.exists():
+        print(f"⚠️ ONNX model not found for BatchNormalization replacement: {onnx_model_path}")
+        return 0
+
+    try:
+        model = onnx.load(str(onnx_model_path))
+    except Exception as exc:
+        print(f"⚠️ Failed to load ONNX model for BatchNormalization replacement: {exc}")
+        return 0
+
+    graph = model.graph
+    target_names = set(target_node_names)
+    initializer_map = {init.name: init for init in graph.initializer}
+
+    existing_names = set(initializer_map.keys())
+    for value in list(graph.input) + list(graph.output) + list(graph.value_info):
+        existing_names.add(value.name)
+    for node in graph.node:
+        existing_names.update(node.output)
+
+    def _unique_name(base: str) -> str:
+        candidate = base
+        idx = 0
+        while candidate in existing_names:
+            idx += 1
+            candidate = f"{base}_{idx}"
+        existing_names.add(candidate)
+        return candidate
+
+    replaced = 0
+    new_nodes = []
+
+    for node in graph.node:
+        if node.name in target_names and node.op_type == 'BatchNormalization':
+            if len(node.input) < 5:
+                print(f"⚠️ Skipping BatchNormalization replacement for {node.name}: insufficient inputs")
+                new_nodes.append(node)
+                continue
+
+            data_name, scale_name, bias_name, mean_name, var_name = node.input[:5]
+            missing_initializers = [
+                name for name in (scale_name, bias_name, mean_name, var_name)
+                if name not in initializer_map
+            ]
+
+            if missing_initializers:
+                print(
+                    f"⚠️ Skipping BatchNormalization replacement for {node.name}: missing initializers {missing_initializers}"
+                )
+                new_nodes.append(node)
+                continue
+
+            epsilon = 1e-5
+            for attr in node.attribute:
+                if attr.name == 'epsilon':
+                    if attr.HasField('f'):
+                        epsilon = attr.f
+                    elif attr.HasField('i'):
+                        epsilon = float(attr.i)
+
+            scale = numpy_helper.to_array(initializer_map[scale_name]).astype(np.float32)
+            bias = numpy_helper.to_array(initializer_map[bias_name]).astype(np.float32)
+            mean = numpy_helper.to_array(initializer_map[mean_name]).astype(np.float32)
+            var = numpy_helper.to_array(initializer_map[var_name]).astype(np.float32)
+
+            denom = np.sqrt(var + epsilon).astype(np.float32)
+            affine_scale = scale / denom
+            affine_bias = bias - mean * affine_scale
+
+            affine_scale = affine_scale.reshape(1, -1, 1, 1)
+            affine_bias = affine_bias.reshape(1, -1, 1, 1)
+
+            affine_scale_name = _unique_name(f"{node.name}_scale")
+            affine_bias_name = _unique_name(f"{node.name}_bias")
+            mul_output_name = _unique_name(f"{node.name}_mul_output")
+
+            graph.initializer.extend([
+                numpy_helper.from_array(affine_scale, affine_scale_name),
+                numpy_helper.from_array(affine_bias, affine_bias_name),
+            ])
+
+            mul_node = helper.make_node(
+                'Mul',
+                inputs=[data_name, affine_scale_name],
+                outputs=[mul_output_name],
+                name=_unique_name(f"{node.name}_Mul")
+            )
+
+            primary_output = node.output[0]
+            add_node = helper.make_node(
+                'Add',
+                inputs=[mul_output_name, affine_bias_name],
+                outputs=[primary_output],
+                name=_unique_name(f"{node.name}_Add")
+            )
+
+            new_nodes.extend([mul_node, add_node])
+            replaced += 1
+        else:
+            new_nodes.append(node)
+
+    if replaced:
+        graph.ClearField('node')
+        graph.node.extend(new_nodes)
+        onnx.save(model, str(onnx_model_path))
+        print(
+            f"✅ Replaced {replaced} BatchNormalization node(s) with Mul/Add primitives in {onnx_model_path}"
+        )
+    else:
+        print("ℹ️ No targeted BatchNormalization nodes found for replacement")
+
+    return replaced
+
+
 def export_checkpoint_to_onnx(
     checkpoint_path: str,
     output_path: str = None,
@@ -342,6 +470,18 @@ def export_checkpoint_to_onnx(
 
     if success:
         print(f"✅ Successfully exported to: {output_path}")
+        #
+        target_batchnorm_nodes = [
+            '/model/base_model/segmentation_head/base_head/upsample_bg_fg/upsample_bg_fg.1/BatchNormalization',
+            '/model/base_model/segmentation_head/base_head/target_vs_nontarget_branch.4/BatchNormalization',
+            '/model/segmentation_head/base_head/upsample_bg_fg/upsample_bg_fg.1/BatchNormalization',
+            '/model/segmentation_head/base_head/target_vs_nontarget_branch.4/BatchNormalization',
+        ]
+        bn_replacements = replace_target_batchnorms_with_affine(output_path, target_batchnorm_nodes)
+        if bn_replacements != len(target_batchnorm_nodes):
+            print(
+                f"ℹ️ Replaced {bn_replacements} of {len(target_batchnorm_nodes)} targeted BatchNormalization nodes."
+            )
 
         # Simplify if requested
         if simplify:
