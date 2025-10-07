@@ -712,3 +712,17 @@ We gratefully acknowledge the work by Vladimir Iglovikov (Ternaus) on people seg
 - The ONNX community for cross-platform model deployment tools
 - The Albumentations team for powerful augmentation pipelines
 - The Segmentation Models PyTorch contributors for pre-trained encoders
+
+## Citation
+If you find this project useful, please consider citing:
+
+```bibtex
+@software{HumanInstanceSegmentation,
+  title={Human Instance Segmentation},
+  author={Katsuya Hyodo},
+  year={2025},
+  doi={10.5281/zenodo.17283862},
+  url={https://github.com/PINTO0309/human-instance-segmentation},
+  note={A lightweight ROI-based hierarchical instance segmentation model for human detection with knowledge distillation from EfficientNet-based teacher models.}
+}
+```
