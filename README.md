@@ -1,6 +1,7 @@
 # Human Instance Segmentation
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/PINTO0309/human-instance-segmentation)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/PINTO0309/human-instance-segmentation) ![GitHub License](https://img.shields.io/github/license/PINTO0309/human-instance-segmentation)
+ [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17283862.svg)](https://doi.org/10.5281/zenodo.17283862)
 
 English / [日本語](./README_jp.md)
 
