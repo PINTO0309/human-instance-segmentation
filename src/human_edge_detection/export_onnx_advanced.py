@@ -50,7 +50,7 @@ class AdvancedONNXExporter:
         self.model_type = model_type
         self.device = device
         self.include_auxiliary = include_auxiliary
-        
+
         # Handle image size - convert to (height, width) tuple
         if isinstance(image_size, int):
             self.image_height = image_size
@@ -59,7 +59,7 @@ class AdvancedONNXExporter:
             self.image_height, self.image_width = image_size
         else:
             raise ValueError(f"image_size must be int or (height, width) tuple, got {image_size}")
-        
+
         # Extract mask size
         if mask_size is not None:
             self.mask_size = mask_size
@@ -69,7 +69,7 @@ class AdvancedONNXExporter:
             self.mask_size = model.main_head.segmentation_head.mask_size
         else:
             self.mask_size = 56  # Default
-        
+
         # Convert to tuple if int
         if isinstance(self.mask_size, int):
             self.mask_height = self.mask_size
@@ -357,13 +357,19 @@ class AdvancedONNXExporter:
                     self.include_auxiliary = include_auxiliary
                     self.include_binary_masks = include_binary_masks
 
+                def _to_instance_masks(self, masks: torch.Tensor) -> torch.Tensor:
+                    classid = torch.argmax(masks, dim=1, keepdim=True)
+                    ones = torch.ones_like(masks[:, :1])
+                    zeros = torch.zeros_like(masks[:, :1])
+                    return torch.where(classid == 1, ones, zeros)
+
                 def forward(self, images, rois):
                     # Check if model has pretrained_unet to get binary masks
                     model_to_check = self.model
                     if hasattr(self.model, 'base_model'):
                         # If wrapped with dilation module
                         model_to_check = self.model.base_model
-                    
+
                     binary_masks = None
                     if self.include_binary_masks and hasattr(model_to_check, 'pretrained_unet'):
                         # Get binary masks from pretrained UNet
@@ -373,19 +379,20 @@ class AdvancedONNXExporter:
                                 logits = unet_output[0]  # (B, 2, H, W) - background/foreground logits
                             else:
                                 logits = unet_output  # (B, 2, H, W)
-                            
+
                             # Extract foreground probability as binary mask
                             # Use softmax to get probabilities
                             # Note: Channel 0 is foreground (person), Channel 1 is background
                             probs = torch.softmax(logits, dim=1)
                             binary_masks = probs[:, 0:1, :, :]  # (B, 1, H, W) - foreground (person) probability
-                    
+
                     # Get main model output
                     output = self.model(images, rois)
-                    
+                    masks = output[0] if isinstance(output, tuple) else output
+                    instance_masks = self._to_instance_masks(masks)
+
                     if isinstance(output, tuple) and self.include_auxiliary:
                         # Extract main output and auxiliary outputs
-                        masks = output[0]
                         aux_dict = output[1] if len(output) > 1 else {}
 
                         # Return specific outputs in the expected order
@@ -393,24 +400,24 @@ class AdvancedONNXExporter:
                             bg_fg_logits = aux_dict.get('bg_fg_logits', torch.zeros_like(masks)[:, :2])
                             target_nontarget_logits = aux_dict.get('target_nontarget_logits', torch.zeros_like(masks)[:, :2])
                             if binary_masks is not None:
-                                return masks, binary_masks, bg_fg_logits, target_nontarget_logits
+                                return instance_masks, binary_masks, bg_fg_logits, target_nontarget_logits
                             else:
-                                return masks, bg_fg_logits, target_nontarget_logits
+                                return instance_masks, bg_fg_logits, target_nontarget_logits
                         else:
                             if binary_masks is not None:
-                                return masks, binary_masks
+                                return instance_masks, binary_masks
                             else:
-                                return output
+                                return instance_masks
                     elif isinstance(output, tuple):
                         if binary_masks is not None:
-                            return output[0], binary_masks
+                            return instance_masks, binary_masks
                         else:
-                            return output[0]  # Return only logits
+                            return instance_masks  # Return processed logits
                     else:
                         if binary_masks is not None:
-                            return output, binary_masks
+                            return instance_masks, binary_masks
                         else:
-                            return output
+                            return instance_masks
 
             # Create wrapper with binary masks output
             wrapper = RGBHierarchicalWrapper(self.model, self.include_auxiliary, include_binary_masks=True)
@@ -419,21 +426,21 @@ class AdvancedONNXExporter:
             try:
                 # Determine output names and dynamic axes (always include binary_masks)
                 if self.include_auxiliary:
-                    output_names = ['masks', 'binary_masks', 'bg_fg_logits', 'target_nontarget_logits']
+                    output_names = ['instance_masks', 'binary_masks', 'bg_fg_logits', 'target_nontarget_logits']
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)},
+                        'instance_masks': {0: 'num_rois', 1: str(1), 2: str(self.mask_height), 3: str(self.mask_width)},
                         'binary_masks': {0: 'batch_size', 1: str(1), 2: str(self.image_height), 3: str(self.image_width)},
                         'bg_fg_logits': {0: 'num_rois'},
                         'target_nontarget_logits': {0: 'num_rois'}
                     }
                 else:
-                    output_names = ['masks', 'binary_masks']
+                    output_names = ['instance_masks', 'binary_masks']
                     dynamic_axes = {
                         'images': {0: 'batch_size'},
                         'rois': {0: 'num_rois'},
-                        'masks': {0: 'num_rois', 1: str(3), 2: str(self.mask_height), 3: str(self.mask_width)},
+                        'instance_masks': {0: 'num_rois', 1: str(1), 2: str(self.mask_height), 3: str(self.mask_width)},
                         'binary_masks': {0: 'batch_size', 1: str(1), 2: str(self.image_height), 3: str(self.image_width)}
                     }
 
@@ -1138,7 +1145,7 @@ def export_checkpoint_to_onnx_advanced(
         model_to_load = model.get_student()
     else:
         model_to_load = model
-    
+
     try:
         model_to_load.load_state_dict(checkpoint['model_state_dict'], strict=True)
     except RuntimeError as e:
@@ -1157,7 +1164,7 @@ def export_checkpoint_to_onnx_advanced(
                 mask_size = model_config.mask_size
         elif hasattr(config, 'model') and hasattr(config.model, 'mask_size'):
             mask_size = config.model.mask_size
-    
+
     # Create exporter
     exporter = AdvancedONNXExporter(model, model_type=model_type, device=device, include_auxiliary=include_auxiliary, mask_size=mask_size)
 

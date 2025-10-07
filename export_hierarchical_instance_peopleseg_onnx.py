@@ -522,7 +522,7 @@ def export_checkpoint_to_onnx(
                 'rois': '[N, 5] - ROIs in format [batch_idx, x1, y1, x2, y2]'
             },
             'output_format': {
-                'masks': f'[N, 3, {mask_size[0]}, {mask_size[1]}] - Segmentation logits for each ROI',
+                'instance_masks': f'[N, 1, {mask_size[0]}, {mask_size[1]}] - Binary class-1 mask per ROI (0.0 or 1.0)',
                 'binary_masks': f'[B, 1, {image_height}, {image_width}] - Binary foreground/background masks from pretrained UNet'
             }
         }
